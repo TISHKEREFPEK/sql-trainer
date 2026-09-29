@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { allTasks, type Task } from "../../../lib/course";
 import { parkingSpotsSeed, teacherDatasetSeeds } from "../../../lib/teacher-data";
 import { parkingDatabaseSeed } from "../../../lib/parking-dataset";
+import { createTaskVariants, variantForLearner } from "../../../lib/task-variants";
 
 export const runtime = "edge";
 type Session = { role: "admin" | "student"; learnerId: string | null };
@@ -50,7 +51,8 @@ function validTask(value:unknown): value is Task {
     && Array.isArray(task.hints) && task.hints.length === 2 && task.hints.every(x => typeof x === "string" && x.length <= 1000)
     && (task.mode === undefined || task.mode === "query" || task.mode === "state")
     && (task.seedProfile === undefined || typeof task.seedProfile === "string" && Object.hasOwn(datasets, task.seedProfile))
-    && (task.ordered === undefined || typeof task.ordered === "boolean");
+    && (task.ordered === undefined || typeof task.ordered === "boolean")
+    && (task.variantEligible === undefined || typeof task.variantEligible === "boolean");
 }
 async function taskCatalog(): Promise<Task[]> {
   const rows = await db().prepare("SELECT id,task_json,deleted FROM teacher_tasks").all<{id:string;task_json:string;deleted:number}>();
@@ -62,48 +64,26 @@ async function taskCatalog(): Promise<Task[]> {
   }
   return [...catalog.values()];
 }
-function learnerTasks(tasks:Task[],learnerId:string):Task[] {
-  let hash=2166136261;
-  for (const character of learnerId) hash=Math.imul(hash^character.charCodeAt(0),16777619);
-  const variant=(hash>>>0)%24;
-  const thresholds=[250,350,450,550,650,750];
-  const status=variant%2===0?"new":"paid";
-  const direction=Math.floor(variant/2)%2===0?"ASC":"DESC";
-  const threshold=thresholds[Math.floor(variant/4)];
-  return tasks.map(task=>{
-    if(task.id==="random-orders") return {
-      ...task,
-      prompt:`Покажи id и amount заказов со статусом '${status}' и суммой больше ${threshold}. Отсортируй по amount ${direction === "ASC" ? "по возрастанию" : "по убыванию"}.`,
-      solution:`SELECT id, amount FROM orders WHERE status = '${status}' AND amount > ${threshold} ORDER BY amount ${direction};`,
-      example:`SELECT id, amount FROM orders WHERE status = '${status}' AND amount > ${threshold} ORDER BY amount ${direction};`,
-      hints:[`Отфильтруй status = '${status}' и amount > ${threshold}.`,`Добавь ORDER BY amount ${direction}.`]
-    };
-    if(task.id==="where") {
-      const city=["Москва","Казань","Тула"][variant%3];
-      return {...task,prompt:`Выведи name и age учеников из города ${city}.`,solution:`SELECT name, age FROM students WHERE city = '${city}';`,example:`SELECT name, age FROM students WHERE city = '${city}';`,hints:[`Сравни city со значением '${city}'.`,`Условие: WHERE city = '${city}'.`]};
+async function taskVariantPools(tasks:Task[]) {
+  const rows = await db().prepare("SELECT task_id,variant_index,variant_json FROM teacher_task_variants ORDER BY task_id,variant_index").all<{task_id:string;variant_index:number;variant_json:string}>();
+  const pools:Record<string,Task[]> = {};
+  for (const task of tasks) {
+    if (task.variantEligible === false) { pools[task.id] = []; continue; }
+    const seed = task.seedProfile ? datasets[task.seedProfile] : task.seed;
+    const variants = createTaskVariants(task,seed);
+    for (const row of rows.results.filter(item=>item.task_id===task.id)) {
+      const candidate = safeJson<unknown>(row.variant_json,null);
+      if (Number.isInteger(row.variant_index) && row.variant_index >= 1 && row.variant_index <= 4 && validTask(candidate)) {
+        const value = candidate as Task;
+        if (value.id===task.id && value.mode===task.mode && value.project===task.project) variants[row.variant_index-1] = value;
+      }
     }
-    if(task.id==="sort") {
-      const youngest=Math.floor(variant/3)%2===1;
-      const limit=1+(variant%3);
-      const direction=youngest?"ASC":"DESC";
-      return {...task,prompt:`Покажи имя и возраст ${limit} ${youngest?"самых младших учеников":"самых старших учеников"}, от ${youngest?"младшего к старшему":"старшего к младшему"}.`,solution:`SELECT name, age FROM students ORDER BY age ${direction} LIMIT ${limit};`,example:`SELECT name, age FROM students ORDER BY age ${direction} LIMIT ${limit};`,hints:[`Отсортируй age по ${youngest?"возрастанию":"убыванию"}.`,`Добавь ORDER BY age ${direction} LIMIT ${limit}.`]};
-    }
-    if(task.id==="aggregate") {
-      const chosenStatus=status;
-      return {...task,prompt:`Посчитай количество заказов со статусом '${chosenStatus}' и назови столбец total.`,solution:`SELECT COUNT(*) AS total FROM orders WHERE status = '${chosenStatus}';`,example:`SELECT COUNT(*) AS total FROM orders WHERE status = '${chosenStatus}';`,hints:[`Добавь фильтр status = '${chosenStatus}'.`,`Используй COUNT(*) AS total и WHERE status = '${chosenStatus}'.`]};
-    }
-    if(task.id==="group") {
-      const byStudent=variant%2===1;
-      const column=byStudent?"student_id":"status";
-      return {...task,prompt:`Покажи ${column} и общую сумму amount для каждого значения. Сумму назови total.`,solution:`SELECT ${column}, SUM(amount) AS total FROM orders GROUP BY ${column};`,example:`SELECT ${column}, SUM(amount) AS total FROM orders GROUP BY ${column};`,hints:[`Сгруппируй строки по ${column}.`,`Используй SUM(amount) AS total и GROUP BY ${column}.`]};
-    }
-    if(task.id==="subquery") {
-      const younger=variant%2===1;
-      const operator=younger?"<":">";
-      return {...task,prompt:`Покажи name учеников ${younger?"младше":"старше"} среднего возраста.`,solution:`SELECT name FROM students WHERE age ${operator} (SELECT AVG(age) FROM students);`,example:`SELECT name FROM students WHERE age ${operator} (SELECT AVG(age) FROM students);`,hints:[`Внутренний запрос вычисляет средний age.`,`Сравни age со средним через знак '${operator}'.`]};
-    }
-    return task;
-  });
+    pools[task.id] = variants;
+  }
+  return pools;
+}
+function learnerTasks(tasks:Task[],learnerId:string,pools:Record<string,Task[]>) {
+  return tasks.map(task=>variantForLearner(task,learnerId,pools[task.id]||[]));
 }
 function validName(input:unknown,max=60):input is string { return typeof input === "string" && input.trim().length >= 2 && input.trim().length <= max; }
 async function learnerData(id:string) {
@@ -123,12 +103,14 @@ export async function GET(request:Request) {
     if (!auth) return json({role:"guest",tasks});
     if (auth.role === "student" && auth.learnerId) {
       const row = await learnerData(auth.learnerId);
-      return row ? json({role:"student",...progress(row),tasks:learnerTasks(tasks,row.id)}) : json({role:"guest",tasks});
+      const pools = await taskVariantPools(tasks);
+      return row ? json({role:"student",...progress(row),tasks:learnerTasks(tasks,row.id,pools)}) : json({role:"guest",tasks});
     }
     const groups = await db().prepare("SELECT id,name,code,created_at FROM groups ORDER BY created_at DESC").all();
     const students = await db().prepare("SELECT id,name,group_id,completed_json,updated_at FROM learners ORDER BY updated_at DESC").all();
     const errors = await db().prepare("SELECT task_id,message,COUNT(*) AS count FROM attempts GROUP BY task_id,message ORDER BY count DESC LIMIT 20").all();
-    return json({role:"admin",groups:groups.results,students:students.results.map(row=>({...row,completed:safeJson<string[]>(String(row.completed_json),[])})),errors:errors.results,tasks});
+    const taskStats = await db().prepare("SELECT s.task_id,s.learner_id,l.name,l.group_id,g.name AS group_name,s.started_at,s.completed_at,s.seconds_spent,s.check_count,s.error_count,s.last_activity_at FROM learner_task_stats s JOIN learners l ON l.id=s.learner_id JOIN groups g ON g.id=l.group_id").all();
+    return json({role:"admin",groups:groups.results,students:students.results.map(row=>({...row,completed:safeJson<string[]>(String(row.completed_json),[])})),errors:errors.results,tasks,variantPools:await taskVariantPools(tasks),taskStats:taskStats.results});
   } catch { return json({error:"Не удалось загрузить данные. Попробуйте ещё раз."},503); }
 }
 
@@ -158,7 +140,8 @@ export async function POST(request:Request) {
       if (!row) throw new Error("learner creation failed");
       const learner = await learnerData(row.id);
       if (!learner) throw new Error("learner missing");
-      const response = json({role:"student",...progress(learner),tasks:learnerTasks(await taskCatalog(),row.id)}); response.headers.set("Set-Cookie",await newSession("student",row.id)); return response;
+      const tasks = await taskCatalog();
+      const response = json({role:"student",...progress(learner),tasks:learnerTasks(tasks,row.id,await taskVariantPools(tasks))}); response.headers.set("Set-Cookie",await newSession("student",row.id)); return response;
     }
     const auth = await session(request);
     if (action === "logout") {
@@ -181,6 +164,7 @@ export async function POST(request:Request) {
       await db().batch([
         db().prepare("DELETE FROM sessions WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
         db().prepare("DELETE FROM attempts WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
+        db().prepare("DELETE FROM learner_task_stats WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
         db().prepare("DELETE FROM learners WHERE group_id=?").bind(group.id),
         db().prepare("DELETE FROM groups WHERE id=?").bind(group.id),
       ]);
@@ -229,7 +213,17 @@ export async function POST(request:Request) {
       }
       await db().prepare("INSERT INTO teacher_tasks (id,task_json,deleted,updated_at) VALUES (?,?,0,?) ON CONFLICT(id) DO UPDATE SET task_json=excluded.task_json,deleted=0,updated_at=excluded.updated_at")
         .bind(task.id,JSON.stringify(task),Date.now()).run();
-      return json({ok:true,tasks:await taskCatalog()});
+      const tasks=await taskCatalog();
+      return json({ok:true,tasks,variantPools:await taskVariantPools(tasks)});
+    }
+    if (auth.role === "admin" && action === "save-variant") {
+      if (typeof body.taskId !== "string" || !validTask(body.task) || body.task.id !== body.taskId || !Number.isInteger(body.variantIndex) || Number(body.variantIndex)<1 || Number(body.variantIndex)>4) return json({error:"Проверьте параметры альтернативного задания"},400);
+      const base = (await taskCatalog()).find(task=>task.id===body.taskId);
+      if (!base || base.variantEligible===false) return json({error:"Для этого задания альтернативы отключены"},409);
+      const variant = body.task as Task;
+      if (variant.mode!==base.mode || variant.project!==base.project) return json({error:"Вариант должен сохранять тип задания и сквозной проект"},400);
+      await db().prepare("INSERT INTO teacher_task_variants (task_id,variant_index,variant_json,updated_at) VALUES (?,?,?,?) ON CONFLICT(task_id,variant_index) DO UPDATE SET variant_json=excluded.variant_json,updated_at=excluded.updated_at").bind(base.id,Number(body.variantIndex),JSON.stringify(variant),Date.now()).run();
+      return json({ok:true,variantPools:await taskVariantPools(await taskCatalog())});
     }
     if (auth.role === "admin" && action === "delete-task") {
       if (typeof body.taskId !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(body.taskId)) return json({error:"Некорректный идентификатор задания"},400);
@@ -241,6 +235,20 @@ export async function POST(request:Request) {
     const learner = await learnerData(auth.learnerId);
     if (!learner) return json({error:"Профиль не найден"},404);
     const activeTaskIds = new Set((await taskCatalog()).map(task => task.id));
+    if (["task-start","task-time","task-check"].includes(String(action))) {
+      if (typeof body.taskId!=="string" || !activeTaskIds.has(body.taskId)) return json({error:"Некорректное задание"},400);
+      const now=Date.now();
+      if (action==="task-start") {
+        await db().prepare("INSERT INTO learner_task_stats (learner_id,task_id,started_at,last_activity_at) VALUES (?,?,?,?) ON CONFLICT(learner_id,task_id) DO UPDATE SET last_activity_at=excluded.last_activity_at").bind(learner.id,body.taskId,now,now).run();
+      } else if (action==="task-time") {
+        const seconds=typeof body.seconds==="number"&&Number.isFinite(body.seconds)?Math.max(0,Math.min(60,Math.floor(body.seconds))):0;
+        if(seconds>0) await db().prepare("INSERT INTO learner_task_stats (learner_id,task_id,started_at,seconds_spent,last_activity_at) VALUES (?,?,?,?,?) ON CONFLICT(learner_id,task_id) DO UPDATE SET seconds_spent=seconds_spent+excluded.seconds_spent,last_activity_at=excluded.last_activity_at").bind(learner.id,body.taskId,now,seconds,now).run();
+      } else {
+        const correct=body.correct===true;
+        await db().prepare("INSERT INTO learner_task_stats (learner_id,task_id,started_at,completed_at,check_count,error_count,last_activity_at) VALUES (?,?,?,?,1,?,?) ON CONFLICT(learner_id,task_id) DO UPDATE SET completed_at=CASE WHEN ?=1 THEN COALESCE(completed_at,excluded.completed_at) ELSE completed_at END,check_count=check_count+1,error_count=error_count+excluded.error_count,last_activity_at=excluded.last_activity_at").bind(learner.id,body.taskId,now,correct?now:null,correct?0:1,now,correct?1:0).run();
+      }
+      return json({ok:true});
+    }
     if (action === "progress") {
       const completed = new Set(safeJson<string[]>(learner.completed_json,[]).filter(x=>activeTaskIds.has(x)));
       if (Array.isArray(body.completed)) for (const id of body.completed) if (typeof id === "string" && activeTaskIds.has(id)) completed.add(id);

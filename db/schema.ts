@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const groups = sqliteTable("groups", {
   id: text("id").primaryKey(),
@@ -38,3 +38,24 @@ export const teacherTasks = sqliteTable("teacher_tasks", {
   deleted: integer("deleted").notNull().default(0),
   updatedAt: integer("updated_at").notNull(),
 });
+
+export const teacherTaskVariants = sqliteTable("teacher_task_variants", {
+  taskId: text("task_id").notNull(),
+  variantIndex: integer("variant_index").notNull(),
+  variantJson: text("variant_json").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, table => [primaryKey({columns:[table.taskId,table.variantIndex]})]);
+
+export const learnerTaskStats = sqliteTable("learner_task_stats", {
+  learnerId: text("learner_id").notNull().references(() => learners.id),
+  taskId: text("task_id").notNull(),
+  startedAt: integer("started_at").notNull(),
+  completedAt: integer("completed_at"),
+  secondsSpent: integer("seconds_spent").notNull().default(0),
+  checkCount: integer("check_count").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+  lastActivityAt: integer("last_activity_at").notNull(),
+}, table => [
+  primaryKey({columns:[table.learnerId,table.taskId]}),
+  index("idx_learner_task_stats_task").on(table.taskId),
+]);

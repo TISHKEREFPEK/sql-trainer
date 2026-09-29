@@ -12,6 +12,7 @@ pnpm exec drizzle-kit generate
 pnpm build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_ambitious_kylun.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_teacher_tasks.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_task_variants_analytics.sql
 pnpm dev
 ```
 
@@ -19,4 +20,9 @@ pnpm dev
 
 ## Хранение и проверка
 
-SQLite WASM запускает учебные запросы отдельно в браузере. D1 хранит группы, псевдонимы, прогресс, проектные снимки, частые ошибки и редактируемый каталог заданий. Гостевые данные хранятся в IndexedDB. Запросы ученика не выполняются в серверной базе.
+SQLite WASM запускает учебные запросы отдельно в браузере. D1 хранит группы, псевдонимы, прогресс, проектные снимки, время выполнения заданий, частые ошибки, варианты и редактируемый каталог заданий. Гостевые данные хранятся в IndexedDB. Запросы ученика не выполняются в серверной базе.
+
+## Участники проекта
+
+- [domain1337](https://github.com/domain1337) — развитие проекта, постановка требований и проверка сценариев.
+- [Codex](https://openai.com/codex/) — помощь с реализацией и сопровождением кода.

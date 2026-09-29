@@ -59,3 +59,10 @@ export const learnerTaskStats = sqliteTable("learner_task_stats", {
   primaryKey({columns:[table.learnerId,table.taskId]}),
   index("idx_learner_task_stats_task").on(table.taskId),
 ]);
+
+export const learnerTaskVariants = sqliteTable("learner_task_variants", {
+  learnerId: text("learner_id").notNull().references(() => learners.id),
+  taskId: text("task_id").notNull(),
+  taskJson: text("task_json").notNull(),
+  assignedAt: integer("assigned_at").notNull(),
+}, table => [primaryKey({ columns: [table.learnerId, table.taskId] })]);

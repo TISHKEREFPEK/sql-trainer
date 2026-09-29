@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./interface.css";
 
 export const metadata: Metadata = {
   title: "SQL-пространство — тренажёр SQL с нуля",

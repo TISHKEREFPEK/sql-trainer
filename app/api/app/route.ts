@@ -4,10 +4,12 @@ import { parkingSpotsSeed, teacherDatasetSeeds } from "../../../lib/teacher-data
 import { parkingDatabaseSeed } from "../../../lib/parking-dataset";
 import { createTaskVariants, variantForLearner } from "../../../lib/task-variants";
 
+import { createTaskVariants as legacyVariants, variantForLearner as legacyAssignment } from "../../../lib/legacy-task-variants";
+
 export const runtime = "edge";
 type Session = { role: "admin" | "student"; learnerId: string | null };
 type Learner = { id:string; name:string; group_id:string; completed_json:string; snapshots_json:string };
-const datasets = {...teacherDatasetSeeds,"parking-spots":parkingSpotsSeed,"parking-database":parkingDatabaseSeed};
+const datasets: Record<string,string> = {...teacherDatasetSeeds,"parking-spots":parkingSpotsSeed,"parking-database":parkingDatabaseSeed};
 const projectIds = new Set(["library","shop","classes"]);
 const json = (value:unknown,status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const db = () => {
@@ -73,17 +75,49 @@ async function taskVariantPools(tasks:Task[]) {
     const variants = createTaskVariants(task,seed);
     for (const row of rows.results.filter(item=>item.task_id===task.id)) {
       const candidate = safeJson<unknown>(row.variant_json,null);
-      if (Number.isInteger(row.variant_index) && row.variant_index >= 1 && row.variant_index <= 4 && validTask(candidate)) {
+      if (Number.isInteger(row.variant_index) && row.variant_index >= 1 && row.variant_index <= 3 && validTask(candidate)) {
         const value = candidate as Task;
-        if (value.id===task.id && value.mode===task.mode && value.project===task.project) variants[row.variant_index-1] = value;
+        if (value.id===task.id && value.mode===task.mode && value.project===task.project) variants[row.variant_index-1] = {...value,variantIndex:row.variant_index+1};
       }
     }
     pools[task.id] = variants;
   }
   return pools;
 }
-function learnerTasks(tasks:Task[],learnerId:string,pools:Record<string,Task[]>) {
-  return tasks.map(task=>variantForLearner(task,learnerId,pools[task.id]||[]));
+async function learnerTasks(tasks:Task[],learner: Learner,pools:Record<string,Task[]>) {
+  const saved = await db().prepare("SELECT task_id,task_json FROM learner_task_variants WHERE learner_id=?").bind(learner.id).all<{task_id:string;task_json:string}>();
+  const assignments = new Map(saved.results.map(row=>[row.task_id,safeJson<Task|null>(row.task_json,null)]));
+  const position = await db().prepare("SELECT COUNT(*) AS ordinal FROM learners WHERE group_id=? AND rowid < (SELECT rowid FROM learners WHERE id=?)").bind(learner.group_id,learner.id).first<{ordinal:number}>();
+  const snapshots=safeJson<Record<string,string>>(learner.snapshots_json,{});
+  const result:Task[]=[];
+  const writes:D1PreparedStatement[]=[];
+  const legacyOverrides=Object.keys(snapshots).length?await db().prepare("SELECT task_id,variant_index,variant_json FROM teacher_task_variants ORDER BY variant_index").all<{task_id:string;variant_index:number;variant_json:string}>():null;
+  for(const task of tasks){
+    const existing=assignments.get(task.id);
+    if(existing){result.push(existing);continue;}
+    let assigned:Task=variantForLearner(task,position?.ordinal||0,pools[task.id]||[]);
+    // Preserve the exact old project schema for learners who already have a snapshot.
+    if(task.project&&snapshots[task.project]){
+      const peer=[...assignments.values()].find(item=>item&&item.project===task.project&&item.variantIndex);
+      if(peer?.variantIndex){assigned={...(peer.variantIndex===1?task:pools[task.id]?.[peer.variantIndex-2]||task),variantIndex:peer.variantIndex};}
+      else{
+        const seed=task.seedProfile?datasets[task.seedProfile]:task.seed;
+        const alternatives=legacyVariants(task,seed);
+        for(const row of legacyOverrides?.results.filter(item=>item.task_id===task.id)||[]){const value=safeJson<unknown>(row.variant_json,null);if(row.variant_index>=1&&row.variant_index<=4&&validTask(value))alternatives[row.variant_index-1]=value;}
+        assigned=legacyAssignment(task,learner.id,alternatives);
+      }
+    }
+    result.push(assigned);
+    writes.push(db().prepare("INSERT OR IGNORE INTO learner_task_variants (learner_id,task_id,task_json,assigned_at) VALUES (?,?,?,?)").bind(learner.id,task.id,JSON.stringify(assigned),Date.now()));
+  }
+  if(writes.length){
+    await db().batch(writes);
+    // Concurrent first reads must both return the stored winner.
+    const fresh=await db().prepare("SELECT task_id,task_json FROM learner_task_variants WHERE learner_id=?").bind(learner.id).all<{task_id:string;task_json:string}>();
+    const stored=new Map(fresh.results.map(row=>[row.task_id,safeJson<Task|null>(row.task_json,null)]));
+    return result.map(task=>stored.get(task.id)||task);
+  }
+  return result;
 }
 function validName(input:unknown,max=60):input is string { return typeof input === "string" && input.trim().length >= 2 && input.trim().length <= max; }
 async function learnerData(id:string) {
@@ -104,7 +138,7 @@ export async function GET(request:Request) {
     if (auth.role === "student" && auth.learnerId) {
       const row = await learnerData(auth.learnerId);
       const pools = await taskVariantPools(tasks);
-      return row ? json({role:"student",...progress(row),tasks:learnerTasks(tasks,row.id,pools)}) : json({role:"guest",tasks});
+      return row ? json({role:"student",...progress(row),tasks:await learnerTasks(tasks,row,pools)}) : json({role:"guest",tasks});
     }
     const groups = await db().prepare("SELECT id,name,code,created_at FROM groups ORDER BY created_at DESC").all();
     const students = await db().prepare("SELECT id,name,group_id,completed_json,updated_at FROM learners ORDER BY updated_at DESC").all();
@@ -141,7 +175,7 @@ export async function POST(request:Request) {
       const learner = await learnerData(row.id);
       if (!learner) throw new Error("learner missing");
       const tasks = await taskCatalog();
-      const response = json({role:"student",...progress(learner),tasks:learnerTasks(tasks,row.id,await taskVariantPools(tasks))}); response.headers.set("Set-Cookie",await newSession("student",row.id)); return response;
+      const response = json({role:"student",...progress(learner),tasks:await learnerTasks(tasks,learner,await taskVariantPools(tasks))}); response.headers.set("Set-Cookie",await newSession("student",row.id)); return response;
     }
     const auth = await session(request);
     if (action === "logout") {
@@ -165,6 +199,7 @@ export async function POST(request:Request) {
         db().prepare("DELETE FROM sessions WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
         db().prepare("DELETE FROM attempts WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
         db().prepare("DELETE FROM learner_task_stats WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
+        db().prepare("DELETE FROM learner_task_variants WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
         db().prepare("DELETE FROM learners WHERE group_id=?").bind(group.id),
         db().prepare("DELETE FROM groups WHERE id=?").bind(group.id),
       ]);
@@ -217,7 +252,7 @@ export async function POST(request:Request) {
       return json({ok:true,tasks,variantPools:await taskVariantPools(tasks)});
     }
     if (auth.role === "admin" && action === "save-variant") {
-      if (typeof body.taskId !== "string" || !validTask(body.task) || body.task.id !== body.taskId || !Number.isInteger(body.variantIndex) || Number(body.variantIndex)<1 || Number(body.variantIndex)>4) return json({error:"Проверьте параметры альтернативного задания"},400);
+      if (typeof body.taskId !== "string" || !validTask(body.task) || body.task.id !== body.taskId || !Number.isInteger(body.variantIndex) || Number(body.variantIndex)<1 || Number(body.variantIndex)>3) return json({error:"Проверьте параметры альтернативного задания"},400);
       const base = (await taskCatalog()).find(task=>task.id===body.taskId);
       if (!base || base.variantEligible===false) return json({error:"Для этого задания альтернативы отключены"},409);
       const variant = body.task as Task;

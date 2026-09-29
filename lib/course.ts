@@ -21,6 +21,9 @@ export type Task = {
   ordered?: boolean;
   project?: string;
   variantEligible?: boolean;
+  variantIndex?: number;
+  tableMap?: Record<string, string>;
+  dataVariant?: number;
 };
 
 const people = `CREATE TABLE students (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT, age INTEGER);

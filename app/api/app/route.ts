@@ -174,6 +174,18 @@ export async function POST(request:Request) {
       await db().prepare("INSERT INTO groups (id,name,code,created_at) VALUES (?,?,?,?)").bind(crypto.randomUUID(),body.name.trim(),code,Date.now()).run();
       return json({ok:true,code});
     }
+    if (action === "delete-group" && auth.role === "admin") {
+      if (typeof body.groupId !== "string" || body.groupId.length < 1 || body.groupId.length > 100) return json({error:"Некорректный идентификатор группы"},400);
+      const group = await db().prepare("SELECT id FROM groups WHERE id=?").bind(body.groupId).first<{id:string}>();
+      if (!group) return json({error:"Группа не найдена"},404);
+      await db().batch([
+        db().prepare("DELETE FROM sessions WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
+        db().prepare("DELETE FROM attempts WHERE learner_id IN (SELECT id FROM learners WHERE group_id=?)").bind(group.id),
+        db().prepare("DELETE FROM learners WHERE group_id=?").bind(group.id),
+        db().prepare("DELETE FROM groups WHERE id=?").bind(group.id),
+      ]);
+      return json({ok:true});
+    }
     if (action === "seed-demo" && auth.role === "admin") {
       const definitions = [
         { key:"base", name:"SQL · демо-группа 1", code:"DEMO26BAS", learners:[

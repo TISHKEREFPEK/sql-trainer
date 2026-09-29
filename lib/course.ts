@@ -1,3 +1,8 @@
+import { teacherTasks } from "./teacher-tasks";
+import { teacherExtraTasks } from "./teacher-extra-tasks";
+import { teacherCaseTasks } from "./teacher-case-tasks";
+import { parkingFullTasks } from "./parking-full-tasks";
+
 export type Task = {
   id: string;
   module: string;
@@ -11,6 +16,7 @@ export type Task = {
   solution: string;
   hints: [string, string];
   seed: string;
+  seedProfile?: "parking-spots" | "parking-database" | "case-sx4" | "sugar-success" | "globus-budget";
   mode?: "query" | "state";
   ordered?: boolean;
   project?: string;
@@ -21,6 +27,8 @@ INSERT INTO students VALUES (1,'Аня','Москва',19),(2,'Борис','Ка
 const orders = `${people}
 CREATE TABLE orders (id INTEGER PRIMARY KEY, student_id INTEGER, amount INTEGER, status TEXT);
 INSERT INTO orders VALUES (1,1,1200,'paid'),(2,2,800,'new'),(3,1,400,'paid'),(4,3,1700,'new');`;
+const variantOrders = `${orders}
+INSERT INTO orders VALUES (5,1,320,'new'),(6,2,550,'paid'),(7,3,770,'new'),(8,4,990,'paid'),(9,2,1210,'new'),(10,3,1430,'paid'),(11,4,1650,'new'),(12,1,1870,'paid');`;
 
 export const lessons: Task[] = [
   { id:"database",module:"01 · Старт",title:"База, таблица, строка",minutes:3,concept:"База данных хранит таблицы. Таблица похожа на список: столбцы описывают свойства, строки — отдельные записи. SQL — язык, на котором мы задаём базе вопросы.",terms:["база данных","таблица","строка","столбец"],example:"SELECT * FROM students;",prompt:"Покажи все строки и все столбцы таблицы students.",starter:"-- Напиши SQL-запрос по заданию выше",solution:"SELECT * FROM students;",hints:["SELECT выбирает данные из таблицы.","Звёздочка означает все столбцы: SELECT * FROM students;"],seed:people},
@@ -60,7 +68,16 @@ export const projects: Task[] = [
   {id:"class4",project:"classes",module:"Проект · Запись на занятия",title:"Обновление схемы",minutes:6,concept:"Продукт развивается: курсу теперь нужно описание. Старые записи должны сохраниться.",terms:["ALTER TABLE","ADD COLUMN"],example:"ALTER TABLE courses ADD COLUMN description TEXT;",prompt:"Добавь в courses столбец description типа TEXT.",starter:"-- Напиши SQL-запрос по заданию выше",solution:"ALTER TABLE courses ADD COLUMN description TEXT;",hints:["Используй ALTER TABLE courses.","Добавь ADD COLUMN description TEXT."],seed:classes,mode:"state"},
 ];
 
-export const allTasks = [...lessons, ...projects];
+export const randomizedOrderTask: Task = {
+  id:"random-orders",module:"02 · Поиск",title:"Персональный вариант · заказы",minutes:5,
+  concept:"У каждого ученика свой случайный вариант: меняются статус, порог суммы и порядок сортировки.",
+  terms:["WHERE","AND","ORDER BY"],example:"SELECT id, amount FROM orders WHERE status = 'new' AND amount > 500 ORDER BY amount DESC;",
+  prompt:"Покажи id и amount заказов со статусом 'new' и суммой больше 500. Отсортируй по amount по убыванию.",starter:"-- Напиши SQL-запрос по заданию выше",
+  solution:"SELECT id, amount FROM orders WHERE status = 'new' AND amount > 500 ORDER BY amount DESC;",
+  hints:["Отфильтруй status = 'new' и amount > 500.","Добавь ORDER BY amount DESC."],seed:variantOrders,ordered:true
+};
+
+export const allTasks = [...lessons, randomizedOrderTask, ...projects, ...teacherTasks, ...teacherExtraTasks, ...teacherCaseTasks, ...parkingFullTasks];
 export const glossary: Record<string,string> = {
   "база данных":"Набор связанных таблиц и других объектов, с которыми работает СУБД.","таблица":"Данные в виде строк и столбцов.","строка":"Одна запись в таблице, например один ученик.","столбец":"Свойство записи, например name или age.","SELECT":"Команда чтения данных.","FROM":"Указывает таблицу, откуда читаем данные.","WHERE":"Условие отбора строк.","условие":"Проверка, по которой остаются нужные строки.","ORDER BY":"Сортирует результат.","DESC":"Сортировка по убыванию.","LIMIT":"Ограничивает число строк результата.","COUNT":"Считает строки или значения.","агрегат":"Функция, сворачивающая несколько строк в один итог.","GROUP BY":"Объединяет строки в группы для расчёта итогов.","SUM":"Складывает числовые значения.","JOIN":"Соединяет строки разных таблиц.","первичный ключ":"Уникальный идентификатор строки.","внешний ключ":"Значение, указывающее на строку другой таблицы.","подзапрос":"SQL-запрос внутри другого запроса.","AVG":"Вычисляет среднее арифметическое.","CREATE TABLE":"Создаёт таблицу.","INTEGER":"Целое число.","TEXT":"Текстовое значение.","PRIMARY KEY":"Объявляет первичный ключ.","NOT NULL":"Запрещает пустое значение NULL.","INSERT INTO":"Добавляет строки в таблицу.","VALUES":"Перечисляет добавляемые значения.","UPDATE":"Обновляет существующие строки.","SET":"Указывает новые значения столбцов.","DELETE":"Удаляет строки из таблицы.","UNIQUE":"Запрещает повторяющиеся значения.","CHECK":"Проверяет условие для данных.","FOREIGN KEY":"Задаёт связь с другой таблицей.","BEGIN":"Начинает транзакцию.","COMMIT":"Сохраняет изменения транзакции.","ROLLBACK":"Отменяет изменения транзакции.","CREATE INDEX":"Создаёт индекс для ускорения поиска.","индекс":"Вспомогательная структура, ускоряющая поиск.","ALTER TABLE":"Меняет структуру таблицы.","ADD COLUMN":"Добавляет новый столбец.","миграция":"Контролируемое изменение структуры базы."};
 

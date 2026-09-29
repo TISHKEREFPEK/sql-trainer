@@ -31,3 +31,10 @@ export const sessions = sqliteTable("sessions", {
   learnerId: text("learner_id"),
   expiresAt: integer("expires_at").notNull(),
 });
+
+export const teacherTasks = sqliteTable("teacher_tasks", {
+  id: text("id").primaryKey(),
+  taskJson: text("task_json").notNull(),
+  deleted: integer("deleted").notNull().default(0),
+  updatedAt: integer("updated_at").notNull(),
+});

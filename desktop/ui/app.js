@@ -5,6 +5,7 @@ const bridge = window.classroom;
 const localDraftKey = id => `classroom:draft:${role}:${document.querySelector('#connection').dataset.login || ''}:${id}`;
 function draft(id) {try {return localStorage.getItem(localDraftKey(id));} catch {return null;}}
 function saveDraft() {if (activeTask && document.querySelector('#sql')) try {localStorage.setItem(localDraftKey(activeTask.id), document.querySelector('#sql').value);} catch {}}
+window.addEventListener('beforeunload', saveDraft);
 function notice(message) {const node = document.querySelector('#notice'); node.textContent = message; node.classList.add('visible'); setTimeout(() => node.classList.remove('visible'), 5000);}
 async function api(route, data) {
   const value = bridge ? await bridge.api(route, data) : await fetch(route, {method: data === undefined ? 'GET' : 'POST',headers: {'Content-Type':'application/json', ...(auth ? {Authorization:`Bearer ${auth}`} : {})},body: data === undefined ? undefined : JSON.stringify(data)}).then(res => res.json());

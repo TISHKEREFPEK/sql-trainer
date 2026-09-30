@@ -39,5 +39,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: SQL-Classroom-Windows-x64-test
-          path: desktop/release/**/*.exe
+          path: |
+            desktop/release/student/SQL-Student-*.exe
+            desktop/release/teacher/SQL-Teacher-*.exe
           retention-days: 14

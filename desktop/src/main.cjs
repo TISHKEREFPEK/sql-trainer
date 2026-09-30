@@ -1,7 +1,7 @@
 const {app, BrowserWindow, ipcMain, Menu} = require('electron');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
-let win, host, session = '', currentTask = '', restricted = false, lockUntil = 0;
+let win, host, browserSession, session = '', currentTask = '', restricted = false, lockUntil = 0;
 const pkg = require('../package.json');
 const teacher = pkg.classroomRole === 'teacher' || (!app.isPackaged && process.argv.includes('--teacher'));
 let address = 'http://127.0.0.1:47831';
@@ -37,7 +37,9 @@ app.whenReady().then(async () => {
   }
   win = new BrowserWindow({width: 1280, height: 850, minWidth: 850, minHeight: 600, backgroundColor: '#f5f6fa',
     title: teacher ? 'SQL · Преподаватель' : 'SQL · Ученик',
-    webPreferences: {preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: !app.isPackaged}});
+    webPreferences: {partition: teacher ? 'persist:classroom-teacher' : 'persist:classroom-student', preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: !app.isPackaged}});
+  win.on('page-title-updated', event => event.preventDefault());
+  browserSession = win.webContents.session;
   win.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -67,4 +69,4 @@ app.whenReady().then(async () => {
   const timer = setInterval(() => void policy(), 2000); timer.unref();
 }).catch(error => {require('electron').dialog.showErrorBox('Не удалось запустить класс', error.message); app.quit();});
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => {if (host) host.server.close();});
+app.on('before-quit', () => {browserSession?.flushStorageData(); if (host) host.server.close();});

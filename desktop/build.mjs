@@ -6,7 +6,7 @@ import { mkdir, copyFile, cp, rm } from 'node:fs/promises';
 await rm('build', { recursive: true, force: true });
 await mkdir('build', { recursive: true });
 for (const name of ['server', 'sql-worker']) {
-  await build({ absWorkingDir: path.dirname(fileURLToPath(import.meta.url)), entryPoints: [`src/${name}.ts`], bundle: true, platform: 'node', format: 'cjs', target: 'node22', outfile: `build/${name}.cjs`, external: ['sql.js'] });
+  await build({ absWorkingDir: path.dirname(fileURLToPath(import.meta.url)), entryPoints: [`src/${name}.ts`], bundle: true, platform: 'node', format: 'cjs', target: 'node22', outfile: `build/${name}.cjs`, external: name === 'server' ? ['sql.js'] : [] });
 }
 await cp('ui', 'build/ui', { recursive: true });
 await copyFile('src/main.cjs', 'build/main.cjs');

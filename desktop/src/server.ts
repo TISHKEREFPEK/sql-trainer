@@ -49,7 +49,7 @@ export async function startServer(options: { port?: number; dataDir?: string } =
     if (activeWorkers >= 4) fail('Проверка занята. Повторите через несколько секунд.', 429);
     activeWorkers++;
     return new Promise((resolve, reject) => {
-      const worker = new Worker(path.join(__dirname, 'sql-worker.cjs'), {workerData: {task, snapshot, code, check}, resourceLimits: {maxOldGenerationSizeMb: 128}});
+      const worker = new Worker(path.join(__dirname, 'sql-worker.cjs').replace(/app\.asar([/\\])/, 'app.asar.unpacked$1'), {workerData: {task, snapshot, code, check}, resourceLimits: {maxOldGenerationSizeMb: 128}});
       let settled = false;
       const finish = (error?: Error, value?: any) => {
         if (settled) return; settled = true; clearTimeout(timer); activeWorkers--; void worker.terminate();

@@ -1,0 +1,43 @@
+name: Desktop Windows test builds
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/desktop']
+    paths: ['desktop/**', 'lib/**', '.github/workflows/desktop-windows.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install web dependencies for shared course tests
+        run: pnpm install --frozen-lockfile
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+      - name: Build and test classroom
+        working-directory: desktop
+        run: |
+          pnpm build
+          pnpm test
+      - name: Install Electron runtime
+        working-directory: desktop
+        run: pnpm install:electron
+      - name: Build student installer
+        working-directory: desktop
+        run: pnpm pack:student
+      - name: Build teacher installer
+        working-directory: desktop
+        run: pnpm pack:teacher
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SQL-Classroom-Windows-x64-test
+          path: desktop/release/**/*.exe
+          retention-days: 14

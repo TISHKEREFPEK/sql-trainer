@@ -1,0 +1,27 @@
+{
+  "name": "sql-classroom-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Локальный SQL-тренажёр для компьютерного класса",
+  "author": "SQL-пространство",
+  "main": "build/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "server": "node build/server.cjs",
+    "teacher": "electron . --teacher",
+    "student": "electron .",
+    "test": "node --test tests/*.cjs",
+    "pack:teacher": "electron-builder --config builder.teacher.cjs --win --x64 --publish never",
+    "pack:student": "electron-builder --config builder.student.cjs --win --x64 --publish never",
+    "install:electron": "install-electron"
+  },
+  "dependencies": {
+    "sql.js": "1.14.2"
+  },
+  "devDependencies": {
+    "electron": "44.5.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

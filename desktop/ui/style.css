@@ -1,3 +1,94 @@
-:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#252738;background:#f5f6fa;font-size:15px;line-height:1.6;font-synthesis:none}*{box-sizing:border-box}body{margin:0}header{height:76px;background:white;border-bottom:1px solid #e3e5ed;display:flex;align-items:center;gap:24px;padding:0 32px}header strong{font-size:22px}header strong span{font-weight:400;color:#75798d}#connection{margin-left:auto;color:#707486;font-size:13px}main{max-width:1440px;margin:0 auto;padding:28px 32px}h1,h2,h3,p{margin:0 0 16px}h1{font-size:24px}h2{font-size:18px}h3{font-size:15px}button,input,textarea,select{font:inherit}button{background:#fff;border:1px solid #dcdfea;border-radius:8px;padding:9px 16px;cursor:pointer;color:inherit}button:hover{background:#f1efff}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid #7660cc;outline-offset:3px}button.primary{background:#6f58c6;color:white;border-color:#6f58c6}button:disabled{opacity:.6;cursor:wait}input,select,textarea{width:100%;border:1px solid #dcdfea;border-radius:8px;padding:10px 12px;background:#fff;color:inherit}label{display:block;margin-bottom:16px;font-size:14px}label input,label textarea,label select{display:block;margin-top:6px}textarea{resize:vertical}small,.muted{color:#727789}section.card,.panel{background:#fff;border:1px solid #e3e5ed;border-radius:12px;padding:24px}.login{max-width:440px;margin:50px auto}.columns{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px}.workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:24px;align-items:start}.stack{display:grid;gap:20px}.actions{display:flex;gap:10px;align-items:center;margin-top:16px}.actions small{margin-right:auto}.task-list{display:grid;gap:6px;margin-top:16px}.task-list button{text-align:left;font-size:14px}.task-list button.selected{background:#eeebfb;border-color:#bdb0ef;color:#6149b7}.task-list button small{display:block}.prompt{font-size:17px;line-height:1.6;margin-bottom:20px}.lesson{border-top:1px solid #e3e5ed;padding-top:20px;margin-top:24px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f5fa;border-radius:8px;padding:14px;font-size:13px;line-height:1.6}pre,code,#sql,.sql-input{font-family:"Cascadia Code",Consolas,Menlo,monospace}#sql{min-height:280px;background:#25283b;color:#f6f6fc;border:0;padding:18px}details{border-top:1px solid #e9ebf1;padding:12px 0}summary{cursor:pointer;font-weight:500}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;border-bottom:1px solid #e8eaf1;padding:8px 10px;white-space:nowrap}.table-scroll{overflow:auto;max-height:360px}.error{color:#a3313e}.success{color:#267657}#notice{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#25283b;color:white;padding:12px 20px;border-radius:10px;max-width:90%;display:none}#notice.visible{display:block}#lock{position:fixed;inset:0;background:#25283be6;z-index:10;display:grid;place-items:center}#lock[hidden]{display:none}#lock section{max-width:520px;background:white;border-radius:12px;padding:32px}.student-row{display:flex;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid #e9ebf1}.student-row span{margin-right:auto}.check{display:flex;align-items:flex-start;gap:10px}.check input{width:auto;margin:5px 0}.badge{display:inline-block;color:#7056b9;background:#f0edfa;border-radius:6px;padding:3px 8px;margin-bottom:16px;font-size:12px}.inline-terms{display:flex;gap:8px;flex-wrap:wrap}.inline-terms details{border:0;padding:0;flex-basis:100%}.inline-terms summary{font-size:14px}#preview{overflow:hidden}@media(max-width:1050px){.workspace{grid-template-columns:1fr}.columns{grid-template-columns:230px minmax(0,1fr)}main{padding:20px}.panel,section.card{padding:20px}}
-
-.columns>aside{align-self:start}
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#252738;background:#f5f6fa;font-size:14px;line-height:1.5;font-synthesis:none;--line:#e3e5ed;--accent:#6f58c6;--space:16px}*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}header{min-height:80px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:20px;padding:18px 24px}header strong{font-size:22px}header strong span{font-weight:400;color:#75798d}#connection{margin-left:auto;color:#707486;font-size:13px}main{margin:0 auto;padding:20px 24px;max-width:1680px}h1,h2,h3,p{margin:0}h1{font-size:22px;line-height:1.3}h2{font-size:17px;line-height:1.4}h3{font-size:14px;line-height:1.4}p{line-height:1.6}button,input,textarea,select{font:inherit}button{background:#fff;border:1px solid #dcdfea;border-radius:8px;padding:9px 14px;cursor:pointer;color:inherit}button:hover{background:#f4f2fb}button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid #7660cc;outline-offset:2px}button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}button:disabled{opacity:.45;cursor:default}input,select,textarea{width:100%;border:1px solid #dcdfea;border-radius:8px;padding:10px 12px;background:#fff;color:inherit}label{display:block;font-size:14px}label input,label textarea,label select{display:block;margin-top:6px}textarea{resize:vertical}small,.muted{color:#727789}section.card,.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px}
+.login{max-width:440px;margin:50px auto;display:grid;gap:20px}form{display:grid;gap:16px}form>button{justify-self:start}
+.columns{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
+.columns>aside{display:grid;gap:16px;min-width:0}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px;align-items:start}
+.stack{display:grid;gap:16px;min-width:0}
+.stack>section.card{display:grid;gap:16px;min-width:0}
+.actions{display:flex;gap:10px;align-items:center}
+.actions small{margin-right:auto}
+.task-list{display:grid;gap:6px}
+.task-list button{text-align:left;font-size:14px;padding:10px 12px}
+.task-list button.selected{background:#eeebfb;border-color:#bdb0ef;color:#6149b7}
+.task-list button small{display:block;font-size:12px;margin-top:3px}
+.prompt{font-size:16px}
+.task-card{display:grid;gap:16px;min-width:0;align-content:start}
+.task-heading{display:grid;gap:10px}
+.lesson{border-top:1px solid var(--line);padding-top:16px;display:grid;gap:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f5fa;border-radius:8px;padding:12px;font-size:13px;line-height:1.6;margin:0}pre,code,#sql,.sql-input{font-family:"Cascadia Code",Consolas,Menlo,monospace}#sql{min-height:220px;height:clamp(220px,32vh,380px);background:#25283b;color:#f6f6fc;border:0;padding:16px;resize:none;line-height:1.6}details{border-top:1px solid #e9ebf1;padding:0}summary{cursor:pointer;font-weight:500;list-style:none;display:flex;align-items:center;gap:10px;padding:10px 0;line-height:1.5}summary::-webkit-details-marker{display:none}summary::before{content:"";width:7px;height:7px;border-right:1.5px solid #797c8e;border-bottom:1.5px solid #797c8e;transform:rotate(-45deg);flex-shrink:0;margin:0 3px;transition:transform .12s}details[open]>summary::before{transform:rotate(45deg)}details>p,details>pre,details>.table-scroll{margin:2px 0 12px}details>details{margin-left:18px}
+.inline-terms{display:grid;gap:0}
+.inline-terms details:first-child{border:0}
+.inline-terms summary{font-size:14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;border-bottom:1px solid #e8eaf1;padding:8px 10px;white-space:nowrap}
+.table-scroll{overflow:auto;max-height:300px;scrollbar-width:thin;scrollbar-color:#c6c7d3 transparent}
+.error{color:#a3313e;white-space:pre-wrap}
+.success{color:#267657}#notice{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#25283b;color:#fff;padding:12px 20px;border-radius:10px;max-width:90%;display:none;z-index:20}#notice.visible{display:block}#lock{position:fixed;inset:0;background:#25283be6;z-index:30;display:grid;place-items:center}#lock[hidden]{display:none}#lock section{max-width:520px;background:#fff;border-radius:12px;padding:32px;display:grid;gap:16px}
+.student-row{display:grid;gap:8px;padding:12px 0;border-bottom:1px solid #e9ebf1}
+.student-row button{justify-self:start;font-size:12px}
+.check{display:flex;align-items:flex-start;gap:10px}
+.check input{width:auto;margin:4px 0}
+.badge{justify-self:start;display:inline-block;color:#7056b9;background:#f0edfa;border-radius:6px;padding:3px 8px;font-size:12px}#preview{min-width:0}
+.picker{position:relative;border:0;margin-top:6px}
+.picker>summary{border:1px solid #dcdfea;border-radius:8px;padding:10px 12px;font-weight:400;justify-content:space-between}
+.picker>summary::before{display:none}
+.picker>summary::after{content:"";width:7px;height:7px;flex-shrink:0;border-right:1.5px solid #797c8e;border-bottom:1.5px solid #797c8e;transform:rotate(45deg);margin:0 3px 3px 10px}
+.picker[open]>summary::after{transform:rotate(225deg);margin-top:5px}
+.picker-menu{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:5;border:1px solid var(--line);border-radius:10px;padding:6px;background:#fff;box-shadow:0 8px 24px #25273812;min-width:0}
+.picker-menu input{margin:0 0 6px;font-size:13px}
+.picker-options{max-height:240px;overflow:auto;scrollbar-width:thin}
+.picker-options button{display:block;width:100%;border:0;text-align:left;padding:9px 10px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.picker-options button[aria-pressed=true]{background:#eeebfb;color:#6149b7}
+.picker-options button[hidden]{display:none}
+.picker-empty{padding:10px;color:#727789;font-size:13px}
+.pagination[hidden]{display:none}
+.reference{display:grid;gap:12px}
+@media(min-width:1101px){body:has(.workspace){height:100dvh;overflow:hidden}body:has(.workspace) main{height:calc(100dvh - 80px)}body:has(.workspace) .columns,body:has(.workspace) #work,body:has(.workspace) .workspace{height:100%;min-height:0}
+.task-card{max-height:100%;overflow:auto;scrollbar-width:thin;scrollbar-color:#c6c7d3 transparent}
+.workspace>.stack{max-height:100%;overflow:auto;scrollbar-width:thin;scrollbar-color:#c6c7d3 transparent}
+.columns>aside{max-height:100%;overflow:visible}
+.task-list{max-height:calc(100dvh - 370px);overflow:auto;scrollbar-width:thin}}
+@media(max-width:1100px){.workspace{grid-template-columns:1fr}
+.columns{grid-template-columns:220px minmax(0,1fr)}main{padding:16px}
+.panel,section.card{padding:16px}header{padding:18px 20px}}
+@media(max-width:650px){.columns{grid-template-columns:1fr}header{gap:12px;flex-wrap:wrap}#connection{font-size:12px}header strong{font-size:19px}
+.picker-menu{position:relative;top:6px}
+.task-list{grid-template-columns:1fr 1fr}
+.student-row{grid-template-columns:1fr auto}}
+/* One interval per boundary: disclosure padding must not double the section gap. */
+.task-card{gap:12px;padding:18px}
+.task-card>.lesson{gap:10px;padding-top:12px}
+.task-card>details>summary{padding:10px 0 0}
+.task-card>.lesson>details{border-top:0}
+.task-card>.lesson>details>summary{padding:0}
+.task-card .inline-terms summary{padding:8px 0}
+.task-card .inline-terms details:first-child summary{padding-top:0}
+.task-card #preview details:first-child{border-top:0}
+.task-card #preview summary{padding:8px 0}
+.task-card .lesson>p{line-height:1.55}
+.workspace{gap:12px}
+.workspace>.stack{gap:12px}
+.columns{gap:12px}
+.columns>aside{gap:12px;padding:18px}
+#sql{height:clamp(200px,27vh,300px);min-height:200px}
+/* Desktop workspace occupies the window; unused space belongs inside a panel. */
+@media(min-width:1101px){
+  body:has(.workspace) main{padding:12px;height:calc(100dvh - 80px);max-width:none}
+  body:has(.workspace) .columns{grid-template-columns:220px minmax(0,1fr);align-items:stretch}
+  body:has(.workspace) .columns>aside{height:100%;display:flex;flex-direction:column;overflow:visible}
+  body:has(.workspace) .columns>aside h2,body:has(.workspace) .columns>aside p,body:has(.workspace) .columns>aside label{flex-shrink:0}
+  body:has(.workspace) .task-list{min-height:0;max-height:none;flex:1;align-content:start;overflow:auto}
+  body:has(.workspace) .columns>aside>#glossary{margin-top:auto;flex-shrink:0}
+  .workspace{align-items:stretch;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr)}
+  .task-card{height:100%;align-content:start}
+  .workspace>.stack{height:100%;overflow:hidden;grid-template-rows:minmax(240px,1fr) minmax(160px,.48fr)}
+  .workspace>.stack>section.card{display:flex;flex-direction:column;min-height:0;padding:18px;gap:12px}
+  #sql{flex:1;min-height:100px;height:auto}
+  .workspace>.stack .actions{flex-shrink:0}
+  #result{min-height:0;max-height:none;flex:1}
+}
+@media(min-width:1101px){
+  body:has(main[data-screen=teacher]){height:100dvh;overflow:hidden}
+  main[data-screen=teacher]{height:calc(100dvh - 80px);padding:12px;max-width:none}
+  main[data-screen=teacher]>.columns{height:100%;grid-template-columns:220px minmax(0,1fr);align-items:stretch}
+  main[data-screen=teacher] aside{height:100%;min-height:0;display:flex;flex-direction:column}
+  main[data-screen=teacher] #students{overflow:auto;min-height:0;scrollbar-width:thin}
+  main[data-screen=teacher] .stack{height:100%;min-height:0;overflow:auto;scrollbar-width:thin;padding-right:2px}
+}

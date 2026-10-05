@@ -1,6 +1,6 @@
 {
   "name": "sql-classroom-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Локальный SQL-тренажёр для компьютерного класса",
   "author": "SQL-пространство",

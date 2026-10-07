@@ -13,6 +13,18 @@ function verify(password: string, saved: string) { const [salt, value] = saved.s
 function fail(message: string, status = 400): never { throw Object.assign(new Error(message), { status }); }
 const bounded = (value: unknown, max: number) => typeof value === 'string' && value.trim().length > 0 && value.length <= max ? value : fail('Проверьте заполнение полей.');
 
+function themePreference(input: any) {
+  if (!input || !['light','mist','paper','dark','onyx','midnight'].includes(input.preset)) fail('Выберите доступную тему.');
+  const colors: Record<string,string> = {};
+  if (input.colors !== undefined) {
+    if (!input.colors || typeof input.colors !== 'object' || Array.isArray(input.colors)) fail('Некорректные цвета.');
+    for (const [key,value] of Object.entries(input.colors)) {
+      if (!['background','surface','accent','editor'].includes(key) || typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) fail('Цвет задаётся в формате #RRGGBB.');
+      colors[key] = value.toUpperCase();
+    }
+  }
+  return {preset:input.preset, colors};
+}
 export async function startServer(options: { port?: number; dataDir?: string } = {}) {
   const dir = options.dataDir || process.env.SQL_CLASSROOM_DATA || path.join(process.cwd(), '.classroom-data');
   mkdirSync(dir, { recursive: true });
@@ -45,6 +57,11 @@ export async function startServer(options: { port?: number; dataDir?: string } =
     const item = assignment(student, taskId);
     return publicTask(item.task, item.revision, !!state.policies[taskId]);
   };
+  function hintUsage(student: any, taskId: string) {
+    const openedAt: number[] = student.hints?.[taskId] || [];
+    const task = student.assigned[taskId]?.task;
+    return {count: openedAt.length, total: task?.hints.length || 0, openedAt};
+  }
   function evaluate(task: Task, snapshot: string | undefined, code: string, check: boolean): Promise<any> {
     if (activeWorkers >= 4) fail('Проверка занята. Повторите через несколько секунд.', 429);
     activeWorkers++;
@@ -81,7 +98,7 @@ export async function startServer(options: { port?: number; dataDir?: string } =
       if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) fail('Запрос с другого сайта запрещён.', 403);
       const pathname = new URL(req.url || '/', 'http://localhost').pathname;
       if (!pathname.startsWith('/api/')) {
-        const assets: Record<string, string> = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'};
+        const assets: Record<string, string> = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/themes.js': 'themes.js'};
         const asset = assets[pathname]; if (!asset) fail('Страница не найдена.', 404);
         res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'");
         res.writeHead(200, {'Content-Type': asset.endsWith('.js') ? 'text/javascript' : asset.endsWith('.css') ? 'text/css' : 'text/html; charset=utf-8'});
@@ -101,21 +118,44 @@ export async function startServer(options: { port?: number; dataDir?: string } =
         const credential = role === 'teacher' ? state.teacherHash : student?.passwordHash;
         if (!credential || !verify(password, credential)) fail('Неверный логин или пароль.', 401);
         const session = token(); sessions.set(session, {role, id: role === 'student' ? student.id : undefined, expires: Date.now() + 8 * 3600_000});
-        return respond({token: session, role});
+        return respond({token: session, role, theme:role === 'teacher' ? state.teacherTheme || {preset:'light'} : student.theme || {preset:'light'}, themePresets:role === 'teacher' ? state.teacherThemePresets || [] : student.themePresets || []});
       }
       const bearer = (req.headers.authorization || '').replace(/^Bearer /, '');
       const session = sessions.get(bearer); if (!session || session.expires < Date.now()) fail('Войдите в приложение.', 401);
       if (pathname === '/api/logout' && req.method === 'POST') { sessions.delete(bearer); return respond({ok: true}); }
+      if (pathname === '/api/theme' && req.method === 'POST') {
+        const theme = themePreference(input.theme);
+        if (session.role === 'teacher') state.teacherTheme = theme;
+        else {const student = state.students.find((item: any) => item.id === session.id) || fail('Профиль не найден.',401); student.theme = theme;}
+        persist(); return respond({theme});
+      }
+      if (pathname === '/api/theme-presets' && req.method === 'POST') {
+        const owner = session.role === 'teacher' ? state : state.students.find((item: any) => item.id === session.id) || fail('Профиль не найден.',401);
+        const key = session.role === 'teacher' ? 'teacherThemePresets' : 'themePresets';
+        const presets = owner[key] || [];
+        if (input.action === 'save') {
+          const name = bounded(input.name,50).trim();
+          const theme = themePreference(input.theme);
+          if (presets.length >= 30) fail('Можно сохранить до 30 тем. Удалите ненужную тему.');
+          if (presets.some((item: any) => item.name.toLocaleLowerCase('ru') === name.toLocaleLowerCase('ru'))) fail('Тема с таким названием уже есть. Выберите другое название.',409);
+          owner[key] = [...presets,{id:token(),name,theme}];
+        } else if (input.action === 'delete') {
+          if (!presets.some((item: any) => item.id === input.id)) fail('Тема не найдена.',404);
+          owner[key] = presets.filter((item: any) => item.id !== input.id);
+        } else fail('Неизвестное действие.');
+        persist(); return respond({themePresets:owner[key]});
+      }
       if (pathname.startsWith('/api/teacher/')) {
         if (session.role !== 'teacher') fail('Доступ только преподавателю.', 403);
         if (pathname === '/api/teacher/overview' && req.method === 'GET') return respond({revision: state.revision,
-          tasks: catalog().map(task => ({...task, seed: sourceSeed(task)})), policies: state.policies, students: state.students.map(({id, login, completed, lockedUntil}: any) => ({id, login, completed, lockedUntil})), attempts: state.attempts.slice(-100)});
+          tasks: catalog().map(task => ({...task, seed: sourceSeed(task)})), policies: state.policies, students: state.students.map((student: any) => ({id: student.id, login: student.login, completed: student.completed, lockedUntil: student.lockedUntil,
+            hintUsage: Object.keys(student.hints || {}).map(taskId => ({taskId, title: student.assigned[taskId]?.task.title || taskId, variantIndex: student.assigned[taskId]?.task.variantIndex || 1, ...hintUsage(student, taskId)}))})), attempts: state.attempts.slice(-100)});
         if (pathname === '/api/teacher/student' && req.method === 'POST') {
           const login = bounded(input.login, 40).trim(), password = bounded(input.password, 128);
           if (password.length < 8) fail('Пароль ученика: минимум 8 символов.');
           if (state.students.some((item: any) => item.login === login)) fail('Такой логин уже существует.', 409);
           state.students.push({ id: token(), login, passwordHash: hash(password), slot: state.students.length,
-            assigned: {}, completed: [], snapshots: {}, lockedUntil: 0 }); persist(); return respond({ok: true});
+            assigned: {}, completed: [], snapshots: {}, hints: {}, lockedUntil: 0 }); persist(); return respond({ok: true});
         }
         if (pathname === '/api/teacher/task' && req.method === 'POST') {
           const previous = catalog().find(task => task.id === input.id) || fail('Задание не найдено.', 404);
@@ -140,7 +180,18 @@ export async function startServer(options: { port?: number; dataDir?: string } =
       if (pathname === '/api/glossary' && req.method === 'GET') return respond(glossaryLong);
       if (req.method !== 'POST') fail('Действие не найдено.', 404);
       const taskId = bounded(input.taskId, 100), item = assignment(student, taskId);
-      if (pathname === '/api/task') return respond({task: visible(student, taskId), lockedUntil: student.lockedUntil});
+      if (pathname === '/api/task') return respond({task: visible(student, taskId), lockedUntil: student.lockedUntil, hintUsage: hintUsage(student, taskId)});
+      if (pathname === '/api/hint') {
+        if (student.lockedUntil > Date.now()) fail('Работа приостановлена на 30 секунд.', 423);
+        const index = input.index;
+        if (!Number.isInteger(index) || index < 0 || index >= item.task.hints.length) fail('Подсказка не найдена.', 400);
+        student.hints ||= {};
+        const openedAt: number[] = student.hints[taskId] || [];
+        if (index > openedAt.length) fail('Сначала откройте предыдущую подсказку.', 409);
+        // A retry never counts as a second opening or changes its timestamp.
+        if (index === openedAt.length) {openedAt.push(Date.now()); student.hints[taskId] = openedAt; persist();}
+        return respond({hintUsage: hintUsage(student, taskId)});
+      }
       if (pathname === '/api/violation') {
         if (state.policies[taskId]) {
           student.lockedUntil = Math.max(student.lockedUntil, Date.now() + 30_000);

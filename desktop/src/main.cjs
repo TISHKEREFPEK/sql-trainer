@@ -5,8 +5,8 @@ let win, host, browserSession, session = '', currentTask = '', restricted = fals
 const pkg = require('../package.json');
 const teacher = pkg.classroomRole === 'teacher' || (!app.isPackaged && process.argv.includes('--teacher'));
 let address = 'http://127.0.0.1:47831';
-const publicRoutes = new Set(['/api/status', '/api/login', '/api/logout']);
-const studentRoutes = new Set(['/api/catalog', '/api/task', '/api/execute', '/api/glossary', '/api/violation']);
+const publicRoutes = new Set(['/api/status', '/api/login', '/api/logout', '/api/theme', '/api/theme-presets']);
+const studentRoutes = new Set(['/api/catalog', '/api/task', '/api/execute', '/api/glossary', '/api/violation', '/api/hint']);
 const teacherRoutes = new Set(['/api/setup', '/api/teacher/overview', '/api/teacher/student', '/api/teacher/task', '/api/teacher/unlock']);
 function trusted(event) { return win && event.sender === win.webContents && event.senderFrame?.url === pathToFileURL(path.join(__dirname, 'ui/index.html')).href; }
 async function api(route, data) {

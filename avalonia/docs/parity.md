@@ -30,6 +30,10 @@
 | Отдельный сервер, tray, завершение | HostManager, process stdin, native tray | Серверный restart | Tray Windows |
 | Изоляция по времени/правам/памяти | Authorizer, deadline, restricted token, Job | Файловые запреты, 5-с таймаут | Windows native limits |
 | Backup до импорта/миграции, daily/manual/restore | Storage/Backups | Online backup и restore | Обновление установщика |
-| Раздельные Windows x64-поставки | Self-contained publish, Inno Setup, CI | Кросс-сборка и проверка Student | Установщики Windows 11/10 |
+| Раздельные Windows x64-поставки | Self-contained publish, Inno Setup, CI | Windows CI: 14 проверок, два установщика, проверка Student | Установщики Windows 11/10 |
 
 Окончательная готовность требует закрыть ручные пункты из [acceptance.md](acceptance.md). Сайт и прежний Electron сохранены для сравнения и отката. Личные базы, пароли и сертификаты не входят в репозиторий.
+
+## Выполненная Windows CI · 9 октября 2026
+
+[Run 37898932247](https://github.com/TISHKEREFPEK/sql-trainer/actions/runs/37898932247), коммит `653fb5f`: locked restore, Release build без предупреждений/ошибок, 9 тестов логики/API и 5 UI-тестов прошли. Сетевой тест использует Windows worker с Job Object и restricted token, 35 клиентов и 5-секундный таймаут. Проверены импорт/rollback, восстановление старой схемы и повторный вход. Обе self-contained публикации и оба Inno Setup установщика собраны, проверка отсутствия серверных файлов в Student прошла. Это Windows runner, не физический кабинет и не проверка захвата окна/DPI/tray.

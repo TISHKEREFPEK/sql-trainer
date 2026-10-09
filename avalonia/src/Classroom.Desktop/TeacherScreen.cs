@@ -243,6 +243,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         foreach (var(key, label, multiline)in new[]
         {
             ("title", "Название", false),
+            ("minutes", "Ориентир времени для преподавателя, мин", false),
             ("module", "Тема", false),
             ("prompt", "Условие", true),
             ("concept", "Объяснение", true),
@@ -475,8 +476,8 @@ public sealed class TeacherScreen : UserControl, IDisposable
             return;
         document = JsonNode.Parse(version.SelectedIndex <= 0 ? authoring.TaskJson : authoring.AlternativeJson[version.SelectedIndex - 1])!.AsObject();
         foreach (var(key, input)in fields)
-            input.Text = key is "terms" or "hints" ? string.Join(key == "terms" ? ", " : "\n", document[key]?.AsArray().Select(v => v!.GetValue<string>()) ?? []) : document[key]?.GetValue<string>() ?? "";
-        mode.SelectedIndex = document["mode"]?.GetValue<string>()=="state"?1:0;
+            input.Text = key == "minutes" ? (document[key]?.GetValue<int>() ?? 0).ToString() : key is "terms" or "hints" ? string.Join(key == "terms" ? ", " : "\n", document[key]?.AsArray().Select(v => v!.GetValue<string>()) ?? []) : document[key]?.GetValue<string>() ?? "";
+        mode.SelectedIndex = document["mode"]?.GetValue<string>() == "state" ? 1 : 0;
         ordered.IsChecked = document["ordered"]?.GetValue<bool>() ?? false;
         eligible.IsChecked = document["variantEligible"]?.GetValue<bool>() ?? true;
         restricted.IsChecked = authoring.Restricted;
@@ -487,10 +488,10 @@ public sealed class TeacherScreen : UserControl, IDisposable
         if (document is null || selectedId is null)
             return;
         foreach (var(key, input)in fields)
-            document[key] = key is "terms" or "hints" ? JsonSerializer.SerializeToNode((input.Text ?? "").Split(key == "terms" ? ',' : '\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)) : (JsonNode? )JsonValue.Create(input.Text ?? "");
+            document[key] = key == "minutes" ? JsonValue.Create(int.TryParse(input.Text, out var minutes) && minutes >= 0 ? minutes : throw new InvalidDataException("Введите неотрицательное время в минутах.")) : key is "terms" or "hints" ? JsonSerializer.SerializeToNode((input.Text ?? "").Split(key == "terms" ? ',' : '\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)) : (JsonNode? )JsonValue.Create(input.Text ?? "");
         if (string.IsNullOrWhiteSpace(fields["project"].Text))
             document["project"] = null;
-        document["mode"] = mode.SelectedIndex==1?"state":"query";
+        document["mode"] = mode.SelectedIndex == 1 ? "state" : "query";
         document["ordered"] = ordered.IsChecked == true;
         document["variantEligible"] = eligible.IsChecked == true;
         if (version.SelectedIndex <= 0)

@@ -19,7 +19,8 @@ public sealed class ClassroomApi : IDisposable
 
     public ClassroomApi(ConnectionSettings connection)
     {
-        var uri = new Uri(connection.Address);
+        if (!Uri.TryCreate(connection.Address, UriKind.Absolute, out var uri))
+            throw new InvalidDataException("Введите корректный HTTPS-адрес преподавателя.");
         var fingerprint = connection.Fingerprint.Replace(" ", "").Replace(":", "").ToUpperInvariant();
         if (uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo) || uri.AbsolutePath != "/" || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment) || fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit))
             throw new InvalidDataException("Введите HTTPS-адрес и полный отпечаток сертификата SHA-256.");

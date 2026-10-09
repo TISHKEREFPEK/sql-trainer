@@ -141,6 +141,86 @@ public sealed class CoreTests
     }
 
     [Fact]
+    public async Task ImportedProjectSnapshotContinuesWithPinnedVariant()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "sql-project-import-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var source = Path.Combine(dir, "electron.sqlite");
+        var target = Path.Combine(dir, "new.sqlite");
+        try
+        {
+            var chain = Catalog.Data.Tasks.Where(t => t.Project == "library").Select(t => Variants.Create(t)[0]).ToArray();
+            string? snapshot = null;
+            foreach (var task in chain.Take(2))
+            {
+                var result = SqlEngine.Evaluate(new(task, snapshot, task.Solution, true));
+                Assert.True(result.Result.Correct, result.Result.Error);
+                snapshot = result.Snapshot ?? snapshot;
+            }
+
+            Assert.NotNull(snapshot);
+            var state = new
+            {
+                teacherHash = (string? )null,
+                students = new[]
+                {
+                    new
+                    {
+                        id = "project-student",
+                        login = "project-test",
+                        passwordHash = Passwords.Hash("project-test-password"),
+                        slot = 0,
+                        assigned = chain.ToDictionary(t => t.Id, t => new { task = t, revision = 3 }),
+                        completed = chain.Take(2).Select(t => t.Id).ToArray(),
+                        snapshots = new Dictionary<string, string>
+                        {
+                            ["library"] = snapshot!
+                        },
+                        hints = new Dictionary<string, long[]>()
+                    }
+                },
+                overrides = new Dictionary<string, object>(),
+                policies = new Dictionary<string, bool>(),
+                attempts = Array.Empty<object>()
+            };
+            using (var con = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = source, Pooling = false }.ToString()))
+            {
+                con.Open();
+                using var cmd = con.CreateCommand();
+                cmd.CommandText = "CREATE TABLE state(id INTEGER PRIMARY KEY,value TEXT); INSERT INTO state VALUES(1,@json)";
+                cmd.Parameters.AddWithValue("@json", Wire.Write(state));
+                cmd.ExecuteNonQuery();
+            }
+
+            await using var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + target).Options);
+            await db.Database.MigrateAsync();
+            foreach (var task in Catalog.Data.Tasks)
+                db.Tasks.Add(new() { Id = task.Id, Json = Catalog.Write(task) });
+            await db.SaveChangesAsync();
+            var preview = ElectronImport.Preview(source, "project");
+            Assert.Equal(1, preview.Projects);
+            await ElectronImport.Commit(db, source, preview.SourceHash, new Backups(target));
+            var saved = await db.Snapshots.FindAsync("project-student", "library");
+            Assert.Equal(snapshot, saved!.Base64);
+            snapshot = saved.Base64;
+            foreach (var task in chain.Skip(2))
+            {
+                var assignment = await db.Assignments.FindAsync("project-student", task.Id);
+                Assert.Equal(2, Catalog.Read(assignment!.Json).VariantIndex);
+                Assert.Equal(Array.FindIndex(chain, t => t.Id == task.Id), assignment.ProjectOrder);
+                var result = SqlEngine.Evaluate(new(Catalog.Read(assignment.Json), snapshot, task.Solution, true));
+                Assert.True(result.Result.Correct, result.Result.Error);
+                snapshot = result.Snapshot ?? snapshot;
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public async Task DamagedImportRollsBackEverything()
     {
         var dir = Path.Combine(Path.GetTempPath(), "sql-bad-import-" + Guid.NewGuid());

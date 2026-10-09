@@ -72,7 +72,12 @@ public sealed class ElectronImport
             }
 
             foreach (var snapshot in Properties(student, "snapshots"))
+            {
+                if (!Properties(student, "assigned").Any(a => Catalog.Read(a.Value.GetProperty("task").GetRawText()).Project == snapshot.Name))
+                    throw new InvalidDataException("Проектный снимок без выданной цепочки заданий.");
                 ValidateSnapshot(snapshot.Value.GetString()!);
+            }
+
             if (student.TryGetProperty("theme", out var theme))
                 Themes.Validate(Wire.Read<ThemePreference>(theme.GetRawText()));
             if (student.TryGetProperty("themePresets", out var presets))

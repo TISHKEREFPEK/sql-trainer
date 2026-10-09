@@ -14,7 +14,7 @@
 
 Скрипт выполняет locked restore, Release build, тесты и четыре self-contained публикации, проверяет отсутствие серверных файлов в ученической поставке и создаёт два установщика в `avalonia/artifacts/installers`. Установленный .NET, Node.js и Electron для работы не нужны. `-SkipInstaller` создаёт папки приложений, `-SkipTests` пропускает проверки при повторной упаковке.
 
-GitHub Actions `.github/workflows/avalonia-windows.yml` выполняет эту сборку на Windows; результаты находятся в артефакте `SQL-Avalonia-Windows-x64`. Установщики пока без цифровой подписи. Установщик и удаление приложения сохраняют пользовательские базы и настройки вне каталога программы.
+GitHub Actions `.github/workflows/avalonia-windows.yml` выполняет эту сборку на Windows. [Сборка 9 октября 2026](https://github.com/TISHKEREFPEK/sql-trainer/actions/runs/37898932247) прошла успешно: 9 проверок логики/API и 5 проверок UI, собраны `SQL-Teacher-0.1.0-win-x64.exe` и `SQL-Student-0.1.0-win-x64.exe`. [Архив с установщиками и отчётами](https://github.com/TISHKEREFPEK/sql-trainer/actions/runs/37898932247/artifacts/11601179571) хранится 14 дней. Установщики пока без цифровой подписи. Установщик и удаление приложения сохраняют пользовательские базы и настройки вне каталога программы.
 
 ## Запуск из исходников
 

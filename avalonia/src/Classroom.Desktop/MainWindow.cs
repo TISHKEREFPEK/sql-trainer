@@ -339,7 +339,7 @@ public sealed class MainWindow : Window
     {
         if (quitting)
             return;
-        if (teacher && OperatingSystem.IsWindows())
+        if (teacher && OperatingSystem.IsWindows() && tray is not null)
         {
             e.Cancel = true;
             Hide();

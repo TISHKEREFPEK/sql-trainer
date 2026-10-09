@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+artifacts/
+.classroom-data/
+*.user
+*.sqlite*
+*.pfx
+TestResults/

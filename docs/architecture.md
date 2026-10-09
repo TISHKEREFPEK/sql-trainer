@@ -1,5 +1,10 @@
 # Архитектура
 
+## Самостоятельное направление Avalonia
+
+Новое решение `avalonia/` использует .NET 10 / Avalonia 11. Учебный SQL в этом направлении выполняется на преподавательском компьютере в отдельном worker с in-memory SQLite, а не в D1. HTTPS и pinning, реляционное хранение EF Core, immutable назначения/цепочки, атомарная completion+snapshot+operation, импорт Electron, резервные копии и UI описаны в [avalonia/docs/architecture.md](../avalonia/docs/architecture.md). Ученическая поставка не включает серверные модули и каталог решений. Правила browser sql.js ниже относятся к прежнему сайту.
+
+
 ## Где искать код
 
 | Файл | Ответственность |

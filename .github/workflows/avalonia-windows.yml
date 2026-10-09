@@ -1,0 +1,31 @@
+name: Avalonia Windows x64
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/avalonia-classroom']
+    paths: ['avalonia/**', '.github/workflows/avalonia-windows.yml']
+  pull_request:
+    paths: ['avalonia/**', '.github/workflows/avalonia-windows.yml']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.401'
+      - name: Build, check 35 clients, and package both applications
+        shell: pwsh
+        run: ./avalonia/scripts/build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SQL-Avalonia-Windows-x64
+          path: |
+            avalonia/artifacts/installers/*.exe
+            avalonia/artifacts/tests/*.trx
+            avalonia/artifacts/ui/*.png
+          retention-days: 14

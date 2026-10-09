@@ -4,6 +4,7 @@ namespace Classroom.Domain;
 public static class Variants
 {
     const string Tokens = "'(?:''|[^'])*'|--[^\\n]*|/\\*[\\s\\S]*?\\*/|\"(?:\"\"|[^\"])*\"|`[^`]*`|\\[[^\\]]*\\]|\\b[a-zA-Z_]\\w*\\b";
+    public static string WithoutComments(string sql) => Regex.Replace(sql, Tokens, m => m.Value.StartsWith("--") || m.Value.StartsWith("/*") ? " " : m.Value);
     public static string Sql(string sql, Dictionary<string, string>? names)
     {
         if (names is null)

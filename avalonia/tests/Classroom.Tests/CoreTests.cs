@@ -83,6 +83,10 @@ public sealed class CoreTests
     public void QueriesCannotWriteOrAccessFilesAndErrorsAreOriginal()
     {
         var task = Catalog.Data.Tasks[0];
+        Assert.True(SqlEngine.Evaluate(new(task, null, "-- Комментарий ученика\n/* перед запросом */\n" + task.Solution, true)).Result.Correct);
+        var transaction = Catalog.Data.Tasks.Single(t => t.Id == "transaction");
+        Assert.True(SqlEngine.Evaluate(new(transaction, null, "-- начало\n" + transaction.Solution + "\n-- завершение", true)).Result.Correct);
+        Assert.False(SqlEngine.Evaluate(new(transaction, null, transaction.Solution.Replace("COMMIT;", "-- COMMIT;"), true)).Result.Correct);
         Assert.Contains("syntax error", SqlEngine.Evaluate(new(task, null, "SELECT * FRM students;", true)).Result.Error);
         Assert.Contains("no such column", SqlEngine.Evaluate(new(task, null, "SELECT missing FROM students", true)).Result.Error);
         Assert.False(SqlEngine.Evaluate(new(task, null, "SELECT name FROM students", true)).Result.Correct);

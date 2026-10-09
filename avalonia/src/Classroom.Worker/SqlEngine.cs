@@ -201,11 +201,12 @@ public static class SqlEngine
         try
         {
             var task = request.Task;
+            var statements = Variants.WithoutComments(request.Code);
             using var actual = Make(task, request.Snapshot);
             using var expected = Make(task, request.Snapshot);
             Guard(actual, task.Mode != "state");
             Guard(expected, task.Mode != "state");
-            if (!string.IsNullOrWhiteSpace(request.Code) && task.Mode != "state" && !Regex.IsMatch(request.Code, "^\\s*(SELECT|WITH)\\b", RegexOptions.IgnoreCase))
+            if (!string.IsNullOrWhiteSpace(request.Code) && task.Mode != "state" && !Regex.IsMatch(statements, "^\\s*(SELECT|WITH)\\b", RegexOptions.IgnoreCase))
                 throw new InvalidDataException("Для этого задания нужен запрос SELECT или WITH.");
             var output = Query(actual, request.Code);
             var correct = false;
@@ -214,7 +215,7 @@ public static class SqlEngine
                 var target = Query(expected, task.Solution);
                 correct = task.Mode == "state" ? State(actual) == State(expected) : Normalize(output, task.Ordered) == Normalize(target, task.Ordered);
                 if (task.Id == "transaction")
-                    correct = correct && Regex.IsMatch(request.Code, "^\\s*BEGIN\\b", RegexOptions.IgnoreCase) && Regex.IsMatch(request.Code.Trim(), "\\bCOMMIT\\s*;?\\s*$", RegexOptions.IgnoreCase);
+                    correct = correct && Regex.IsMatch(statements, "^\\s*BEGIN\\b", RegexOptions.IgnoreCase) && Regex.IsMatch(statements.Trim(), "\\bCOMMIT\\s*;?\\s*$", RegexOptions.IgnoreCase);
                 if (task.Id == "constraint")
                 {
                     var table = Quote(task.TableMap?.GetValueOrDefault("tickets") ?? "tickets");

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../Classroom.Storage/Classroom.Storage.csproj" />
+    <ProjectReference Include="../Classroom.Contracts/Classroom.Contracts.csproj" />
+    <ProjectReference Include="../Classroom.Domain/Classroom.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Classroom.Student</AssemblyName>
+    <ApplicationIcon>../Classroom.Desktop/classroom.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Classroom.Desktop/Classroom.Desktop.csproj" />
+  </ItemGroup>
+</Project>

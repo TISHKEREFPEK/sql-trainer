@@ -181,7 +181,7 @@ public sealed class CoreTests
                 overrides = new Dictionary<string, object>(),
                 policies = new Dictionary<string, bool>()
             };
-            using (var con = new SqliteConnection("Data Source=" + source))
+            using (var con = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = source, Pooling = false }.ToString()))
             {
                 con.Open();
                 using var cmd = con.CreateCommand();
@@ -273,7 +273,7 @@ public sealed class CoreTests
                     }
                 }
             };
-            using (var con = new SqliteConnection("Data Source=" + source))
+            using (var con = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = source, Pooling = false }.ToString()))
             {
                 con.Open();
                 using var command = con.CreateCommand();

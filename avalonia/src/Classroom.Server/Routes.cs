@@ -503,6 +503,7 @@ public static class Routes
                 if (state.HasActiveChecks)
                     throw new HttpFault(409, "Дождитесь завершения проверок.");
                 state.Backups.Restore(name);
+                await state.Initialize();
                 state.Sessions.Clear();
                 return new
                 {

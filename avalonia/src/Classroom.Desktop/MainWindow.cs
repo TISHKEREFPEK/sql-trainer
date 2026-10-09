@@ -275,6 +275,13 @@ public sealed class MainWindow : Window
 
     async void OnKey(object? sender, KeyEventArgs e)
     {
+        if (student is not null && e.Key == Key.Enter && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
+        {
+            e.Handled = true;
+            await Safe(student.CheckShortcut);
+            return;
+        }
+
         if (student?.Restricted != true)
             return;
         if (((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0 && e.Key is Key.C or Key.X or Key.V) || (e.Key == Key.Insert && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift)) != 0) || (e.Key == Key.Delete && e.KeyModifiers.HasFlag(KeyModifiers.Shift)))

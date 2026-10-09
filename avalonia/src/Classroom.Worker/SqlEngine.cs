@@ -250,7 +250,9 @@ public static class SqlEngine
             var tables = Query(actual, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").Values.Select(row =>
             {
                 var name = row[0].GetString()!;
-                return new TablePreview(name, Query(actual, $"SELECT * FROM {Quote(name)} LIMIT 8"));
+                var columns = Query(actual, $"PRAGMA table_info({Quote(name)})").Values.Select(c => new ColumnDefinition(c[1].GetString()!, c[2].GetString()!, c[3].GetInt32() != 0, c[5].GetInt32() != 0)).ToArray();
+                var keys = Query(actual, $"PRAGMA foreign_key_list({Quote(name)})").Values.Select(k => new ForeignKeyDefinition(k[3].GetString()!, k[2].GetString()!, k[4].ValueKind == JsonValueKind.Null ? "primary key" : k[4].GetString()!)).ToArray();
+                return new TablePreview(name, Query(actual, $"SELECT * FROM {Quote(name)} LIMIT 8"), columns, keys);
             }).ToArray();
             var snapshot = correct && task.Mode == "state" && task.Project is not null ? Snapshot(actual) : null;
             return new(new(correct, output with { Values = output.Values.Take(200).ToArray() }, tables, null, null), snapshot);

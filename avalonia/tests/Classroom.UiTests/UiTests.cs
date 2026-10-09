@@ -44,8 +44,10 @@ public sealed class UiTests
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void TeacherScreenRenders()
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TeacherScreenRenders(bool reports)
     {
         ThemeManager.Apply(new());
         var window = new MainWindow(true, false);
@@ -53,11 +55,11 @@ public sealed class UiTests
         using var view = new TeacherScreen(window, api, new HostManager());
         var items = Catalog.Data.Tasks.Select(t => new CatalogueItem(t.Id, t.Title, t.Module, t.Project)).ToArray();
         var task = Catalog.Data.Tasks.Single(t => t.Id == "where");
-        view.Preview(new(Enumerable.Range(0, 35).Select(i => new StudentSummary(i.ToString(), $"Ученик {i + 1}", null, i, 0)).ToArray(), [], items, [], [], []), new TeacherTaskDto(Catalog.Write(task), Variants.Create(task).Select(Catalog.Write).ToArray(), false, 1));
+        view.Preview(new(Enumerable.Range(0, 35).Select(i => new StudentSummary(i.ToString(), $"Ученик {i + 1}", null, i, 0)).ToArray(), [], items, [], [], []), new TeacherTaskDto(Catalog.Write(task), Variants.Create(task).Select(Catalog.Write).ToArray(), false, 1), reports);
         window.Preview(view);
         window.Show();
         window.UpdateLayout();
-        Capture(window, "teacher-light.png");
+        Capture(window, reports ? "teacher-analytics.png" : "teacher-light.png");
         window.Close();
     }
 

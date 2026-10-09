@@ -165,6 +165,24 @@ public sealed class ServerTests
                 Assert.True((await new PendingExecution(baseTask.Id, definition.Solution, true).Send(first)).Correct);
             }
 
+            var backup = await admin.Post<JsonElement>("teacher/backups");
+            var backupName = backup.GetProperty("name").GetString()!;
+            await Stop();
+            using (var oldBackup = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = Path.Combine(dir, "backups", backupName), Pooling = false }.ToString()))
+            {
+                oldBackup.Open();
+                using var command = oldBackup.CreateCommand();
+                command.CommandText = "DROP TABLE TaskRevisions; DELETE FROM __EFMigrationsHistory WHERE MigrationId LIKE '%TaskRevisions'";
+                command.ExecuteNonQuery();
+            }
+
+            admin = await Start();
+            await admin.Login(new("teacher", "", "teacher-test-password"));
+            await admin.Post<JsonElement>("teacher/backups/" + Uri.EscapeDataString(backupName) + "/restore");
+            await admin.Login(new("teacher", "", "teacher-test-password"));
+            Assert.NotEmpty(await admin.Get<TaskRevisionDto[]>("teacher/tasks/database/revisions"));
+            await first.Login(new("student", "test-00", "student-test-password"));
+            await students[2].Login(new("student", "test-02", "student-test-password"));
             await admin.Delete<JsonElement>("teacher/tasks/database");
             Assert.Contains("database", (await first.Get<CatalogueDto>("catalog")).Tasks.Select(t => t.Id));
             Assert.DoesNotContain("database", (await students[2].Get<CatalogueDto>("catalog")).Tasks.Select(t => t.Id));

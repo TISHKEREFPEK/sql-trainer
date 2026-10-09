@@ -36,7 +36,13 @@ public sealed class ElectronImport
         }
 
         var students = state.GetProperty("students").EnumerateArray().ToArray();
-        return new(id, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))), students.Length, students.Sum(s => ObjectLength(s, "assigned")), students.Sum(s => ObjectLength(s, "snapshots")), ArrayLength(state, "attempts"), ObjectLength(state, "overrides"));
+        return new(id, SourceHash(path), students.Length, students.Sum(s => ObjectLength(s, "assigned")), students.Sum(s => ObjectLength(s, "snapshots")), ArrayLength(state, "attempts"), ObjectLength(state, "overrides"));
+    }
+
+    static string SourceHash(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
     static int ObjectLength(JsonElement obj, string key) => obj.TryGetProperty(key, out var v) ? v.EnumerateObject().Count() : 0;

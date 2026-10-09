@@ -11,9 +11,9 @@ public sealed class Backups(string databasePath)
     {
         Directory.CreateDirectory(DirectoryPath);
         var target = Path.Combine(DirectoryPath, $"{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{reason}-{Guid.NewGuid():N}.sqlite");
-        using var source = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        using var source = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         source.Open();
-        using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = target }.ToString());
+        using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = target, Pooling = false }.ToString());
         destination.Open();
         source.BackupDatabase(destination);
         return target;
@@ -24,7 +24,7 @@ public sealed class Backups(string databasePath)
         if (Path.GetFileName(name) != name || !List().Any(b => b.Name == name))
             throw new InvalidDataException("Резервная копия не найдена.");
         var copy = Path.Combine(DirectoryPath, name);
-        using var check = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = copy, Mode = SqliteOpenMode.ReadOnly }.ToString());
+        using var check = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = copy, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         check.Open();
         using var cmd = check.CreateCommand();
         cmd.CommandText = "PRAGMA integrity_check";

@@ -10,7 +10,7 @@
 | Условие, объяснение, пример, термины, словарь | StudentTask, StudentScreen | Рендер и каталог | Длинные условия Windows |
 | Последовательные подсказки | hint API и journal | Порядок и повтор запроса | Проверено API |
 | SQL-редактор с подсветкой | AvaloniaEdit 11.4.1 | Headless Skia снимки | Ввод/IME Windows |
-| Таблицы и результаты | SQLite previews, DataGrid | Запросы и UI снимки | Большие таблицы/DPI |
+| Таблицы и результаты | SQLite previews + типы/ключи, DataGrid | Запросы и UI снимки | Большие таблицы/DPI |
 | SQLite error + русское пояснение | SqlEngine.Explain | Syntax/missing column/access denied | Автоматически проверено |
 | Сравнение строк/дубликатов/порядка | Query Normalize | Неверные ответы и отдельные проверки | Автоматически проверено |
 | Состояние/ограничения/транзакции | State, constraint/transaction probes | Все эталоны и альтернативы | Автоматически проверено |
@@ -20,7 +20,7 @@
 | Темы, пользовательские цвета, 30 пресетов | ThemeManager, AppearanceWindow, API | Профильная изоляция/перезапуск/UI | Шесть тем Windows |
 | Ученики, группы, пароли | TeacherScreen + role API | 35 профилей, смена группы | UI Windows |
 | Создание/редактирование задач и вариантов | TeacherScreen, проверка эталона, TaskRevisions | Проектный authoring | Редактор Windows |
-| Результаты, ошибки, подсказки, активность | overview, TeacherScreen, CSV | Attempts/progress/hints | CSV и UI Windows |
+| Результаты, ошибки, подсказки, активность | overview, TeacherScreen, CSV, сводки ошибок/времени/остановок | Attempts/progress/hints | CSV и UI Windows |
 | Copy/paste, пауза 30 с, unlock | Tunnel keys/drop, policy API | 423 и ручной unlock API | Клавиатура/clipboard Windows |
 | Захват окна Windows | SetWindowDisplayAffinity | В новой версии ещё не проверено на Windows | Обязательная ручная проверка |
 | Импорт тестовых аккаунтов Electron | Read-only preview, scrypt, transaction | Синтетический импорт/rollback/idempotency | Локальная копия: 1 профиль / 1 назначение / 1 попытка, хеш/прогресс совпали |

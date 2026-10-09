@@ -142,7 +142,13 @@ public sealed class StudentScreen : UserControl, IDisposable
         var buttons = Ui.Row(run, check);
         Grid.SetRow(buttons, 2);
         work.Children.Add(buttons);
-        var statePanel = Ui.Stack(saved, pause);
+        var reset = Ui.Button("Сбросить запрос", () =>
+        {
+            if (current is not null)
+                editor.Text = current.Starter;
+            return Task.CompletedTask;
+        });
+        var statePanel = Ui.Stack(saved, pause, reset);
         Grid.SetRow(statePanel, 3);
         work.Children.Add(statePanel);
         var output = Ui.Scroll(result);
@@ -282,7 +288,11 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         tables.Children.Clear();
         foreach (var table in previews)
-            tables.Children.Add(new Expander { Header = table.Name, Content = Ui.Table(table.Data) });
+        {
+            var structure = Ui.Text(string.Join("\n", (table.Columns ?? []).Select(c => $"{c.Name} · {c.Type}" + (c.PrimaryKey ? " · PRIMARY KEY" : "") + (c.NotNull ? " · NOT NULL" : ""))));
+            var keys = Ui.Text(string.Join("\n", (table.ForeignKeys ?? []).Select(k => $"{k.Column} → {k.Table}.{k.Target}")));
+            tables.Children.Add(new Expander { Header = table.Name, Content = Ui.Stack(structure, keys, Ui.Table(table.Data)) });
+        }
     }
 
     void Policy()
@@ -311,6 +321,8 @@ public sealed class StudentScreen : UserControl, IDisposable
             pending = new(id, editor.Text, checking);
         owner.RememberPending(pending);
         var submittedCheck = pending.Request.Check;
+        if (owner.PendingFor(id)is not null)
+            owner.Message("Повторяется незавершённая операция с прежним SQL.");
         var response = await pending.Send(api);
         owner.ForgetPending(id);
         pending = null;
@@ -328,6 +340,18 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             result.Children.Add(Ui.Text(submittedCheck ? response.Correct ? "Верно" : "Результат отличается от ожидаемого" : "Результат запроса", 18));
             result.Children.Add(Ui.Table(response.Output));
+            if (submittedCheck && response.Correct)
+            {
+                var next = catalogue?.Tasks.SkipWhile(t => t.Id != id).Skip(1).FirstOrDefault();
+                if (next is not null)
+                    result.Children.Add(Ui.Button("Следующее задание", () => owner.Safe(async () =>
+                    {
+                        category.SelectedItem = Category(next);
+                        module.SelectedItem = next.Module;
+                        search.Text = "";
+                        await Select(next.Id);
+                    })));
+            }
         }
 
         catalogue = await api.Get<CatalogueDto>("catalog");
@@ -396,7 +420,7 @@ public sealed class StudentScreen : UserControl, IDisposable
             Policy();
             RenderHints();
             await SaveDraft();
-            if (owner.IsActive && editor.IsKeyboardFocusWithin)
+            if (owner.IsActive && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
                 await api.Post<JsonElement>($"tasks/{id}/activity", new ActivityRequest(2));
         }
         catch (ApiException e)when (e.Status == 401)
@@ -413,6 +437,7 @@ public sealed class StudentScreen : UserControl, IDisposable
         }
     }
 
+    public Task CheckShortcut() => check.IsEnabled ? Execute(true) : Task.CompletedTask;
     public async Task Violation()
     {
         if (current is null)
@@ -490,7 +515,7 @@ static class SqlHighlighting
         var keyword = ink == "#FFFFFF" ? "#8DD9D3" : "#145D83";
         var comment = ink == "#FFFFFF" ? "#B1C1CE" : "#526770";
         var literal = ink == "#FFFFFF" ? "#F1D699" : "#885516";
-        var xml = $"<SyntaxDefinition name='SQL' xmlns='http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008'><Color name='Keyword' foreground='{keyword}' fontWeight='bold'/><Color name='Comment' foreground='{comment}'/><Color name='String' foreground='{literal}'/><RuleSet><Span color='Comment' begin='--' end='\n'/><Span color='Comment' begin='/\\*' end='\\*/' multiline='true'/><Span color='String' begin=\"'\" end=\"'\"/><Keywords color='Keyword'><Word>SELECT</Word><Word>FROM</Word><Word>WHERE</Word><Word>JOIN</Word><Word>ON</Word><Word>GROUP</Word><Word>ORDER</Word><Word>BY</Word><Word>INSERT</Word><Word>UPDATE</Word><Word>DELETE</Word><Word>CREATE</Word><Word>TABLE</Word><Word>ALTER</Word><Word>WITH</Word><Word>BEGIN</Word><Word>COMMIT</Word><Word>LIMIT</Word><Word>AS</Word><Word>AND</Word><Word>OR</Word><Word>NULL</Word><Word>VALUES</Word></Keywords></RuleSet></SyntaxDefinition>";
+        var xml = $"<SyntaxDefinition name='SQL' xmlns='http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008'><Color name='Keyword' foreground='{keyword}' fontWeight='bold'/><Color name='Comment' foreground='{comment}'/><Color name='String' foreground='{literal}'/><RuleSet ignoreCase='true'><Span color='Comment' begin='--' end='\n'/><Span color='Comment' begin='/\\*' end='\\*/' multiline='true'/><Span color='String' begin=\"'\" end=\"'\"/><Keywords color='Keyword'><Word>SELECT</Word><Word>FROM</Word><Word>WHERE</Word><Word>JOIN</Word><Word>ON</Word><Word>GROUP</Word><Word>ORDER</Word><Word>BY</Word><Word>INSERT</Word><Word>UPDATE</Word><Word>DELETE</Word><Word>CREATE</Word><Word>TABLE</Word><Word>ALTER</Word><Word>WITH</Word><Word>BEGIN</Word><Word>COMMIT</Word><Word>LIMIT</Word><Word>AS</Word><Word>AND</Word><Word>OR</Word><Word>NULL</Word><Word>VALUES</Word></Keywords></RuleSet></SyntaxDefinition>";
         using var reader = System.Xml.XmlReader.Create(new StringReader(xml));
         return AvaloniaEdit.Highlighting.Xshd.HighlightingLoader.Load(reader, HighlightingManager.Instance);
     }

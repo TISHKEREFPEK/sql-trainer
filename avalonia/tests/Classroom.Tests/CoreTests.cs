@@ -119,6 +119,14 @@ public sealed class CoreTests
         };
         Assert.False(SqlEngine.Evaluate(new(task, null, "SELECT 2 AS value UNION ALL SELECT 1 AS value", true)).Result.Correct);
         Assert.True(SqlEngine.Evaluate(new(task with { Ordered = false }, null, "SELECT 2 AS value UNION ALL SELECT 1 AS value", true)).Result.Correct);
+        var indexed = task with
+        {
+            Mode = "state",
+            Seed = "CREATE TABLE records(id INTEGER,value INTEGER);",
+            Solution = "CREATE INDEX records_index ON records(value);"
+        };
+        Assert.False(SqlEngine.Evaluate(new(indexed, null, "CREATE INDEX records_index ON records(id);", true)).Result.Correct);
+        Assert.True(SqlEngine.Evaluate(new(indexed, null, "CREATE INDEX records_index ON records(value);", true)).Result.Correct);
     }
 
     [Fact]

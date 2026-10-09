@@ -109,6 +109,7 @@ public static class SqlEngine
             {
                 "table_info",
                 "index_list",
+                "index_xinfo",
                 "foreign_key_list",
                 "foreign_keys"
             }.Contains(name.ToLowerInvariant()))
@@ -168,7 +169,7 @@ public static class SqlEngine
             {
                 name,
                 columns = Query(db, $"PRAGMA table_info({q})").Values,
-                indexes = Query(db, $"PRAGMA index_list({q})").Values.Select(r => new[] { r[1], r[2] }).ToArray(),
+                indexes = Query(db, $"PRAGMA index_list({q})").Values.Select(r => new { name = r[1], unique = r[2], columns = Query(db, $"PRAGMA index_xinfo({Quote(r[1].GetString()!)})").Values }).ToArray(),
                 foreignKeys = Query(db, $"PRAGMA foreign_key_list({q})").Values,
                 rows = Query(db, $"SELECT * FROM {q}").Values.Select(r => Wire.Write(r)).Order(StringComparer.Ordinal).ToArray()
             };

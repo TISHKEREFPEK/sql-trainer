@@ -37,9 +37,14 @@ public sealed class UiTests
         window.Show();
         window.UpdateLayout();
         var editor = view.GetVisualDescendants().OfType<TextEditor>().Single();
+        var labels = view.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").ToArray();
+        Assert.Contains(labels, t => restricted ? t.Contains("Запрещено: Ctrl+C") && t.Contains("снимки этого окна") : t.Contains("Копирование и вставка разрешены"));
         editor.TextArea.Selection = Selection.Create(editor.TextArea, 0, editor.Text.Length);
         ApplicationCommands.Cut.Execute(null, editor.TextArea);
         Assert.Equal(restricted ? source.Solution : "", editor.Text);
+        if (restricted)
+            Assert.Contains(view.GetVisualDescendants().OfType<TextBlock>(), t => t.IsVisible && t.Text == "Копирование, вырезание и вставка запрещены преподавателем.");
+        Capture(window, restricted ? "student-restricted-feedback.png" : "student-unrestricted.png");
         window.Close();
     }
 
@@ -50,6 +55,8 @@ public sealed class UiTests
     [InlineData(Key.Insert, KeyModifiers.Control)]
     [InlineData(Key.Insert, KeyModifiers.Shift)]
     [InlineData(Key.Delete, KeyModifiers.Shift)]
+    [InlineData(Key.Snapshot, KeyModifiers.None)]
+    [InlineData(Key.S, KeyModifiers.Meta | KeyModifiers.Shift)]
     public void RestrictedTaskConsumesClipboardShortcuts(Key key, KeyModifiers modifiers)
     {
         var window = new MainWindow(false, false);

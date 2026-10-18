@@ -268,9 +268,10 @@ public sealed class TeacherScreen : UserControl, IDisposable
         editFields.Children.Add(Ui.Field("Режим проверки", mode));
         editFields.Children.Add(ordered);
         editFields.Children.Add(eligible);
-        editFields.Children.Add(restricted);
         editFields.Children.Add(Ui.Button("Сохранить", () => owner.Safe(SaveTask)));
-        var editor = Ui.Stack(Ui.Text("Редактор задания", 24), Ui.Text("Изменения получают новые назначения. Уже начатые работы сохраняют свою редакцию."), Ui.Field("Версия", version), editFields);
+        var editor = Ui.Stack(Ui.Text("Редактор задания", 24), Ui.Text("Изменения получают новые назначения. Уже начатые работы сохраняют свою редакцию."),
+            restricted, Ui.Text("Ограничения включаются после нажатия «Сохранить» внизу формы и действуют во всех версиях этого задания."),
+            Ui.Field("Версия", version), editFields);
         var navLayout = new Grid
         {
             RowDefinitions = new("Auto,*"),

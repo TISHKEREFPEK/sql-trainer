@@ -45,6 +45,8 @@ public sealed class StudentScreen : UserControl, IDisposable
     };
     readonly TextBlock saved = Ui.Text("");
     readonly TextBlock pause = Ui.Text("");
+    readonly TextBlock restrictionNotice = Ui.Text("", 14);
+    readonly TextBlock restrictionFeedback = Ui.Text("", 14);
     readonly TextBlock pageText = Ui.Text("");
     readonly StackPanel pagination;
     readonly Button nextHint;
@@ -144,7 +146,17 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             RowDefinitions = new("Auto,*,Auto,Auto,*")
         };
-        work.Children.Add(Ui.Text("SQL-запрос", 20));
+        restrictionFeedback.FontWeight = FontWeight.SemiBold;
+        var restrictionPanel = Ui.Stack(restrictionNotice, restrictionFeedback);
+        var restrictionBorder = new Border
+        {
+            Child = restrictionPanel,
+            Padding = new Thickness(10),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6)
+        };
+        restrictionBorder.Bind(Border.BorderBrushProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("AccentBrush"));
+        work.Children.Add(Ui.Stack(Ui.Text("SQL-запрос", 20), restrictionBorder));
         Grid.SetRow(editor, 1);
         work.Children.Add(editor);
         var buttons = Ui.Row(run, check);
@@ -247,6 +259,8 @@ public sealed class StudentScreen : UserControl, IDisposable
     void DisplayTask(StudentTask task)
     {
         current = task;
+        restrictionFeedback.Text = "";
+        restrictionFeedback.IsVisible = false;
         owner.LastTaskId = task.Id;
         pending = owner.PendingFor(task.Id);
         heading.Text = task.Title + $" · Вариант {task.VariantIndex}";
@@ -308,11 +322,19 @@ public sealed class StudentScreen : UserControl, IDisposable
         if (current is null)
             return;
         var locked = current.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        restrictionNotice.Text = current.Restricted
+            ? "Запрещено: Ctrl+C, Ctrl+X, Ctrl+V и снимки этого окна.\nПопытка работы с буфером — пауза на 30 секунд."
+            : "Ограничения преподавателем не включены. Копирование и вставка разрешены.";
+        if (!current.Restricted)
+        {
+            restrictionFeedback.Text = "";
+            restrictionFeedback.IsVisible = false;
+        }
         editor.IsEnabled = !locked;
         run.IsEnabled = !locked;
         check.IsEnabled = !locked && !(current.Completed && current.Project is not null);
         nextHint.IsEnabled = !locked;
-        pause.Text = locked ? "Работа приостановлена. Дождитесь снятия ограничения." : "";
+        pause.Text = locked ? "Работа приостановлена на 30 секунд за запрещённое действие. Дождитесь снятия ограничения." : "";
         owner.Protect(current.Restricted);
     }
 
@@ -448,8 +470,9 @@ public sealed class StudentScreen : UserControl, IDisposable
     public Task CheckShortcut() => check.IsEnabled ? Execute(true) : Task.CompletedTask;
     public async Task Violation()
     {
-        if (current is null)
+        if (current?.Restricted != true)
             return;
+        ShowRestrictionFeedback("Копирование, вырезание и вставка запрещены преподавателем.");
         var id = current.Id;
         await api.Post<JsonElement>($"tasks/{id}/violation");
         var update = await api.Get<StudentTask>($"tasks/{id}");
@@ -458,6 +481,19 @@ public sealed class StudentScreen : UserControl, IDisposable
             current = update;
             Policy();
         }
+    }
+
+    public void CaptureAttempt()
+    {
+        if (Restricted)
+            ShowRestrictionFeedback("Снимки этого окна запрещены преподавателем.");
+    }
+
+    void ShowRestrictionFeedback(string text)
+    {
+        restrictionFeedback.Text = text;
+        restrictionFeedback.IsVisible = true;
+        owner.Message(text);
     }
 
     async Task Glossary()

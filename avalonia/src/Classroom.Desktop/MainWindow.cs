@@ -300,6 +300,12 @@ public sealed class MainWindow : Window
 
         if (student?.Restricted != true)
             return;
+        if (e.Key is Key.Snapshot or Key.Print || (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Meta) && e.KeyModifiers.HasFlag(KeyModifiers.Shift)))
+        {
+            e.Handled = true;
+            student.CaptureAttempt();
+            return;
+        }
         if (((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0 && e.Key is Key.C or Key.X or Key.V) || (e.Key == Key.Insert && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift)) != 0) || (e.Key == Key.Delete && e.KeyModifiers.HasFlag(KeyModifiers.Shift)))
         {
             e.Handled = true;

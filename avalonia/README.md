@@ -6,6 +6,8 @@
 
 Версии закреплены в `global.json`, файлах проектов и `packages.lock.json`: .NET SDK 10.0.401 / runtime 10.0.12, Avalonia 11.3.22, AvaloniaEdit 11.4.1, CommunityToolkit.Mvvm 8.4.0, EF Core / SQLite 10.0.12. DataGrid 11.3.13 совместим с Avalonia 11. Native SQLite bundle 2.1.13 закреплён отдельно.
 
+Build-зависимость `System.Security.Cryptography.Xml` и её транзитивная `Pkcs` обновлены до 10.0.13. Для прежних 10.0.12 NuGet сообщает NU1902/NU1903; восстановление использует обновлённые lock-файлы без отключения аудита.
+
 На Windows установите SDK из `global.json`, PowerShell и Inno Setup 6, затем выполните:
 
 ```powershell

@@ -42,7 +42,7 @@ public record TeacherOverview(StudentSummary[] Students, GroupDto[] Groups, Cata
 public record TeacherTaskDto(string TaskJson, string[] AlternativeJson, bool Restricted, int Revision);
 public record TaskRevisionDto(int Revision, long At, bool Deleted, TeacherTaskDto Task);
 public record SaveTaskRequest(string TaskJson, bool Restricted);
-public record SaveVariantRequest(string TaskJson);
+public record SaveVariantRequest(string TaskJson, bool? Restricted = null);
 public record ImportPreview(string Id, string SourceHash, int Students, int Assignments, int Projects, int Attempts, int Overrides);
 public record ImportCommitRequest(string PreviewId);
 public record BackupDto(string Name, long CreatedAt);

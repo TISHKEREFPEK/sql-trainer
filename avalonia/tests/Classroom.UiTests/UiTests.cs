@@ -2,6 +2,10 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
+using AvaloniaEdit;
+using AvaloniaEdit.Editing;
 using Classroom.Client;
 using Classroom.Contracts;
 using Classroom.Desktop;
@@ -18,6 +22,105 @@ public static class TestApplication
 
 public sealed class UiTests
 {
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void EditorCutCommandFollowsTaskRestrictionWithoutAKeyEvent(bool restricted)
+    {
+        var window = new MainWindow(false, false);
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        using var view = new StudentScreen(window, api);
+        var source = Catalog.Data.Tasks.Single(t => t.Id == "database");
+        var task = new StudentTask(source.Id, source.Title, source.Module, source.Prompt, source.Concept, source.Example, source.Starter, source.Terms, new(), null, 1, 1, restricted, [], [], source.Hints.Length, source.Solution, false, 0);
+        view.Preview(new([new(source.Id, source.Title, source.Module, null)], [], 0), task, new(false, new([], []), [], null, null));
+        window.Preview(view);
+        window.Show();
+        window.UpdateLayout();
+        var editor = view.GetVisualDescendants().OfType<TextEditor>().Single();
+        editor.TextArea.Selection = Selection.Create(editor.TextArea, 0, editor.Text.Length);
+        ApplicationCommands.Cut.Execute(null, editor.TextArea);
+        Assert.Equal(restricted ? source.Solution : "", editor.Text);
+        window.Close();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(Key.C, KeyModifiers.Control)]
+    [InlineData(Key.X, KeyModifiers.Control)]
+    [InlineData(Key.V, KeyModifiers.Control)]
+    [InlineData(Key.Insert, KeyModifiers.Control)]
+    [InlineData(Key.Insert, KeyModifiers.Shift)]
+    [InlineData(Key.Delete, KeyModifiers.Shift)]
+    public void RestrictedTaskConsumesClipboardShortcuts(Key key, KeyModifiers modifiers)
+    {
+        var window = new MainWindow(false, false);
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        using var view = new StudentScreen(window, api);
+        var source = Catalog.Data.Tasks.Single(t => t.Id == "database");
+        var task = new StudentTask(source.Id, source.Title, source.Module, source.Prompt, source.Concept, source.Example, source.Starter, source.Terms, new(), null, 1, 1, true, [], [], source.Hints.Length, source.Solution, false, 0);
+        view.Preview(new([new(source.Id, source.Title, source.Module, null)], [], 0), task, new(false, new([], []), [], null, null));
+        window.Preview(view);
+        typeof(MainWindow).GetField("student", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(window, view);
+        window.Show();
+        window.UpdateLayout();
+        var editor = view.GetVisualDescendants().OfType<TextEditor>().Single();
+        var args = new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = modifiers };
+        editor.TextArea.RaiseEvent(args);
+        Assert.True(args.Handled);
+        Assert.Equal(source.Solution, editor.Text);
+        typeof(MainWindow).GetField("student", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(window, null);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void TeacherGroupListReceivesGroupsDuringPollingAndKeepsSelection()
+    {
+        var window = new MainWindow(true, false);
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        using var view = new TeacherScreen(window, api, new HostManager());
+        var source = Catalog.Data.Tasks.Single(t => t.Id == "database");
+        var initial = new TeacherOverview([], [new("a", "Первая")], [new(source.Id, source.Title, source.Module, null)], [], [], []);
+        view.Preview(initial, new(Catalog.Write(source), [], false, 1));
+        window.Preview(view);
+        window.Show();
+        window.UpdateLayout();
+        var groups = (ComboBox)typeof(TeacherScreen).GetField("groups", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(view)!;
+        groups.SelectedIndex = 1;
+        typeof(TeacherScreen).GetMethod("RenderOverview", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(view, [initial with { Groups = [..initial.Groups, new("b", "Вторая")] }, false]);
+        Assert.Equal(3, groups.ItemCount);
+        Assert.Equal("Первая", groups.SelectedItem!.ToString());
+        window.Close();
+    }
+
+    [AvaloniaTheory]
+    [InlineData("copy")]
+    [InlineData("cut")]
+    [InlineData("paste")]
+    public void RestrictedTaskBlocksTextBoxClipboardEvents(string operation)
+    {
+        var window = new MainWindow(false, false);
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        using var view = new StudentScreen(window, api);
+        var source = Catalog.Data.Tasks.Single(t => t.Id == "database");
+        var task = new StudentTask(source.Id, source.Title, source.Module, source.Prompt, source.Concept, source.Example, source.Starter, source.Terms, new(), null, 1, 1, true, [], [], source.Hints.Length, source.Solution, false, 0);
+        view.Preview(new([new(source.Id, source.Title, source.Module, null)], [], 0), task, new(false, new([], []), [], null, null));
+        window.Preview(view);
+        typeof(MainWindow).GetField("student", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(window, view);
+        window.Show();
+        window.UpdateLayout();
+        var search = view.GetVisualDescendants().OfType<TextBox>().Single(t => t.Watermark == "Поиск задания");
+        var routed = operation switch
+        {
+            "copy" => TextBox.CopyingToClipboardEvent,
+            "cut" => TextBox.CuttingToClipboardEvent,
+            _ => TextBox.PastingFromClipboardEvent
+        };
+        var args = new Avalonia.Interactivity.RoutedEventArgs(routed);
+        search.RaiseEvent(args);
+        Assert.True(args.Handled);
+        typeof(MainWindow).GetField("student", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(window, null);
+        window.Close();
+    }
+
     [AvaloniaTheory]
     [InlineData("light", 1320)]
     [InlineData("onyx", 1320)]

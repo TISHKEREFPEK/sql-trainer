@@ -389,6 +389,8 @@ public static class Routes
                 }
 
                 variant.Json = Catalog.Write(checkedTask);
+                if (input.Restricted is { } restricted)
+                    row.Restricted = restricted;
                 row.Revision++;
                 return new
                 {

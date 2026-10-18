@@ -132,6 +132,14 @@ public sealed class StudentScreen : UserControl, IDisposable
             _ = SaveLater(debounce.Token);
         };
         editor.ContextMenu = null;
+        // Commands can be invoked by accessibility, menus and input bindings without a KeyDown.
+        // Consume them before AvaloniaEdit's default bindings as well as filtering shortcuts.
+        foreach (var command in new[] { ApplicationCommands.Copy, ApplicationCommands.Cut, ApplicationCommands.Paste })
+            editor.TextArea.CommandBindings.Insert(0, new RoutedCommandBinding(command, (_, e) =>
+            {
+                e.Handled = true;
+                _ = owner.Safe(Violation);
+            }, (_, e) => e.CanExecute = Restricted));
         var work = new Grid
         {
             RowDefinitions = new("Auto,*,Auto,Auto,*")

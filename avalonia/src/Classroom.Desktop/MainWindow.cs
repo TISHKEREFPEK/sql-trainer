@@ -35,6 +35,7 @@ public sealed class MainWindow : Window
     };
     readonly NotificationState state = new();
     bool quitting;
+    string? protectionWarning;
     bool reconnecting;
     readonly Dictionary<string, string> unsavedDrafts = new();
     internal string? LastTaskId { get; set; }
@@ -92,6 +93,9 @@ public sealed class MainWindow : Window
         Closing += OnClosing;
         AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
         AddHandler(DragDrop.DropEvent, OnDrop, RoutingStrategies.Tunnel);
+        AddHandler(TextBox.CopyingToClipboardEvent, OnClipboard);
+        AddHandler(TextBox.CuttingToClipboardEvent, OnClipboard);
+        AddHandler(TextBox.PastingFromClipboardEvent, OnClipboard);
         AddHandler(DragDrop.DragOverEvent, OnDrop, RoutingStrategies.Tunnel);
     }
 
@@ -103,6 +107,7 @@ public sealed class MainWindow : Window
             api = await host!.Start();
             ConfigureTray();
             await ShowLogin();
+            state.Status = "";
         }
         else
             ShowConnect();
@@ -270,7 +275,18 @@ public sealed class MainWindow : Window
     public void Protect(bool restricted)
     {
         if (OperatingSystem.IsWindows() && TryGetPlatformHandle()?.Handle is { } handle)
-            NativeWindowProtection.Set(handle, restricted);
+        {
+            if (!NativeWindowProtection.TrySet(handle, restricted, out var error) && restricted)
+            {
+                protectionWarning = $"Windows не включила защиту захвата окна (код {error}). Ограничение копирования действует.";
+                state.Status = protectionWarning;
+            }
+            else if (state.Status == protectionWarning)
+            {
+                state.Status = "";
+                protectionWarning = null;
+            }
+        }
     }
 
     async void OnKey(object? sender, KeyEventArgs e)
@@ -300,6 +316,14 @@ public sealed class MainWindow : Window
             if (e.RoutedEvent == DragDrop.DropEvent)
                 await Safe(student.Violation);
         }
+    }
+
+    async void OnClipboard(object? sender, RoutedEventArgs e)
+    {
+        if (student?.Restricted != true)
+            return;
+        e.Handled = true;
+        await Safe(student.Violation);
     }
 
     void ConfigureTray()
@@ -410,8 +434,17 @@ static class NativeWindowProtection
 {
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
-    public static void Set(nint handle, bool enabled)
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    static extern bool GetWindowDisplayAffinity(nint window, out uint affinity);
+    public static bool TrySet(nint handle, bool enabled, out int error)
     {
-        SetWindowDisplayAffinity(handle, enabled ? 0x11u : 0u);
+        var desired = enabled ? 0x11u : 0u;
+        if (!SetWindowDisplayAffinity(handle, desired) || !GetWindowDisplayAffinity(handle, out var actual))
+        {
+            error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            return false;
+        }
+        error = 0;
+        return actual == desired;
     }
 }

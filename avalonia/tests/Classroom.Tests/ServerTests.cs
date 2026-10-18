@@ -142,6 +142,18 @@ public sealed class ServerTests
             await admin.Put<JsonElement>("teacher/tasks/database", new SaveTaskRequest(Catalog.Write(source), true));
             Assert.Equal(task.Prompt, (await first.Get<StudentTask>("tasks/database")).Prompt);
             Assert.Equal(source.Prompt, (await students[1].Get<StudentTask>("tasks/database")).Prompt);
+            Assert.True((await first.Get<StudentTask>("tasks/database")).Restricted);
+            var assignedWhere = await first.Get<StudentTask>("tasks/where");
+            var whereVariant = Variants.Create(Catalog.Data.Tasks.Single(t => t.Id == "where"))[0];
+            var variantRequest = new SaveVariantRequest(Catalog.Write(whereVariant), true);
+            var studentPolicy = await Assert.ThrowsAsync<ApiException>(() => first.Put<JsonElement>("teacher/tasks/where/variants/2", variantRequest));
+            Assert.Equal(403, studentPolicy.Status);
+            await admin.Put<JsonElement>("teacher/tasks/where/variants/2", variantRequest);
+            Assert.True((await first.Get<StudentTask>("tasks/where")).Restricted);
+            Assert.Equal(assignedWhere.Prompt, (await first.Get<StudentTask>("tasks/where")).Prompt);
+            await admin.Put<JsonElement>("teacher/tasks/where/variants/2", variantRequest with { Restricted = false });
+            await admin.Put<JsonElement>("teacher/tasks/where/variants/2", new SaveVariantRequest(Catalog.Write(whereVariant)));
+            Assert.False((await first.Get<StudentTask>("tasks/where")).Restricted);
             await first.Post<JsonElement>("tasks/database/violation");
             Assert.Equal(423, (await Assert.ThrowsAsync<ApiException>(() => new PendingExecution("database", "SELECT * FROM students", false).Send(first))).Status);
             await admin.Post<JsonElement>("teacher/students/" + overview.Students.Single(s => s.Login == "test-00").Id + "/unlock");

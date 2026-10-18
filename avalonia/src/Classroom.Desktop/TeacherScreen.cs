@@ -19,13 +19,13 @@ public sealed class TeacherScreen : UserControl, IDisposable
         Interval = TimeSpan.FromSeconds(5)
     };
     readonly ListBox students = new();
-    readonly ComboBox groups = new();
+    readonly ComboBox groups = new() { HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 36 };
     readonly ListBox taskList = new();
     readonly TextBox taskSearch = Ui.Input();
     readonly ComboBox version = new();
     readonly CheckBox restricted = new()
     {
-        Content = "Запрет копирования и вставки; пауза 30 секунд"
+        Content = "Запрет копирования, вставки и захвата окна; пауза за буфер 30 секунд"
     };
     readonly StackPanel editFields = Ui.Stack();
     readonly StackPanel journal = Ui.Stack();
@@ -150,9 +150,11 @@ public sealed class TeacherScreen : UserControl, IDisposable
             await Refresh(true);
         })), Ui.Text("Группы", 20), Ui.Field("Название новой группы", groupName), Ui.Button("Создать группу", () => owner.Safe(async () =>
         {
-            await api.Post<GroupDto>("teacher/groups", new GroupRequest(groupName.Text ?? ""));
+            var created = await api.Post<GroupDto>("teacher/groups", new GroupRequest(groupName.Text ?? ""));
             groupName.Text = "";
             await Refresh(true);
+            groups.SelectedItem = groups.Items.OfType<Choice>().FirstOrDefault(g => g.Id == created.Id);
+            owner.Message("Группа создана и выбрана для нового ученика.");
         })), Ui.Button("Удалить выбранную группу", () => owner.Safe(async () =>
         {
             if (groups.SelectedItem is Choice { Id.Length: > 0 } group && await owner.Confirm($"Удалить группу «{group.Label}»? Профили и результаты учеников сохранятся."))
@@ -424,16 +426,15 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var selected = (students.SelectedItem as Choice)?.Id;
         students.ItemsSource = data.Students.Select(s => new Choice(s.Id, $"{s.Login} · {s.Completed} / {data.Tasks.Length}" + (s.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() ? " · Пауза" : ""))).ToArray();
         students.SelectedItem = (students.ItemsSource as Choice[])?.FirstOrDefault(s => s.Id == selected);
-        if (updateEditorList)
+        var groupChoices = new[] { new Choice("", "Без группы") }.Concat(data.Groups.Select(g => new Choice(g.Id, g.Name))).ToArray();
+        if (!groups.Items.OfType<Choice>().SequenceEqual(groupChoices))
         {
             var group = (groups.SelectedItem as Choice)?.Id;
-            groups.ItemsSource = new[]
-            {
-                new Choice("", "Без группы")
-            }.Concat(data.Groups.Select(g => new Choice(g.Id, g.Name))).ToArray();
-            groups.SelectedItem = (groups.ItemsSource as Choice[])?.FirstOrDefault(g => g.Id == group) ?? (groups.ItemsSource as Choice[])?.FirstOrDefault();
-            UpdateTaskList();
+            groups.ItemsSource = groupChoices;
+            groups.SelectedItem = groupChoices.FirstOrDefault(g => g.Id == group) ?? groupChoices[0];
         }
+        if (updateEditorList)
+            UpdateTaskList();
 
         string Title(string id) => data.Tasks.FirstOrDefault(t => t.Id == id)?.Title ?? id;
         RenderReport(journal, ["Ученик", "Задание", "Результат", "Время"], data.Attempts.Select(a => new[] { a.Student, Title(a.TaskId), a.Kind == "correct" ? "Верно" : a.Kind == "different" ? "Результат отличается" : a.Kind == "clipboard" ? "Копирование / вставка" : a.Kind, Ui.Time(a.At) }));
@@ -497,7 +498,9 @@ public sealed class TeacherScreen : UserControl, IDisposable
         if (version.SelectedIndex <= 0)
             await api.Put<JsonElement>($"teacher/tasks/{selectedId}", new SaveTaskRequest(document.ToJsonString(), restricted.IsChecked == true));
         else
-            await api.Put<JsonElement>($"teacher/tasks/{selectedId}/variants/{version.SelectedIndex + 1}", new SaveVariantRequest(document.ToJsonString()));
+        {
+            await api.Put<JsonElement>($"teacher/tasks/{selectedId}/variants/{version.SelectedIndex + 1}", new SaveVariantRequest(document.ToJsonString(), restricted.IsChecked == true));
+        }
         var id = selectedId;
         await Refresh(true);
         await SelectTask(id);

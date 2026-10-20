@@ -59,6 +59,8 @@ public sealed class MainWindow : Window
         this.teacher = teacher;
         host = teacher ? new() : null;
         Title = teacher ? "SQL · Преподаватель" : "SQL · Ученик";
+        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
+            Title += " · Демонстрация";
         Width = 1320;
         Height = 900;
         MinWidth = 850;
@@ -154,7 +156,8 @@ public sealed class MainWindow : Window
     internal void Preview(Control view) => body.Content = view;
     void ShowConnect()
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student", "connection.json");
+        var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+        var path = Path.Combine(directory, "connection.json");
         ConnectionSettings? saved = null;
         try
         {
@@ -309,7 +312,8 @@ public sealed class MainWindow : Window
         if (((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0 && e.Key is Key.C or Key.X or Key.V) || (e.Key == Key.Insert && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift)) != 0) || (e.Key == Key.Delete && e.KeyModifiers.HasFlag(KeyModifiers.Shift)))
         {
             e.Handled = true;
-            await Safe(student.Violation);
+            var action = e.Key == Key.C || e.Key == Key.Insert && e.KeyModifiers.HasFlag(KeyModifiers.Control) ? "copy" : e.Key is Key.X or Key.Delete ? "cut" : "paste";
+            await Safe(() => student.Violation(action));
         }
     }
 
@@ -320,7 +324,7 @@ public sealed class MainWindow : Window
             e.Handled = true;
             e.DragEffects = DragDropEffects.None;
             if (e.RoutedEvent == DragDrop.DropEvent)
-                await Safe(student.Violation);
+                await Safe(() => student.Violation("drop"));
         }
     }
 
@@ -329,7 +333,8 @@ public sealed class MainWindow : Window
         if (student?.Restricted != true)
             return;
         e.Handled = true;
-        await Safe(student.Violation);
+        var action = e.RoutedEvent == TextBox.CopyingToClipboardEvent ? "copy" : e.RoutedEvent == TextBox.CuttingToClipboardEvent ? "cut" : "paste";
+        await Safe(() => student.Violation(action));
     }
 
     void ConfigureTray()

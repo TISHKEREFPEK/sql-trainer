@@ -48,6 +48,11 @@ builder.WebHost.ConfigureKestrel(options =>
         options.Listen(IPAddress.Loopback, settings.Port, listen => listen.UseHttps(certificate));
 });
 builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(60));
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.RespectNullableAnnotations = true;
+    options.SerializerOptions.RespectRequiredConstructorParameters = true;
+});
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -57,6 +62,18 @@ var workerPath = Environment.GetEnvironmentVariable("CLASSROOM_WORKER") ?? Path.
 var worker = new WorkerRunner(Path.GetFullPath(workerPath));
 var state = new ServerState(Path.Combine(dataDir, "classroom.sqlite"), worker);
 await state.Initialize();
+if (args.Contains("--check-database"))
+{
+    await using var db = state.Db();
+    Classroom.Storage.DatabaseHealth.Validate(db);
+    Console.WriteLine("Database schema, integrity, relations, assignments and snapshots are valid.");
+    return;
+}
+if (args.Contains("--seed-demo"))
+{
+    await DemoData.Create(state, dataDir);
+    return;
+}
 var importIndex = Array.IndexOf(args, "--import-electron");
 if (importIndex >= 0)
 {

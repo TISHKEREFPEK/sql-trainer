@@ -60,6 +60,12 @@ public sealed class AssignmentEntity
     public int ActiveSeconds { get; set; }
     public int Checks { get; set; }
     public int Errors { get; set; }
+    public long? StartedAt { get; set; }
+    public long? LastActivityAt { get; set; }
+    public long? LastHeartbeatAt { get; set; }
+    public string? AcceptedCode { get; set; }
+    public int? ActiveSecondsAtCompletion { get; set; }
+    public int TrackingVersion { get; set; }
 }
 
 public sealed class SnapshotEntity
@@ -76,6 +82,9 @@ public sealed class AttemptEntity
     public string TaskId { get; set; } = "";
     public string Kind { get; set; } = "";
     public long At { get; set; }
+    public string? Action { get; set; }
+    public string? Code { get; set; }
+    public string? Explanation { get; set; }
 }
 
 public sealed class OperationEntity
@@ -147,6 +156,7 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<SnapshotEntity>().HasKey(x => new { x.StudentId, x.Project });
         model.Entity<SnapshotEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<AttemptEntity>().HasKey(x => x.Id);
+        model.Entity<AttemptEntity>().HasIndex(x => new { x.StudentId, x.TaskId, x.At });
         model.Entity<AttemptEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<OperationEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<OperationEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);

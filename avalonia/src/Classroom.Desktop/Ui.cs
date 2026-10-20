@@ -38,7 +38,7 @@ public static class Ui
         return panel;
     }
 
-    public static Button Button(string title, Func<Task> action)
+    public static Button Button(string title, Func<Task> action, Func<bool>? enabledAfter = null)
     {
         var button = new Button
         {
@@ -55,7 +55,7 @@ public static class Ui
             }
             finally
             {
-                button.IsEnabled = true;
+                button.IsEnabled = enabledAfter?.Invoke() ?? true;
             }
         };
         return button;

@@ -58,11 +58,13 @@ public sealed class TeacherScreen : UserControl, IDisposable
     readonly TabControl reportTabs = new();
     readonly StackPanel analytics = Ui.Stack();
     readonly ComboBox reportGroup = new();
+    readonly LearningStatisticsView learning;
     public TeacherScreen(MainWindow owner, ClassroomApi api, HostManager host)
     {
         this.owner = owner;
         this.api = api;
         this.host = host;
+        learning = new(owner, api);
         students.SelectionChanged += (_, _) =>
         {
         };
@@ -99,6 +101,11 @@ public sealed class TeacherScreen : UserControl, IDisposable
                 },
                 new TabItem
                 {
+                    Header = "Статистика",
+                    Content = Ui.Card(learning)
+                },
+                new TabItem
+                {
                     Header = "Настройки",
                     Content = Settings()
                 }
@@ -106,6 +113,11 @@ public sealed class TeacherScreen : UserControl, IDisposable
             Margin = new Thickness(12)
         };
         Content = tabs;
+        tabs.SelectionChanged += async (_, e) =>
+        {
+            if (e.Source == tabs && tabs.SelectedIndex == 3)
+                await owner.Safe(learning.Refresh);
+        };
         poll.Tick += async (_, _) =>
         {
             if (refreshing || disposed)
@@ -130,6 +142,8 @@ public sealed class TeacherScreen : UserControl, IDisposable
     {
         await Refresh(true);
         poll.Start();
+        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
+            tabs.SelectedIndex = 3;
     }
 
     public void ApplyTheme()
@@ -540,6 +554,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
 
         var rows = overview.Statistics.Select(s => string.Join(";", new[] { s.Student, s.TaskId, s.ActiveSeconds.ToString(), s.Checks.ToString(), s.Errors.ToString(), s.CompletedAt is { } at ? Ui.Time(at) : "" }.Select(Cell)));
         await using var stream = await file.OpenWriteAsync();
+        if (stream.CanSeek) stream.SetLength(0);
         using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(true));
         await writer.WriteLineAsync("Ученик;Задание;Активные секунды;Проверки;Ошибки;Завершение");
         foreach (var row in rows)

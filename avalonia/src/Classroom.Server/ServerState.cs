@@ -227,7 +227,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 {
                     VariantIndex = index
                 };
-            db.Assignments.Add(new() { StudentId = student.Id, TaskId = link.Id, Json = Catalog.Write(assigned), Revision = link.Revision, ProjectOrder = nextOrder++ });
+            db.Assignments.Add(new() { StudentId = student.Id, TaskId = link.Id, Json = Catalog.Write(assigned), Revision = link.Revision, ProjectOrder = nextOrder++, TrackingVersion = 1 });
         }
 
         await db.SaveChangesAsync();
@@ -306,6 +306,12 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 await using var db = Db();
                 await using var transaction = await db.Database.BeginTransactionAsync();
                 var assignment = (await db.Assignments.FindAsync(session.ProfileId, taskId))!;
+                if (!string.IsNullOrWhiteSpace(input.Code))
+                {
+                    if (assignment.TrackingVersion > 0)
+                        assignment.StartedAt ??= Now;
+                    assignment.LastActivityAt = Now;
+                }
                 if (input.Check)
                 {
                     assignment.Checks++;
@@ -313,6 +319,11 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                         assignment.Errors++;
                     if (reply.Result.Correct)
                     {
+                        if (assignment.CompletedAt is null)
+                        {
+                            assignment.AcceptedCode = input.Code;
+                            assignment.ActiveSecondsAtCompletion = assignment.ActiveSeconds;
+                        }
                         assignment.CompletedAt ??= Now;
                         if (reply.Snapshot is not null && task.Project is not null)
                         {
@@ -324,8 +335,10 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                         }
                     }
 
-                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), StudentId = session.ProfileId, TaskId = taskId, Kind = reply.Result.Error ?? (reply.Result.Correct ? "correct" : "different"), At = Now });
                 }
+
+                if (input.Check || !string.IsNullOrWhiteSpace(input.Code))
+                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now });
 
                 db.Operations.Add(new() { StudentId = session.ProfileId, Id = input.OperationId, RequestHash = requestHash, ResponseJson = Wire.Write(reply.Result), At = Now });
                 await db.SaveChangesAsync();

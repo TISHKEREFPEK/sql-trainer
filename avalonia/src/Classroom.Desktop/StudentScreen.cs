@@ -2,6 +2,8 @@ using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using AvaloniaEdit;
@@ -10,6 +12,7 @@ using Classroom.Client;
 using Classroom.Contracts;
 
 namespace Classroom.Desktop;
+
 public sealed class StudentScreen : UserControl, IDisposable
 {
     readonly MainWindow owner;
@@ -57,13 +60,19 @@ public sealed class StudentScreen : UserControl, IDisposable
         Interval = TimeSpan.FromSeconds(2)
     };
     readonly SemaphoreSlim draftGate = new(1, 1);
+    readonly SemaphoreSlim eventGate = new(1, 1);
+    readonly Queue<(string TaskId, TaskEventRequest Event)> events = new();
+    long lastInput = Environment.TickCount64;
+    readonly string activitySession = Guid.NewGuid().ToString("N");
+    long activitySequence;
+    (string TaskId, ActivityRequest Request)? pendingActivity;
     CatalogueDto? catalogue;
     StudentTask? current;
     PendingExecution? pending;
     int page;
     long generation;
     long editVersion;
-    bool loading, syncing, disposed;
+    bool loading, syncing, disposed, executing;
     string? savedCode;
     CancellationTokenSource? debounce;
     public bool Restricted => current?.Restricted == true;
@@ -72,6 +81,9 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         this.owner = owner;
         this.api = api;
+        AddHandler(InputElement.KeyDownEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
+        AddHandler(InputElement.PointerPressedEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
+        AddHandler(InputElement.PointerWheelChangedEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
         search.Watermark = "Поиск задания";
         module.HorizontalAlignment = HorizontalAlignment.Stretch;
         category.SelectionChanged += (_, _) => UpdateModules();
@@ -120,8 +132,8 @@ public sealed class StudentScreen : UserControl, IDisposable
             }
         }));
         var learning = Ui.Stack(heading, prompt, hints, nextHint, explanation, new Expander { Header = "Таблицы базы", Content = tables });
-        run = Ui.Button("Запустить", () => owner.Safe(() => Execute(false)));
-        check = Ui.Button("Проверить", () => owner.Safe(() => Execute(true)));
+        run = Ui.Button("Запустить", () => owner.Safe(() => Execute(false)), () => CanExecute(false));
+        check = Ui.Button("Проверить", () => owner.Safe(() => Execute(true)), () => CanExecute(true));
         editor.TextChanged += (_, _) =>
         {
             if (loading || current is null)
@@ -140,7 +152,7 @@ public sealed class StudentScreen : UserControl, IDisposable
             editor.TextArea.CommandBindings.Insert(0, new RoutedCommandBinding(command, (_, e) =>
             {
                 e.Handled = true;
-                _ = owner.Safe(Violation);
+                _ = owner.Safe(() => Violation(command == ApplicationCommands.Copy ? "copy" : command == ApplicationCommands.Cut ? "cut" : "paste"));
             }, (_, e) => e.CanExecute = Restricted));
         var work = new Grid
         {
@@ -208,9 +220,9 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         catalogue = await api.Get<CatalogueDto>("catalog");
         UpdateModules();
+        poll.Start();
         if (catalogue.Tasks.Length > 0)
             await Select(catalogue.Tasks.Any(t => t.Id == owner.LastTaskId) ? owner.LastTaskId! : catalogue.Tasks[0].Id);
-        poll.Start();
     }
 
     static string Category(CatalogueItem item) => item.Project is not null ? "Проекты" : item.Module.StartsWith("Практика") || item.Module.StartsWith("Парковка") ? "Практика" : "Курс";
@@ -250,6 +262,11 @@ public sealed class StudentScreen : UserControl, IDisposable
         if (disposed || stamp != generation)
             return;
         DisplayTask(task);
+        lastInput = Environment.TickCount64;
+        events.Enqueue((id, new(Guid.NewGuid().ToString("N"), "opened")));
+        await FlushEvents();
+        if (executing || task.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            return;
         var preview = await new PendingExecution(id, "", false).Send(api);
         if (stamp != generation || disposed)
             return;
@@ -279,7 +296,7 @@ public sealed class StudentScreen : UserControl, IDisposable
         editor.Text = owner.UnsavedDraft(task.Id) ?? (task.Draft.Length > 0 ? task.Draft : task.Starter);
         loading = false;
         savedCode = task.Draft;
-        saved.Text = owner.UnsavedDraft(task.Id)is not null ? "Изменения не сохранены" : task.Draft.Length > 0 ? "Черновик сохранён" : "";
+        saved.Text = owner.UnsavedDraft(task.Id) is not null ? "Изменения не сохранены" : task.Draft.Length > 0 ? "Черновик сохранён" : "";
         RenderHints();
         Policy();
         result.Children.Clear();
@@ -331,66 +348,95 @@ public sealed class StudentScreen : UserControl, IDisposable
             restrictionFeedback.IsVisible = false;
         }
         editor.IsEnabled = !locked;
-        run.IsEnabled = !locked;
-        check.IsEnabled = !locked && !(current.Completed && current.Project is not null);
+        run.IsEnabled = CanExecute(false);
+        check.IsEnabled = CanExecute(true);
         nextHint.IsEnabled = !locked;
         pause.Text = locked ? "Работа приостановлена на 30 секунд за запрещённое действие. Дождитесь снятия ограничения." : "";
         owner.Protect(current.Restricted);
     }
 
+    bool CanExecute(bool checking) => !disposed && !executing && current is not null && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() && !(checking && current.Completed && current.Project is not null);
+
     async Task Execute(bool checking)
     {
-        if (current is null)
+        if (!CanExecute(checking))
             return;
-        await SaveDraft();
+        executing = true;
         var stamp = generation;
-        var id = current.Id;
-        // A failed transport keeps pending; the next attempt retries exactly that operation.
-        pending ??= new PendingExecution(id, editor.Text, checking);
-        if (pending.TaskId != id)
-            pending = new(id, editor.Text, checking);
-        owner.RememberPending(pending);
-        var submittedCheck = pending.Request.Check;
-        if (owner.PendingFor(id)is not null)
-            owner.Message("Повторяется незавершённая операция с прежним SQL.");
-        var response = await pending.Send(api);
-        owner.ForgetPending(id);
-        pending = null;
-        if (stamp != generation || disposed)
-            return;
-        result.Children.Clear();
-        RenderTables(response.Tables);
-        if (response.Error is not null)
+        var id = current!.Id;
+        PendingExecution? submitted = null;
+        try
         {
-            result.Children.Add(Ui.Text(response.Error));
-            result.Children.Add(Ui.Text(response.Explanation ?? ""));
-            owner.Message("Запрос не выполнен.");
-        }
-        else
-        {
-            result.Children.Add(Ui.Text(submittedCheck ? response.Correct ? "Верно" : "Результат отличается от ожидаемого" : "Результат запроса", 18));
-            result.Children.Add(Ui.Table(response.Output));
-            if (submittedCheck && response.Correct)
+            Policy();
+            await SaveDraft();
+            if (stamp != generation || disposed)
+                return;
+            // A failed transport keeps pending; the next attempt retries exactly that operation.
+            var retry = owner.PendingFor(id) is not null;
+            pending ??= owner.PendingFor(id) ?? new PendingExecution(id, editor.Text, checking);
+            if (pending.TaskId != id)
+                pending = owner.PendingFor(id) ?? new(id, editor.Text, checking);
+            submitted = pending;
+            owner.RememberPending(pending);
+            var submittedCheck = pending.Request.Check;
+            if (retry)
+                owner.Message("Повторяется незавершённая операция с прежним SQL.");
+            var response = await submitted.Send(api);
+            owner.ForgetPending(id);
+            if (ReferenceEquals(pending, submitted))
+                pending = null;
+            if (stamp != generation || disposed)
+                return;
+            result.Children.Clear();
+            RenderTables(response.Tables);
+            if (response.Error is not null)
             {
-                var next = catalogue?.Tasks.SkipWhile(t => t.Id != id).Skip(1).FirstOrDefault();
-                if (next is not null)
-                    result.Children.Add(Ui.Button("Следующее задание", () => owner.Safe(async () =>
-                    {
-                        category.SelectedItem = Category(next);
-                        module.SelectedItem = next.Module;
-                        search.Text = "";
-                        await Select(next.Id);
-                    })));
+                result.Children.Add(Ui.Text(response.Error));
+                result.Children.Add(Ui.Text(response.Explanation ?? ""));
+                owner.Message("Запрос не выполнен.");
+            }
+            else
+            {
+                result.Children.Add(Ui.Text(submittedCheck ? response.Correct ? "Верно" : "Результат отличается от ожидаемого" : "Результат запроса", 18));
+                result.Children.Add(Ui.Table(response.Output));
+                if (submittedCheck && response.Correct)
+                {
+                    var next = catalogue?.Tasks.SkipWhile(t => t.Id != id).Skip(1).FirstOrDefault();
+                    if (next is not null)
+                        result.Children.Add(Ui.Button("Следующее задание", () => owner.Safe(async () =>
+                        {
+                            category.SelectedItem = Category(next);
+                            module.SelectedItem = next.Module;
+                            search.Text = "";
+                            await Select(next.Id);
+                        })));
+                }
+            }
+
+            catalogue = await api.Get<CatalogueDto>("catalog");
+            progress.Text = $"Выполнено {catalogue.Completed.Length} / {catalogue.Tasks.Length}";
+            var updated = await api.Get<StudentTask>($"tasks/{id}");
+            if (stamp == generation)
+            {
+                current = updated;
+                Policy();
             }
         }
-
-        catalogue = await api.Get<CatalogueDto>("catalog");
-        progress.Text = $"Выполнено {catalogue.Completed.Length} / {catalogue.Tasks.Length}";
-        var updated = await api.Get<StudentTask>($"tasks/{id}");
-        if (stamp == generation)
+        catch (ApiException e) when (e.Status is >= 400 and < 500 and not (401 or 429))
         {
-            current = updated;
-            Policy();
+            if (submitted is not null)
+            {
+                owner.ForgetPending(id);
+                if (ReferenceEquals(pending, submitted))
+                    pending = null;
+            }
+            throw;
+        }
+        finally
+        {
+            executing = false;
+            if (!disposed)
+                Policy();
         }
     }
 
@@ -405,7 +451,7 @@ public sealed class StudentScreen : UserControl, IDisposable
         catch (OperationCanceledException)
         {
         }
-        catch (Exception e)when (e is HttpRequestException or ApiException)
+        catch (Exception e) when (e is HttpRequestException or ApiException)
         {
             saved.Text = "Нет связи: черновик остаётся в открытом окне";
         }
@@ -449,15 +495,27 @@ public sealed class StudentScreen : UserControl, IDisposable
             current = update;
             Policy();
             RenderHints();
+            await FlushEvents();
             await SaveDraft();
-            if (owner.IsActive && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
-                await api.Post<JsonElement>($"tasks/{id}/activity", new ActivityRequest(2));
+            if (current?.Id != id || disposed)
+                return;
+            if (pendingActivity is { } retry)
+            {
+                await api.Post<JsonElement>($"tasks/{retry.TaskId}/activity", retry.Request);
+                pendingActivity = null;
+            }
+            if (owner.IsActive && Environment.TickCount64 - lastInput < 120000 && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            {
+                pendingActivity = (id, new(2, activitySession, ++activitySequence));
+                await api.Post<JsonElement>($"tasks/{id}/activity", pendingActivity.Value.Request);
+                pendingActivity = null;
+            }
         }
-        catch (ApiException e)when (e.Status == 401)
+        catch (ApiException e) when (e.Status == 401)
         {
             await owner.Reauthenticate();
         }
-        catch (Exception e)when (e is HttpRequestException or ApiException or TaskCanceledException)
+        catch (Exception e) when (e is HttpRequestException or ApiException or TaskCanceledException)
         {
             owner.Message("Связь с преподавателем потеряна. Запуск SQL недоступен; черновик остаётся в открытом окне.");
         }
@@ -468,13 +526,15 @@ public sealed class StudentScreen : UserControl, IDisposable
     }
 
     public Task CheckShortcut() => check.IsEnabled ? Execute(true) : Task.CompletedTask;
-    public async Task Violation()
+    public Task Violation() => Violation("clipboard");
+    public async Task Violation(string action)
     {
         if (current?.Restricted != true)
             return;
         ShowRestrictionFeedback("Копирование, вырезание и вставка запрещены преподавателем.");
         var id = current.Id;
-        await api.Post<JsonElement>($"tasks/{id}/violation");
+        events.Enqueue((id, new(Guid.NewGuid().ToString("N"), action)));
+        await FlushEvents();
         var update = await api.Get<StudentTask>($"tasks/{id}");
         if (current?.Id == id)
         {
@@ -486,7 +546,25 @@ public sealed class StudentScreen : UserControl, IDisposable
     public void CaptureAttempt()
     {
         if (Restricted)
+        {
             ShowRestrictionFeedback("Снимки этого окна запрещены преподавателем.");
+            events.Enqueue((current!.Id, new(Guid.NewGuid().ToString("N"), "capture")));
+            _ = owner.Safe(FlushEvents);
+        }
+    }
+
+    async Task FlushEvents()
+    {
+        await eventGate.WaitAsync();
+        try
+        {
+            while (events.TryPeek(out var item))
+            {
+                await api.Post<JsonElement>($"tasks/{item.TaskId}/events", item.Event);
+                events.Dequeue();
+            }
+        }
+        finally { eventGate.Release(); }
     }
 
     void ShowRestrictionFeedback(string text)

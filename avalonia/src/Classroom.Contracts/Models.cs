@@ -11,7 +11,7 @@ public static class Wire
 public record ApiError(string Error);
 public record StatusDto(bool NeedsSetup, string Version);
 public record LoginRequest(string Role, string Login, string Password);
-public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets);
+public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets, LessonDestination? Destination = null);
 public record PasswordRequest(string Password);
 public record CatalogueItem(string Id, string Title, string Module, string? Project);
 public record CatalogueDto(CatalogueItem[] Tasks, string[] Completed, long LockedUntil);

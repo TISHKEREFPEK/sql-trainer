@@ -90,6 +90,19 @@ public sealed class ServerTests
         try
         {
             var admin = await Start();
+            var duplicateInfo = new ProcessStartInfo(process!.StartInfo.FileName) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+            duplicateInfo.ArgumentList.Add(Path.Combine(root, $"src/Classroom.Server/bin/{config}/net10.0/Classroom.Server.dll"));
+            duplicateInfo.Environment["CLASSROOM_DATA"] = dir;
+            using (var duplicate = Process.Start(duplicateInfo)!)
+            {
+                var error = duplicate.StandardError.ReadToEndAsync();
+                using var duplicateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await duplicate.WaitForExitAsync(duplicateTimeout.Token);
+                Assert.Equal(2, duplicate.ExitCode);
+                Assert.Contains("блокировку сервера", await error);
+                Assert.False(process.HasExited);
+                await admin.Get<StatusDto>("status");
+            }
             await admin.Post<JsonElement>("setup", new PasswordRequest("teacher-test-password"));
             await admin.Login(new("teacher", "", "teacher-test-password"));
             using (var wrong = new ClassroomApi(admin.Connection with { Fingerprint = new string ('0', 64) }))
@@ -254,6 +267,10 @@ public sealed class ServerTests
                 Assert.True((await new PendingExecution(baseTask.Id, definition.Solution, true).Send(first)).Correct);
             }
 
+            var electronicsStudent = (await admin.Get<TeacherOverview>("teacher/overview")).Students.Single(s=>s.Login=="test-00").Id;
+            var electronicsJson = Wire.Write(new { version=1,name="Работа для проверки восстановления",code="void setup(){} void loop(){}",parts=Array.Empty<object>(),wires=Array.Empty<object>() });
+            var electronicsClient=Guid.NewGuid().ToString("N"); var electronicsReport=Guid.NewGuid().ToString("N");
+            await first.Put<ElectronicsSyncReceipt>("electronics/work",new ElectronicsSyncRequest(electronicsClient,1,electronicsJson,[new(electronicsReport,"submitted",electronicsJson,"")]));
             var backup = await admin.Post<JsonElement>("teacher/backups");
             var backupName = backup.GetProperty("name").GetString()!;
             await Stop();
@@ -270,6 +287,7 @@ public sealed class ServerTests
             await admin.Post<JsonElement>("teacher/backups/" + Uri.EscapeDataString(backupName) + "/restore");
             await admin.Login(new("teacher", "", "teacher-test-password"));
             Assert.NotEmpty(await admin.Get<TaskRevisionDto[]>("teacher/tasks/database/revisions"));
+            Assert.Equal(electronicsJson,(await admin.Get<ElectronicsSnapshot>($"teacher/electronics/{electronicsStudent}/report/{electronicsReport}")).ProjectJson);
             await first.Login(new("student", "test-00", "student-test-password"));
             await students[2].Login(new("student", "test-02", "student-test-password"));
             await admin.Delete<JsonElement>("teacher/tasks/database");
@@ -279,6 +297,7 @@ public sealed class ServerTests
             admin = await Start();
             await admin.Login(new("teacher", "", "teacher-test-password"));
             var restored = new ClassroomApi(admin.Connection);
+            Assert.Equal(electronicsJson,(await admin.Get<ElectronicsSnapshot>($"teacher/electronics/{electronicsStudent}/work/{electronicsClient}")).ProjectJson);
             clients.Add(restored);
             var login = await restored.Login(new("student", "test-00", "student-test-password"));
             Assert.Equal("onyx", login.Theme.Preset);

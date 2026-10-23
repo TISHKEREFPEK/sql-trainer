@@ -9,18 +9,31 @@ function Run-DotNet([string[]]$Arguments) {
 }
 Run-DotNet @('restore', 'Classroom.sln', '--locked-mode')
 Run-DotNet @('build', 'Classroom.sln', '-c', 'Release', '--no-restore', '-m:1', '-p:UseSharedCompilation=false')
+& "$PSScriptRoot/prepare-electronics.ps1"
 if (-not $SkipTests) {
     $env:CLASSROOM_UI_OUTPUT = Join-Path $root 'artifacts/ui'
     Run-DotNet @('test', 'Classroom.sln', '-c', 'Release', '--no-build', '--no-restore', '--logger', 'trx', '--results-directory', 'artifacts/tests')
 }
 $publish = Join-Path $root 'artifacts/publish'
-if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
+$publish = [System.IO.Path]::GetFullPath($publish)
+$artifactsRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'artifacts')) + [System.IO.Path]::DirectorySeparatorChar
+if (-not $publish.StartsWith($artifactsRoot, [System.StringComparison]::OrdinalIgnoreCase) -or [System.IO.Path]::GetFileName($publish) -ne 'publish') { throw 'Unexpected publish directory.' }
+if (Test-Path -LiteralPath $publish) { Remove-Item -LiteralPath $publish -Recurse -Force }
 foreach ($app in @('Teacher', 'Student')) {
     Run-DotNet @('publish', "src/Classroom.$app", '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-p:PublishTrimmed=false', '-p:DebugType=None', '-o', "$publish/$app")
 }
 foreach ($app in @('Server', 'Worker')) {
     $location = $app.ToLowerInvariant()
     Run-DotNet @('publish', "src/Classroom.$app", '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-p:PublishTrimmed=false', '-p:DebugType=None', '-o', "$publish/Teacher/runtime/$location")
+}
+$electronicsSource = Join-Path $root 'artifacts/electronics-runtime'
+foreach ($app in @('Teacher', 'Student')) {
+$electronicsTarget = Join-Path $publish "$app/electronics/runtime"
+New-Item -ItemType Directory -Path $electronicsTarget -Force | Out-Null
+foreach ($item in @('arduino-cli.exe', 'node.exe', 'ArduinoCLI-LICENSE.txt', 'Node-LICENSE.txt', 'offline-ready-v2.json', 'data', 'user')) {
+    Copy-Item -LiteralPath (Join-Path $electronicsSource $item) -Destination $electronicsTarget -Recurse -Force
+}
+New-Item -ItemType Directory -Path (Join-Path $electronicsTarget 'user') -Force | Out-Null
 }
 $forbidden = Get-ChildItem "$publish/Student" -Recurse -File | Where-Object {
     $_.Name -match '^Classroom\.(Domain|Storage|Server|Worker)(\.|$)|catalog\.json|\.sqlite($|-)|\.pfx$|e_sqlite3|BouncyCastle|EntityFrameworkCore'

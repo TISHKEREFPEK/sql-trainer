@@ -8,5 +8,6 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.13" />
     <EmbeddedResource Include="classroom.ico" />
+    <Content Include="../../electronics/**/*" Link="electronics/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -393,7 +393,7 @@ public sealed class StudentScreen : UserControl, IDisposable
             {
                 result.Children.Add(Ui.Text(response.Error));
                 result.Children.Add(Ui.Text(response.Explanation ?? ""));
-                owner.Message("Запрос не выполнен.");
+                owner.Error("Запрос не выполнен.");
             }
             else
             {
@@ -504,7 +504,7 @@ public sealed class StudentScreen : UserControl, IDisposable
                 await api.Post<JsonElement>($"tasks/{retry.TaskId}/activity", retry.Request);
                 pendingActivity = null;
             }
-            if (owner.IsActive && Environment.TickCount64 - lastInput < 120000 && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            if (owner.IsActive && owner.IsLessonVisible && Environment.TickCount64 - lastInput < 120000 && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             {
                 pendingActivity = (id, new(2, activitySession, ++activitySequence));
                 await api.Post<JsonElement>($"tasks/{id}/activity", pendingActivity.Value.Request);
@@ -517,7 +517,7 @@ public sealed class StudentScreen : UserControl, IDisposable
         }
         catch (Exception e) when (e is HttpRequestException or ApiException or TaskCanceledException)
         {
-            owner.Message("Связь с преподавателем потеряна. Запуск SQL недоступен; черновик остаётся в открытом окне.");
+            owner.Error("Связь с преподавателем потеряна. Запуск SQL недоступен; черновик остаётся в открытом окне.");
         }
         finally
         {
@@ -571,20 +571,13 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         restrictionFeedback.Text = text;
         restrictionFeedback.IsVisible = true;
-        owner.Message(text);
+        owner.Error(text);
     }
 
     async Task Glossary()
     {
         await SaveDraft();
         var glossary = await api.Get<Dictionary<string, string>>("glossary");
-        var window = new Window
-        {
-            Title = "Справочник SQL",
-            Width = 700,
-            Height = 700,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner
-        };
         var filter = Ui.Input();
         filter.Watermark = "Поиск термина";
         var list = Ui.Stack();
@@ -606,12 +599,7 @@ public sealed class StudentScreen : UserControl, IDisposable
         var scroll = Ui.Scroll(list);
         Grid.SetRow(scroll, 1);
         layout.Children.Add(scroll);
-        window.Content = new Border
-        {
-            Padding = new Thickness(20),
-            Child = layout
-        };
-        await window.ShowDialog(owner);
+        owner.ShowPage("Справочник SQL", layout);
     }
 
     public void Dispose()

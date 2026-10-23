@@ -14,6 +14,7 @@ internal sealed class LiveClassroom : IAsyncDisposable
     public ClassroomApi Admin { get; private set; } = null!;
     public ClassroomApi Student { get; private set; } = null!;
     public string StudentId { get; private set; } = "";
+    public PairingAnnouncement Pairing => Wire.Read<PairingAnnouncement>(File.ReadAllText(Path.Combine(directory, "pairing.json")));
 
     public static async Task<LiveClassroom> Start()
     {

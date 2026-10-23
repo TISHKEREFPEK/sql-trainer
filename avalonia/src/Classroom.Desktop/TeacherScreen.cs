@@ -55,6 +55,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
     bool loading, refreshing, disposed;
     long generation;
     readonly TabControl tabs;
+    readonly Control connectionPage;
     readonly TabControl reportTabs = new();
     readonly StackPanel analytics = Ui.Stack();
     readonly ComboBox reportGroup = new();
@@ -112,7 +113,13 @@ public sealed class TeacherScreen : UserControl, IDisposable
             },
             Margin = new Thickness(12)
         };
-        Content = tabs;
+        connectionPage = Ui.Card(Ui.Scroll(Ui.Stack(Ui.Button("Назад к SQL", ShowWorkspace), new ConnectionCodeView(host.ConnectionCode, host.Settings.Address == "127.0.0.1"))));
+        connectionPage.Margin = new Thickness(12);
+        connectionPage.IsVisible = false;
+        var pages = new Grid();
+        pages.Children.Add(tabs);
+        pages.Children.Add(connectionPage);
+        Content = pages;
         tabs.SelectionChanged += async (_, e) =>
         {
             if (e.Source == tabs && tabs.SelectedIndex == 3)
@@ -129,7 +136,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
             }
             catch (Exception e)when (e is ApiException or HttpRequestException or TaskCanceledException)
             {
-                owner.Message("Не удалось обновить отчёт.");
+                owner.Error("Не удалось обновить отчёт.");
             }
             finally
             {
@@ -142,8 +149,21 @@ public sealed class TeacherScreen : UserControl, IDisposable
     {
         await Refresh(true);
         poll.Start();
-        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
-            tabs.SelectedIndex = 3;
+        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1") tabs.SelectedIndex = 3;
+    }
+
+    public Task ShowConnectionCode()
+    {
+        tabs.IsVisible = false;
+        connectionPage.IsVisible = true;
+        return Task.CompletedTask;
+    }
+
+    public Task ShowWorkspace()
+    {
+        connectionPage.IsVisible = false;
+        tabs.IsVisible = true;
+        return Task.CompletedTask;
     }
 
     public void ApplyTheme()
@@ -394,14 +414,15 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var info = Ui.Input(connection is null ? "" : connection.Address + "\nSHA-256: " + connection.Fingerprint, true);
         info.IsReadOnly = true;
         var backupList = new ComboBox();
-        var panel = Ui.Stack(Ui.Text("Подключение учеников", 24), Ui.Text("Передайте ученикам адрес и отпечаток сертификата. Изменение сетевого интерфейса применяется после перезапуска преподавателя."), info, Ui.Field("IP-адрес интерфейса", address), Ui.Field("Порт", port), Ui.Button("Сохранить параметры сети", () => owner.Safe(() =>
+        var panel = Ui.Stack(Ui.Text("Подключение учеников", 24), Ui.Text("Покажите классу код кнопкой «Код подключения» в углу окна. Ученикам нужны только код, логин и пароль."),
+            new Expander { Header = "Параметры сети", Content = Ui.Stack(Ui.Text("Для подключения с других компьютеров укажите 0.0.0.0 или адрес компьютера в локальной сети. Изменения применяются после перезапуска преподавателя."), info, Ui.Field("IP-адрес интерфейса", address), Ui.Field("Порт", port), Ui.Button("Сохранить параметры сети", () => owner.Safe(() =>
         {
             if (!int.TryParse(port.Text, out var value))
                 throw new InvalidDataException("Некорректный порт.");
             host.SaveSettings(new(address.Text ?? "", value));
             owner.Message("Параметры сохранены. Перезапустите приложение для применения.");
             return Task.CompletedTask;
-        })), Ui.Text("Перенос из Electron", 20), Ui.Button("Выбрать classroom.sqlite", () => owner.Safe(Import)), Ui.Text("Резервные копии", 20), Ui.Button("Создать резервную копию", () => owner.Safe(async () =>
+        }))) }, Ui.Text("Перенос из Electron", 20), Ui.Button("Выбрать classroom.sqlite", () => owner.Safe(Import)), Ui.Text("Резервные копии", 20), Ui.Button("Создать резервную копию", () => owner.Safe(async () =>
         {
             await api.Post<JsonElement>("teacher/backups");
             backupList.ItemsSource = (await api.Get<BackupDto[]>("teacher/backups")).Select(b => new Choice(b.Name, b.Name)).ToArray();

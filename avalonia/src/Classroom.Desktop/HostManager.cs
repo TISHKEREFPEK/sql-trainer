@@ -9,6 +9,7 @@ public sealed class HostManager
     FileStream? instanceLease;
     public string DataDirectory { get; } = Environment.GetEnvironmentVariable("CLASSROOM_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "teacher");
     public ConnectionSettings? Connection { get; private set; }
+    public string? ConnectionCode { get; private set; }
     public ServerSettings Settings => File.Exists(Path.Combine(DataDirectory, "server-settings.json")) ? Wire.Read<ServerSettings>(File.ReadAllText(Path.Combine(DataDirectory, "server-settings.json"))) : new();
 
     public void SaveSettings(ServerSettings settings)
@@ -71,7 +72,9 @@ public sealed class HostManager
         for (var attempt = 0; attempt < 60; attempt++)
         {
             if (process.HasExited)
-                throw new IOException("Сервер остановился при запуске. Проверьте адрес, порт и доступ к базе.");
+                throw new IOException(process.ExitCode == 2
+                    ? "Папка данных сервера недоступна или уже используется. Закройте прежний сервер и повторите запуск преподавателя."
+                    : "Сервер остановился при запуске. Проверьте адрес, порт и доступ к базе.");
             if (File.Exists(path))
             {
                 Connection = Wire.Read<ConnectionSettings>(File.ReadAllText(path));
@@ -79,6 +82,7 @@ public sealed class HostManager
                 try
                 {
                     await api.Get<StatusDto>("status");
+                    ConnectionCode = PairingCode.Format(PairingCode.Create(Wire.Read<PairingAnnouncement>(File.ReadAllText(Path.Combine(DataDirectory, "pairing.json")))));
                     return api;
                 }
                 catch (HttpRequestException)

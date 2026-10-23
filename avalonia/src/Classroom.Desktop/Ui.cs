@@ -152,6 +152,7 @@ public static class ThemeManager
         foreach (var(name, value)in new[]
         {
             ("Background", background),
+            ("BackgroundInk", Ink(background)),
             ("Surface", surface),
             ("Accent", accent),
             ("Editor", editor),

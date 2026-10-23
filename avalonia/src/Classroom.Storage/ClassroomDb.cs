@@ -102,6 +102,30 @@ public sealed class ImportEntity
     public long At { get; set; }
 }
 
+public sealed class ElectronicsWorkEntity
+{
+    public string StudentId { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public long Sequence { get; set; }
+    public string ProjectJson { get; set; } = "";
+    public string ProjectHash { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int Parts { get; set; }
+    public int Wires { get; set; }
+    public long UpdatedAt { get; set; }
+}
+public sealed class ElectronicsReportEntity
+{
+    public string StudentId { get; set; } = "";
+    public string Id { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string ProjectJson { get; set; } = "";
+    public string ProjectHash { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public string Name { get; set; } = "";
+    public long At { get; set; }
+}
 public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbContext(options)
 {
     public DbSet<GroupEntity> Groups => Set<GroupEntity>();
@@ -114,6 +138,8 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<AttemptEntity> Attempts => Set<AttemptEntity>();
     public DbSet<OperationEntity> Operations => Set<OperationEntity>();
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
+    public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
+    public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -161,5 +187,10 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<OperationEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<OperationEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ImportEntity>().HasKey(x => x.Hash);
+        model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
+        model.Entity<ElectronicsWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });
+        model.Entity<ElectronicsReportEntity>().HasIndex(x => new { x.StudentId, x.At, x.Id });
+        model.Entity<ElectronicsReportEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
     }
 }

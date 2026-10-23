@@ -23,6 +23,86 @@ public static class TestApplication
 public sealed class UiTests
 {
     [AvaloniaFact]
+    public async Task ConnectionCodeFindsTheRightTeacherAndRetainsPinnedTlsAndLogin()
+    {
+        await using var first = await LiveClassroom.Start();
+        await using var second = await LiveClassroom.Start();
+        var firstCode = PairingCode.Create(first.Pairing);
+        var secondCode = PairingCode.Create(second.Pairing);
+        Assert.NotEqual(firstCode, secondCode);
+        using var found = new ClassroomApi(await TeacherDiscovery.Find(PairingCode.Format(secondCode).ToLowerInvariant()));
+        Assert.Equal(second.Admin.Connection.Fingerprint, found.Connection.Fingerprint);
+        Assert.Equal(second.Admin.Connection.Address, found.Connection.Address);
+        Assert.False((await found.Get<StatusDto>("status")).NeedsSetup);
+        Assert.Equal(401, (await Assert.ThrowsAsync<ApiException>(() => found.Login(new("student", "ui-test", "wrong-password")))).Status);
+        var login = await found.Login(new("student", "ui-test", "synthetic-student-password"));
+        Assert.Equal(second.StudentId, login.Id);
+        Assert.Equal("sql", login.Destination!.StandId);
+        using var wrongCertificate = new ClassroomApi(found.Connection with { Fingerprint = new string('0', 64) });
+        await Assert.ThrowsAsync<HttpRequestException>(() => wrongCertificate.Get<StatusDto>("status"));
+        await Assert.ThrowsAsync<IOException>(() => TeacherDiscovery.Find("2222-2222-2222"));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(900)]
+    [InlineData(1320)]
+    public async Task CodeConnectionScreensHaveOneStudentFieldAndReadableTeacherCode(int width)
+    {
+        var window = new MainWindow(false, false) { Width = width, Height = 700 };
+        typeof(MainWindow).GetMethod("ShowConnect", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(window, null);
+        window.Show();
+        Assert.Single(window.GetVisualDescendants().OfType<TextBox>());
+        Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Код преподавателя");
+        window.UpdateLayout();
+        Capture(window, $"student-connect-{width}.png");
+        window.Close();
+        var teacher = new MainWindow(true, false) { Width = width, Height = 700 };
+        var host = new HostManager();
+        typeof(HostManager).GetProperty(nameof(HostManager.ConnectionCode))!.SetValue(host, "ABCD-EFGH-JKLM");
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        using var view = new TeacherScreen(teacher, api, host);
+        teacher.Preview(view); teacher.Show();
+        await view.ShowConnectionCode();
+        teacher.UpdateLayout();
+        Assert.Contains(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "ABCD-EFGH-JKLM" && t.FontSize >= 40);
+        Capture(teacher, $"teacher-connection-code-{width}.png");
+        teacher.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task TeacherCodeIsHiddenUntilLoginAndRemovedOnLogout()
+    {
+        await using var fixture = await LiveClassroom.Start();
+        var teacher = new MainWindow(true, false);
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(MainWindow).GetField("api", flags)!.SetValue(teacher, fixture.Admin);
+        var host = (HostManager)typeof(MainWindow).GetField("host", flags)!.GetValue(teacher)!;
+        var code = PairingCode.Format(PairingCode.Create(fixture.Pairing));
+        typeof(HostManager).GetProperty(nameof(HostManager.ConnectionCode))!.SetValue(host, code);
+        await (Task)typeof(MainWindow).GetMethod("ShowLogin", flags)!.Invoke(teacher, null)!;
+        teacher.Show();
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<Button>(), b => b.Content?.ToString() == "Код подключения");
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        teacher.GetVisualDescendants().OfType<TextBox>().Single().Text = "synthetic-teacher-password";
+        teacher.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Войти").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        for (var i = 0; i < 150 && !teacher.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Код подключения"); i++) await Task.Delay(50);
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TabItem>(), t => t.Header?.ToString() == "Подключение");
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        Assert.Contains(teacher.GetVisualDescendants().OfType<ComboBox>(), c => c.Items.OfType<string>().SequenceEqual(new[] { "SQL", "Электроника" }));
+        teacher.Width = 900; teacher.UpdateLayout();
+        Capture(teacher, "teacher-stand-selector-900.png");
+        teacher.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Код подключения").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        teacher.UpdateLayout();
+        Assert.Contains(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        teacher.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Выйти").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        for (var i = 0; i < 150 && !teacher.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Войти"); i++) await Task.Delay(50);
+        Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(), b => b.Content?.ToString() == "Войти");
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<Button>(), b => b.Content?.ToString() == "Код подключения");
+        teacher.Close();
+    }
+
+    [AvaloniaFact]
     public async Task PausedLoginRecoversAndRejectedSqlDoesNotBecomeAPermanentRetry()
     {
         await using var fixture = await LiveClassroom.Start();
@@ -264,11 +344,11 @@ public sealed class UiTests
         window.Close();
     }
 
-    static void Capture(Window window, string name)
+    static void Capture(Window window, string name, int minimumWidth = 850)
     {
         using var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame);
-        Assert.True(frame!.PixelSize.Width >= 850);
+        Assert.True(frame!.PixelSize.Width >= minimumWidth);
         var dir = Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT") ?? Path.Combine(AppContext.BaseDirectory, "screenshots");
         Directory.CreateDirectory(dir);
         frame.Save(Path.Combine(dir, name));

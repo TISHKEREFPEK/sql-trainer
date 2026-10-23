@@ -23,6 +23,15 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
     public static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public bool HasActiveChecks => !busy.IsEmpty;
     public bool Stopping { get; set; }
+    LessonDestination lesson = new("sql");
+    public LessonDestination Lesson => Volatile.Read(ref lesson);
+    public LessonDestination SelectLesson(LessonDestination next)
+    {
+        if (next.StandId is not ("sql" or "electronics") || next.TaskId is not null)
+            throw new HttpFault(400, "Выберите стенд SQL или Электроника.");
+        Volatile.Write(ref lesson, next);
+        return next;
+    }
 
     public async Task<T> Write<T>(Func<ClassroomDb, Task<T>> change)
     {
@@ -110,7 +119,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 throw new HttpFault(401, "Неверный логин или пароль.");
             var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             Sessions[Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))] = new(profile.Id, profile.Role, Now + 8 * 3600000);
-            return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson));
+            return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson), Lesson);
         });
     }
 

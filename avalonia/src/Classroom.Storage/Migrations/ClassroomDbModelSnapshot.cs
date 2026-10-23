@@ -113,6 +113,85 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("Attempts");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.ElectronicsReportEntity", b =>
+                {
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("At")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Detail")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProjectHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProjectJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("StudentId", "Id");
+
+                    b.HasIndex("StudentId", "At", "Id");
+
+                    b.ToTable("ElectronicsReports");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsWorkEntity", b =>
+                {
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Parts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProjectHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProjectJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Wires")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("StudentId", "ClientId");
+
+                    b.ToTable("ElectronicsWorks");
+                });
+
             modelBuilder.Entity("Classroom.Storage.GroupEntity", b =>
                 {
                     b.Property<string>("Id")
@@ -305,6 +384,24 @@ namespace Classroom.Storage.Migrations
                 });
 
             modelBuilder.Entity("Classroom.Storage.AttemptEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsReportEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsWorkEntity", b =>
                 {
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()

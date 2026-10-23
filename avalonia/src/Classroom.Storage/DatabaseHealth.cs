@@ -58,6 +58,18 @@ public static class DatabaseHealth
         _ = db.Groups.AsNoTracking().ToArray();
         _ = db.Attempts.AsNoTracking().ToArray();
         _ = db.Imports.AsNoTracking().ToArray();
+        foreach (var row in db.ElectronicsWorks.AsNoTracking())
+        {
+            var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);
+            if (row.Sequence < 1 || row.UpdatedAt < 1 || !profiles.Any(p=>p.Id==row.StudentId&&p.Role=="student") || !Guid.TryParse(row.ClientId,out _) || metadata.Name != row.Name || metadata.Parts != row.Parts || metadata.Wires != row.Wires || row.ProjectHash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row.ProjectJson))))
+                throw new InvalidDataException("Повреждена электронная работа.");
+        }
+        foreach (var row in db.ElectronicsReports.AsNoTracking())
+        {
+            var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);
+            if (row.At < 1 || !profiles.Any(p=>p.Id==row.StudentId&&p.Role=="student") || !Guid.TryParse(row.Id,out _) || !Guid.TryParse(row.ClientId,out _) || !ElectronicsProjectFormat.ReportKinds.Contains(row.Kind) || row.Detail.Length > 16000 || metadata.Name != row.Name || row.ProjectHash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row.ProjectJson))))
+                throw new InvalidDataException("Повреждён результат по электронике.");
+        }
     }
 
     static TaskDefinition Task(string id, string json)

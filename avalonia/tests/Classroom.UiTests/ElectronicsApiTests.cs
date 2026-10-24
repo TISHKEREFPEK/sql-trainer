@@ -10,7 +10,7 @@ public sealed class ElectronicsApiTests
     public async Task RolesIdempotencyImmutableReportsAndDeviceCopiesAreEnforced()
     {
         await using var f=await LiveClassroom.Start(); using var anonymous=new ClassroomApi(f.Admin.Connection);
-        var first=CircuitExamples.Servo();first.Parts[1]=first.Parts[1] with {Angle=37,StretchX=1.4,StretchY=0.8}; var json=first.Serialize(); var client=Guid.NewGuid().ToString("N"); var id=Guid.NewGuid().ToString("N"); var request=new ElectronicsSyncRequest(client,1,json,[new(id,"submitted",json,"")]);
+        var first=CircuitExamples.Servo();first.Parts[1]=first.Parts[1] with {X=-5200,Y=-2600,Angle=37,StretchX=1.4,StretchY=0.8}; var json=first.Serialize(); var client=Guid.NewGuid().ToString("N"); var id=Guid.NewGuid().ToString("N"); var request=new ElectronicsSyncRequest(client,1,json,[new(id,"submitted",json,"")]);
         Assert.Equal(401,(await Assert.ThrowsAsync<ApiException>(()=>anonymous.Put<ElectronicsSyncReceipt>("electronics/work",request))).Status);
         Assert.Equal(403,(await Assert.ThrowsAsync<ApiException>(()=>f.Admin.Put<ElectronicsSyncReceipt>("electronics/work",request))).Status);
         Assert.Equal(403,(await Assert.ThrowsAsync<ApiException>(()=>f.Student.Get<ElectronicsOverview>("teacher/electronics"))).Status);

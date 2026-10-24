@@ -9,6 +9,13 @@ namespace Classroom.Desktop.Electronics;
 // render time; logical terminals are rendered separately from illustrative pins.
 public static class PartArtwork
 {
+    public static double Coordinate(double value)=>Math.Clamp(value,-Classroom.Contracts.ElectronicsProjectFormat.CoordinateLimit,Classroom.Contracts.ElectronicsProjectFormat.CoordinateLimit);
+    public static Rect Bounds(IEnumerable<CircuitPart> parts,double margin=80)
+    {
+        var all=parts.ToArray();if(all.Length==0)return new(0,0,800,600);
+        var left=all.Min(p=>p.X)-margin;var top=all.Min(p=>p.Y)-margin;
+        return new(left,top,all.Max(p=>p.X+Body(p).Width)-left+margin,all.Max(p=>p.Y+Body(p).Height)-top+margin);
+    }
     static readonly string[] FileNames = ["components-core.png", "components-modules.png", "components-controls.png", "components-sensors.png"];
     record Sprite(int Sheet, Rect Region);
     static readonly Bitmap[] Sheets = FileNames.Select(Load).ToArray();
@@ -96,7 +103,7 @@ public static class PartArtwork
     public static CircuitPart WithAngle(CircuitPart p,double angle)
     {
         var before=Body(p);var next=p with {Angle=(angle%360+360)%360};var after=Body(next);
-        return next with {X=Math.Clamp(p.X+(before.Width-after.Width)/2,0,4000),Y=Math.Clamp(p.Y+(before.Height-after.Height)/2,0,3000)};
+        return next with {X=Coordinate(p.X+(before.Width-after.Width)/2),Y=Coordinate(p.Y+(before.Height-after.Height)/2)};
     }
     public static CircuitPart ResizeCorner(CircuitPart p,int corner,Point pointer,bool keepAspect=false)
     {
@@ -106,12 +113,12 @@ public static class PartArtwork
         var sy=Math.Clamp((-s*dx+c*dy)*signY/(size.Height*p.Scale),0.1,10);
         if(keepAspect){var factor=Math.Max(sx/p.StretchX,sy/p.StretchY);factor=Math.Clamp(factor,Math.Max(0.1/p.StretchX,0.1/p.StretchY),Math.Min(10/p.StretchX,10/p.StretchY));sx=p.StretchX*factor;sy=p.StretchY*factor;}
         var next=p with {StretchX=sx,StretchY=sy};var shifted=Corners(next)[(corner+2)%4];
-        return next with {X=Math.Clamp(p.X+anchor.X-shifted.X,0,4000),Y=Math.Clamp(p.Y+anchor.Y-shifted.Y,0,3000)};
+        return next with {X=Coordinate(p.X+anchor.X-shifted.X),Y=Coordinate(p.Y+anchor.Y-shifted.Y)};
     }
     public static CircuitPart WithLayout(CircuitPart p, double scale, int quarterTurns)
     {
         var before = Body(p); var next = p with { Scale = scale, QuarterTurns = quarterTurns }; var after = Body(next);
-        return next with { X = Math.Clamp(p.X + (before.Width-after.Width)/2,0,4000), Y = Math.Clamp(p.Y + (before.Height-after.Height)/2,0,3000) };
+        return next with { X = Coordinate(p.X + (before.Width-after.Width)/2), Y = Coordinate(p.Y + (before.Height-after.Height)/2) };
     }
     public static Point Pin(CircuitPart p, string pin)
     {

@@ -20,7 +20,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
 {
     readonly MainWindow owner;
     readonly string savePath;
-    readonly ScrollViewer sceneScroll;
+    readonly CircuitViewport viewport;
+    readonly TextBlock zoomText=Ui.Text("100%",12);
     readonly ElectronicsSync? sync;
     readonly ElectronicsResultsView? resultsView;
     readonly TextBlock syncStatus = Ui.Text("",12);
@@ -30,7 +31,6 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     readonly TextEditor editor = new() { ShowLineNumbers = true, FontFamily = new FontFamily("Cascadia Code, Consolas"), FontSize = 15, SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("C++") };
     readonly TextBox monitor = Ui.Input("", true);
     readonly TextBlock status = Ui.Text("");
-    readonly TextBlock pending = Ui.Text("Соединение: нажмите вывод, затем второй вывод.");
     readonly TextBox name = new() { MinHeight = 36, MaxLength = 120 };
     readonly Grid workGrid = new() { ColumnDefinitions = new("280,*,0"), ColumnSpacing = 10 };
     readonly WrapPanel partCards = new() { Orientation = Orientation.Horizontal };
@@ -77,10 +77,11 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         library.Children.Add(Ui.Stack(Ui.Text("Детали", 19), partSearch, partCategory, Ui.Row(simulationOnly, favoritesOnly), catalogCount));
         var cardsScroll = Ui.Scroll(partCards); Grid.SetRow(cardsScroll, 1); library.Children.Add(cardsScroll);
         var layout = workGrid;
-        layout.Children.Add(library);
-        var scroll = sceneScroll = new ScrollViewer { Content = canvas, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto };
-        Grid.SetColumn(scroll, 1); layout.Children.Add(scroll);
-        var inspector = Ui.Scroll(properties); Grid.SetColumn(inspector, 2); layout.Children.Add(inspector);
+        var libraryCard=Ui.Card(library);libraryCard.Padding=new Thickness(12,16);layout.Children.Add(libraryCard);
+        var scroll = viewport = new CircuitViewport(canvas);viewport.ZoomRequested=ZoomAt;viewport.BackgroundPressed=()=>{selected=null;selectedWire=null;DrawSelection();Inspect();};
+        var sceneLayer=new Grid();sceneLayer.Children.Add(viewport);
+        var sceneCard=Ui.Card(sceneLayer);sceneCard.Padding=new Thickness(0);sceneCard.ClipToBounds=true;Grid.SetColumn(sceneCard, 1); layout.Children.Add(sceneCard);
+        var inspector = Ui.Card(Ui.Scroll(properties));inspector.Padding=new Thickness(12,16);Grid.SetColumn(inspector, 2); layout.Children.Add(inspector);
         makeTemplate = Ui.Button("Создать шаблон по схеме", ApplyCodeTemplate);
         var codePage = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 8 };
         codePage.Children.Add(new Expander { Header = "Подключения и настройка кода", IsExpanded = true, HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -96,65 +97,59 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             tabs.SelectionChanged += async (_,e) => { if(e.Source == tabs && tabs.SelectedItem == resultsTab) await owner.Safe(resultsView.Load); };
         }
         tabs.ItemsSource = tabItems;
-        var toolbar = new WrapPanel { Orientation = Orientation.Horizontal };
-        void Button(string text, Func<Task> action) { var b = Ui.Button(text, action); b.Margin = new Thickness(0, 0, 8, 8); toolbar.Children.Add(b); }
-        Button("Новая схема", () => Replace(new CircuitProject()));
-        var examples = new ComboBox { ItemsSource = CircuitExamples.Names, SelectedIndex = 0, MinHeight = 36, Margin = new Thickness(0,0,8,8) };
-        toolbar.Children.Add(examples);
-        Button("Открыть пример", () => Replace(CircuitExamples.Create(examples.SelectedIndex)));
-        Button("Открыть", Import);
-        Button("Сохранить JSON", () => Export(false));
-        if (classroom is not null && !teacher) Button("Отправить преподавателю", async () =>
+        MenuItem Menu(string label,Func<Task> action){var item=new MenuItem{Header=label};item.Click+=async(_,_)=>await owner.Safe(action);return item;}
+        var exampleMenu=new MenuItem{Header="Примеры",ItemsSource=CircuitExamples.Names.Select((label,index)=>Menu(label,()=>Replace(CircuitExamples.Create(index)))).ToArray()};
+        var wireMenu=new MenuItem{Header="Цвет провода",ItemsSource=new[]{"Зелёный","Красный","Чёрный","Синий"}.Select((label,index)=>Menu(label,()=>{wireColor.SelectedIndex=index;return Task.CompletedTask;})).ToArray()};
+        var fileMenu=new ContextMenu{ItemsSource=new object[]{Menu("Новая схема",()=>Replace(new CircuitProject())),Menu("Открыть…",Import),Menu("Сохранить JSON…",()=>Export(false)),Menu("Экспорт SVG…",()=>Export(true)),new Separator(),exampleMenu,wireMenu,new Separator(),Menu("Проверить код",()=>Compile(false))}};
+        var fileButton=Ui.Button("Файл",()=>Task.CompletedTask);fileButton.ContextMenu=fileMenu;fileButton.Click+=(_,_)=>fileMenu.Open(fileButton);
+        var toolbar=Ui.Row(fileButton,Ui.Button("Отменить",()=>Perform(()=>History(undo,redo))),Ui.Button("Повторить",()=>Perform(()=>History(redo,undo))));toolbar.Spacing=4;
+        foreach(var button in toolbar.Children.OfType<Button>()){button.Padding=new Thickness(10,7);button.MinHeight=32;button.FontSize=12;}
+        var toolbarCard=Ui.Card(toolbar);toolbarCard.Padding=new Thickness(5);toolbarCard.Margin=new Thickness(12);toolbarCard.HorizontalAlignment=HorizontalAlignment.Left;toolbarCard.VerticalAlignment=VerticalAlignment.Top;sceneLayer.Children.Add(toolbarCard);
+        var mainActions=Ui.Row();
+        if (classroom is not null && !teacher) mainActions.Children.Add(Ui.Button("Отправить преподавателю", async () =>
         {
             Save(); if (!Report("submitted",project.Serialize())) return;
             if (await Synchronize()) owner.Message("Работа отправлена преподавателю.");
             else owner.Error("Работа сохранена локально, но передача пока не завершена. "+syncStatus.Text);
-        });
-        Button("Экспорт SVG", () => Export(true));
-        Button("Отменить", () => Perform(() => History(undo, redo)));
-        Button("Повторить", () => Perform(() => History(redo, undo)));
-        toolbar.Children.Add(wireColor); toolbar.Children.Add(showGrid); showGrid.IsCheckedChanged += (_, _) => Draw();
-        Button("−", () => Perform(() => { zoom = Math.Max(0.5, zoom - 0.1); Draw(); }));
-        Button("+", () => Perform(() => { zoom = Math.Min(1.8, zoom + 0.1); Draw(); }));
-        Button("Вписать", () => Perform(() =>
-        {
-            if (project.Parts.Count == 0) return;
-            var right = project.Parts.Max(p => p.X + PartArtwork.Body(p).Width + 30); var bottom = project.Parts.Max(p => p.Y + PartHeight(p) + 40);
-            zoom = Math.Clamp(Math.Min(scroll.Bounds.Width / right, scroll.Bounds.Height / bottom), 0.3, 1.8); Draw();
         }));
-        Button("Проверить код", () => Compile(false));
-        Button("Запустить", () => Compile(true));
-        Button("Остановить", () => Perform(Stop));
+        mainActions.Children.Add(Ui.Button("Проверить код",()=>Compile(false)));mainActions.Children.Add(Ui.Primary(Ui.Button("Запустить",()=>Compile(true))));
+        var stopButton=Ui.Button("■",()=>Perform(Stop));stopButton.Width=38;stopButton.Padding=new Thickness(0);stopButton.HorizontalContentAlignment=HorizontalAlignment.Center;stopButton.VerticalContentAlignment=VerticalAlignment.Center;ToolTip.SetTip(stopButton,"Остановить симуляцию");Avalonia.Automation.AutomationProperties.SetName(stopButton,"Остановить");mainActions.Children.Add(stopButton);
+        showGrid.Content="▦";showGrid.FontSize=16;showGrid.Margin=new Thickness(4,0);ToolTip.SetTip(showGrid,"Сетка");Avalonia.Automation.AutomationProperties.SetName(showGrid,"Сетка");showGrid.IsCheckedChanged+=(_,_)=>Draw();
+        var zoomControls=Ui.Row(Ui.Button("−",()=>Perform(()=>ZoomAt(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2),zoom/1.2))),zoomText,Ui.Button("+",()=>Perform(()=>ZoomAt(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2),zoom*1.2))),Ui.Button("Вписать",()=>Perform(FitScene)),showGrid);zoomControls.Spacing=4;zoomText.VerticalAlignment=VerticalAlignment.Center;zoomText.Width=44;zoomText.TextAlignment=TextAlignment.Center;
+        foreach(var button in zoomControls.Children.OfType<Button>()){button.Padding=new Thickness(10,7);button.MinHeight=32;button.FontSize=12;}
+        var zoomCard=Ui.Card(zoomControls);zoomCard.Padding=new Thickness(5);zoomCard.Margin=new Thickness(12);zoomCard.HorizontalAlignment=HorizontalAlignment.Right;zoomCard.VerticalAlignment=VerticalAlignment.Bottom;sceneLayer.Children.Add(zoomCard);
+        ToolTip.SetTip(viewport,"Колесо — масштаб. Средняя или правая кнопка мыши — перемещение. Пробел + перетаскивание — перемещение.");
         name.TextChanged += (_, _) => { if (loading) return; project.Name = name.Text ?? ""; QueueSave(); };
         editor.TextChanged += (_, _) => { if (loading) return; if (running) Stop(); project.Code = editor.Text; QueueSave(); };
         autosave.Tick += (_, _) => { autosave.Stop(); _ = Perform(Save); };
         timer.Tick += async (_, _) => await Tick();
-        var root = new Grid { RowDefinitions = new("Auto,Auto,Auto,*,Auto"), Margin = new Thickness(12), RowSpacing = 8 };
-        root.Children.Add(Ui.Row(Ui.Text("Электроника", 22), name));
-        Grid.SetRow(toolbar, 1); root.Children.Add(toolbar);
-        Grid.SetRow(pending, 2); root.Children.Add(pending);
-        Grid.SetRow(tabs, 3); root.Children.Add(tabs);
-        syncStatus.IsVisible = classroom is not null && !teacher;
-        var footer = Ui.Stack(status,syncStatus); Grid.SetRow(footer, 4); root.Children.Add(footer);
+        var root = new Grid { RowDefinitions = new("Auto,*,Auto"), Margin = new Thickness(16,14,16,10), RowSpacing = 8 };
+        name.Width=280;name.FontSize=18;name.FontWeight=FontWeight.SemiBold;name.HorizontalAlignment=HorizontalAlignment.Left;ToolTip.SetTip(name,"Название проекта");
+        var projectBar=new Grid{ColumnDefinitions=new("*,Auto"),Margin=new Thickness(8,0)};projectBar.Children.Add(name);Grid.SetColumn(mainActions,1);projectBar.Children.Add(mainActions);root.Children.Add(projectBar);
+        status.Classes.Add("muted");status.FontSize=12;syncStatus.Classes.Add("muted");
+        status.IsVisible=false;status.PropertyChanged+=(_,e)=>{if(e.Property==TextBlock.TextProperty)status.IsVisible=!string.IsNullOrWhiteSpace(status.Text);};
+        syncStatus.PropertyChanged+=(_,e)=>{if(e.Property==TextBlock.TextProperty)syncStatus.IsVisible=classroom is not null&&!teacher&&!string.IsNullOrWhiteSpace(syncStatus.Text);};
+        Grid.SetRow(tabs, 1); root.Children.Add(tabs);
+        syncStatus.IsVisible = false;
+        var footer = Ui.Stack(status,syncStatus);footer.Spacing=2; Grid.SetRow(footer, 2); root.Children.Add(footer);
         tabs.SelectionChanged += (_,e) =>
         {
             if(e.Source != tabs) return;
             var results = resultsTab is not null && tabs.SelectedItem == resultsTab;
-            toolbar.IsVisible = !results; name.IsVisible = !results; pending.IsVisible = !results; footer.IsVisible = !results;
+            toolbarCard.IsVisible = !results;toolbar.IsVisible=!results;mainActions.IsVisible=!results; name.IsVisible = !results; footer.IsVisible = !results;
             if(results) { Stop(); Save(); }
         };
         Content = root;
+        Ui.BindBrush(editor,TextEditor.BackgroundProperty,"Editor");Ui.BindBrush(editor,TextEditor.ForegroundProperty,"EditorInk");editor.Padding=new Thickness(16,20);ThemeManager.Changed+=ApplyEditorTheme;ApplyEditorTheme();
         Refresh();
         var initialFit = true;
         layout.LayoutUpdated += (_, _) =>
         {
-            if (!initialFit || scroll.Bounds.Width < 200 || scroll.Bounds.Height < 100 || project.Parts.Count == 0) return;
+            if (!initialFit || scroll.Bounds.Width < 200 || scroll.Bounds.Height < 100) return;
             initialFit = false;
-            var right = project.Parts.Max(p => p.X + PartArtwork.Body(p).Width + 30);
-            var bottom = project.Parts.Max(p => p.Y + PartArtwork.Body(p).Height + 45);
-            zoom = Math.Clamp(Math.Min(1, Math.Min(scroll.Bounds.Width / right, scroll.Bounds.Height / bottom)), 0.3, 1); Draw();
+            FitScene();
         };
-        status.Text = loadError ?? "Автономный стенд: Arduino Uno, резисторы, LED, кнопки, источники и аналоговые входы. Проект сохраняется локально.";
+        status.Text = loadError ?? "";
         if (classroom is not null && !teacher)
         {
             sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text);
@@ -220,14 +215,16 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         foreach (var definition in definitions)
         {
             var add = Ui.Button("", () => Perform(() => Add(definition)));
-            add.Padding = new Thickness(6, 10); add.Width = 122; add.Height = 140; add.Background = Brushes.White;
+            add.Padding = new Thickness(6, 10); add.Width = 116; add.Height = 146;
             var summary = Ui.Stack(PartArtwork.Thumbnail(definition.Art),
                 new TextBlock { Text = definition.Name, TextWrapping = TextWrapping.Wrap, FontSize = 11, Height = 31, MaxWidth = 105, TextAlignment = TextAlignment.Center },
                 new TextBlock { Text = definition.Simulated ? "Симуляция" : "Для схемы", FontSize = 10, Foreground = definition.Simulated ? Brushes.SeaGreen : Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Center });
             summary.Spacing = 4; add.Content = summary;
             Avalonia.Automation.AutomationProperties.SetName(add, "Добавить: " + definition.Name);
             ToolTip.SetTip(add, definition.Simulated ? definition.Name : definition.Name + "\nИзображение для схемы. Поведение в симуляторе пока не реализовано. Вид иллюстративный, не распиновка производителя.");
-            var favorite = new Button { Content = project.Favorites.Contains(definition.Id) ? "★" : "☆", FontSize = 17, Padding = new Thickness(2), Width = 25, Height = 25, MinHeight = 0, MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+            var star=new PathIcon{Width=14,Height=14,Data=Geometry.Parse("M12,2.5 L14.9,8.4 L21.4,9.3 L16.7,13.9 L17.8,20.4 L12,17.3 L6.2,20.4 L7.3,13.9 L2.6,9.3 L9.1,8.4 Z")};Ui.BindBrush(star,PathIcon.ForegroundProperty,project.Favorites.Contains(definition.Id)?"Accent":"Muted");
+            var favorite = new Button { Content = star, Padding = new Thickness(0), Width = 28, Height = 28, MinHeight = 0, MinWidth = 0, HorizontalContentAlignment=HorizontalAlignment.Center,VerticalContentAlignment=VerticalAlignment.Center,Margin=new Thickness(0,4,4,0),CornerRadius=new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+            Avalonia.Automation.AutomationProperties.SetName(favorite,"Избранное: "+definition.Name);
             ToolTip.SetTip(favorite, "Избранное");
             favorite.Click += (_, _) => _ = Perform(() => { if (!project.Favorites.Remove(definition.Id)) project.Favorites.Add(definition.Id); Save(); RenderLibrary(); });
             var card = new Grid { Margin = new Thickness(0, 0, 7, 7) }; card.Children.Add(add); card.Children.Add(favorite); partCards.Children.Add(card);
@@ -239,7 +236,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         if (project.Parts.Count >= 80) throw new InvalidDataException("На схеме допускается до 80 компонентов.");
         if (kind == PartKind.Uno && project.Parts.Any(p => p.Kind == kind)) throw new InvalidDataException("Пока поддерживается одна Arduino Uno на схему.");
         Checkpoint(); var id = Guid.NewGuid().ToString("N");
-        var part = new CircuitPart(id, kind, 60 + project.Parts.Count % 5 * 230, 80 + project.Parts.Count / 5 % 4 * 210, definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null);
+        var center=viewport.ToWorld(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2));
+        var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null);
         var trial = CircuitProject.Parse(project.Serialize()); trial.Parts.Add(part); trial.Validate();
         project.Parts.Add(part);
         selected = id; selectedWire = null; Refresh(); Save();
@@ -281,7 +279,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     void Inspect()
     {
         properties.Children.Clear();
-        workGrid.ColumnDefinitions[2].Width = new GridLength(selected is null && selectedWire is null ? 0 : 220);
+        workGrid.ColumnDefinitions[2].Width = new GridLength(selected is null && selectedWire is null ? 0 : 260);
         if (selectedWire is { } wireId && project.Wires.FirstOrDefault(w => w.Id == wireId) is { } wire)
         {
             properties.Children.Add(Ui.Text("Провод", 20));
@@ -299,19 +297,21 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         if (selected is null || project.Parts.FirstOrDefault(p => p.Id == selected) is not { } p)
         { properties.Children.Add(Ui.Text("Выберите компонент или провод.", 16)); return; }
-        properties.Children.Add(Ui.Text(PartLibrary.Name(p), 19));
-        if (!PartCatalog.CanSimulate(p)) properties.Children.Add(Ui.Text("Деталь для рисования схемы. Симуляция поведения этой модели ещё не реализована.", 12));
+        properties.Spacing=10;
+        properties.Children.Add(Ui.Muted("СВОЙСТВА ДЕТАЛИ",10));properties.Children.Add(Ui.Text(PartLibrary.Name(p), 18));
+        if (!PartCatalog.CanSimulate(p)){var badge=Ui.Muted("Только схема · без симуляции",12);ToolTip.SetTip(badge,"Симуляция поведения этой модели ещё не реализована.");properties.Children.Add(badge);}
         if (p.Kind == PartKind.Visual)
         {
             var pins = Ui.Input(string.Join(", ", PartLibrary.Pins(p)));
-            properties.Children.Add(Ui.Field("Логические выводы через запятую", pins));
-            properties.Children.Add(Ui.Button("Применить выводы", () => Perform(() =>
+            var pinFields=Ui.Stack(Ui.Field("Названия через запятую",pins));
+            pinFields.Children.Add(Ui.Button("Применить выводы", () => Perform(() =>
             {
                 var names = (pins.Text ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                 var trial = CircuitProject.Parse(project.Serialize()); var index = trial.Parts.FindIndex(part => part.Id == p.Id);
                 trial.Parts[index] = trial.Parts[index] with { CustomPins = names }; trial.Validate();
                 Checkpoint(); project = trial; Refresh(); Save();
             })));
+            properties.Children.Add(new Expander{Header=$"Контакты · {PartLibrary.Pins(p).Length}",Content=pinFields,HorizontalAlignment=HorizontalAlignment.Stretch});
         }
         if (p.Kind is PartKind.Resistor or PartKind.Potentiometer or PartKind.Pot3 or PartKind.Led or PartKind.Diode or PartKind.Battery or PartKind.AnalogSensor or PartKind.Motor or PartKind.Buzzer)
         {
@@ -342,8 +342,10 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             };
         }
         if (p.Kind == PartKind.Switch) properties.Children.Add(Ui.Button(p.Active ? "Разомкнуть" : "Замкнуть", () => Perform(() => Toggle(p.Id))));
-        properties.Children.Add(Ui.Text($"Размер: {p.Scale*p.StretchX*100:F0}% × {p.Scale*p.StretchY*100:F0}% · Поворот: {PartArtwork.Degrees(p):F1}°", 14));
-        properties.Children.Add(Ui.Text("Уголки меняют ширину и высоту. Shift — сохранить пропорции. Круглый маркер — вращать; Shift — шаг 15°. Escape — отменить.",12));
+        properties.Children.Add(Ui.Muted("ПРЕОБРАЗОВАНИЕ",10));
+        var metrics=new Grid{ColumnDefinitions=new("*,*"),RowDefinitions=new("Auto,Auto"),ColumnSpacing=8,RowSpacing=8};
+        Border Metric(string label,string value){var box=new Border{Child=Ui.Stack(Ui.Muted(label,11),Ui.Text(value,14)),Padding=new Thickness(10),CornerRadius=new CornerRadius(8)};Ui.BindBrush(box,Border.BackgroundProperty,"Subtle");return box;}
+        metrics.Children.Add(Metric("Ширина",$"{p.Scale*p.StretchX*100:F0}%"));var height=Metric("Высота",$"{p.Scale*p.StretchY*100:F0}%");Grid.SetColumn(height,1);metrics.Children.Add(height);var rotation=Metric("Поворот",$"{PartArtwork.Degrees(p):F1}°");Grid.SetRow(rotation,1);Grid.SetColumnSpan(rotation,2);metrics.Children.Add(rotation);properties.Children.Add(metrics);
         SelectionColorControls();
         properties.Children.Add(Ui.Row(
             Ui.Button("Меньше", () => ChangeLayout(p.Id, -0.2, 0)),
@@ -351,22 +353,16 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         properties.Children.Add(Ui.Row(
             Ui.Button("↶ 90°", () => ChangeLayout(p.Id, 0, -1)),
             Ui.Button("↷ 90°", () => ChangeLayout(p.Id, 0, 1))));
-        properties.Children.Add(Ui.Button("Размер 100%", () => Perform(() => { Checkpoint();var i=project.Parts.FindIndex(x=>x.Id==p.Id);var before=PartArtwork.Body(p);var next=p with {Scale=1,StretchX=1,StretchY=1};var after=PartArtwork.Body(next);project.Parts[i]=next with {X=Math.Clamp(p.X+(before.Width-after.Width)/2,0,4000),Y=Math.Clamp(p.Y+(before.Height-after.Height)/2,0,3000)};Refresh();Save(); })));
+        properties.Children.Add(Ui.Button("Размер 100%", () => Perform(() => { Checkpoint();var i=project.Parts.FindIndex(x=>x.Id==p.Id);var before=PartArtwork.Body(p);var next=p with {Scale=1,StretchX=1,StretchY=1};var after=PartArtwork.Body(next);project.Parts[i]=next with {X=PartArtwork.Coordinate(p.X+(before.Width-after.Width)/2),Y=PartArtwork.Coordinate(p.Y+(before.Height-after.Height)/2)};Refresh();Save(); })));
         properties.Children.Add(Ui.Button("Отразить по горизонтали", () => Perform(() => { Checkpoint(); var i = project.Parts.FindIndex(x => x.Id == p.Id); project.Parts[i] = p with { Rotation = (p.Rotation + 1) % 2 }; Refresh(); Save(); })));
         properties.Children.Add(Ui.Button("Удалить компонент", () => Perform(() =>
         {
             Checkpoint(); project.Parts.RemoveAll(x => x.Id == p.Id); project.Wires.RemoveAll(w => w.From.Part == p.Id || w.To.Part == p.Id); selected = null; Refresh(); Save();
         })));
-        properties.Children.Add(Ui.Text("Подключённые провода", 16));
+        var connections=Ui.Stack();
         foreach (var connectedWire in project.Wires.Where(w => w.From.Part == p.Id || w.To.Part == p.Id).ToArray())
-            properties.Children.Add(Ui.Button($"Удалить {connectedWire.From.Pin} → {connectedWire.To.Pin}", () => Perform(() => { Checkpoint(); project.Wires.Remove(connectedWire); Refresh(); Save(); })));
-        workGrid.UpdateLayout();
-        var size = PartArtwork.Body(p); var offset = sceneScroll.Offset;
-        var left = Math.Max(0,(p.X-20)*zoom); var top = Math.Max(0,(p.Y-25)*zoom);
-        var right = (p.X+size.Width+20)*zoom; var bottom = (p.Y+size.Height+30)*zoom;
-        var x = left < offset.X ? left : right > offset.X+sceneScroll.Bounds.Width ? right-sceneScroll.Bounds.Width : offset.X;
-        var y = top < offset.Y ? top : bottom > offset.Y+sceneScroll.Bounds.Height ? bottom-sceneScroll.Bounds.Height : offset.Y;
-        sceneScroll.Offset = new(Math.Max(0,x),Math.Max(0,y));
+            connections.Children.Add(Ui.Button($"Удалить {connectedWire.From.Pin} → {connectedWire.To.Pin}", () => Perform(() => { Checkpoint(); project.Wires.Remove(connectedWire); Refresh(); Save(); })));
+        if(connections.Children.Count>0)properties.Children.Add(new Expander{Header=$"Соединения · {connections.Children.Count}",Content=connections});
     }
     Task ChangeLayout(string id, double scaleDelta, int turnDelta) => Perform(() =>
     {
@@ -390,18 +386,15 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         return PartArtwork.Pin(part, pin);
     }
-    Size SceneSize() => new(
-        Math.Max(1800,project.Parts.Select(p => p.X + PartArtwork.Body(p).Width + 120).DefaultIfEmpty().Max()),
-        Math.Max(1200,project.Parts.Select(p => p.Y + PartArtwork.Body(p).Height + 80).DefaultIfEmpty().Max()));
+    void FitScene(){viewport.Fit(PartArtwork.Bounds(project.Parts),1.2);zoom=viewport.Zoom;Draw();}
+    void ZoomAt(Point anchor,double scale)
+    {
+        var world=viewport.ToWorld(anchor);zoom=Math.Clamp(scale,0.1,3);viewport.SetView(zoom,new(anchor.X-world.X*zoom,anchor.Y-world.Y*zoom));Draw();
+    }
     void Draw()
     {
-        var scene = SceneSize();
-        canvas.Children.Clear(); canvas.Width = scene.Width * zoom; canvas.Height = scene.Height * zoom;
-        if (showGrid.IsChecked == true)
-        {
-            for (var x = 0; x < scene.Width; x += 25) canvas.Children.Add(new Line { StartPoint = new(x * zoom, 0), EndPoint = new(x * zoom, scene.Height * zoom), Stroke = Brushes.LightGray, StrokeThickness = 0.5, IsHitTestVisible = false });
-            for (var y = 0; y < scene.Height; y += 25) canvas.Children.Add(new Line { StartPoint = new(0, y * zoom), EndPoint = new(scene.Width * zoom, y * zoom), Stroke = Brushes.LightGray, StrokeThickness = 0.5, IsHitTestVisible = false });
-        }
+        canvas.Children.Clear();canvas.Width=Math.Max(1,viewport.Bounds.Width);canvas.Height=Math.Max(1,viewport.Bounds.Height);canvas.ClipToBounds=false;
+        viewport.ShowGrid=showGrid.IsChecked==true;viewport.SetView(zoom,viewport.Pan);zoomText.Text=$"{zoom*100:F0}%";
         DrawWires();
         foreach (var p in project.Parts)
         {
@@ -424,7 +417,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             board.PointerPressed += (_, e) =>
             {
                 if (!e.GetCurrentPoint(board).Properties.IsLeftButtonPressed) return;
-                selected = p.Id; selectedWire = null; Inspect(); DrawSelection();
+                canvas.Focus();selected = p.Id; selectedWire = null; Inspect();workGrid.UpdateLayout(); DrawSelection();
                 if (e.ClickCount == 2 && p.Kind == PartKind.Switch) { Toggle(p.Id); e.Handled = true; return; }
                 origin = e.GetPosition(canvas); drag = project.Parts.Single(x => x.Id == p.Id); moving = true; e.Pointer.Capture(board); e.Handled = true;
             };
@@ -434,7 +427,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 var point = e.GetPosition(canvas); var i = project.Parts.FindIndex(x => x.Id == p.Id);
                 if (!changed && Math.Abs(point.X - origin.X) + Math.Abs(point.Y - origin.Y) < 3) return;
                 if (!changed) { Checkpoint(); changed = true; }
-                project.Parts[i] = drag with { X = Math.Clamp(drag.X + (point.X - origin.X) / zoom, 0, 4000), Y = Math.Clamp(drag.Y + (point.Y - origin.Y) / zoom, 0, 3000) };
+                project.Parts[i] = drag with { X = PartArtwork.Coordinate(drag.X + (point.X - origin.X) / zoom), Y = PartArtwork.Coordinate(drag.Y + (point.Y - origin.Y) / zoom) };
                 Canvas.SetLeft(group, project.Parts[i].X * zoom); Canvas.SetTop(group, project.Parts[i].Y * zoom);
                 foreach (var line in canvas.Children.OfType<Polyline>().ToArray()) canvas.Children.Remove(line);
                 DrawWires();
@@ -506,19 +499,19 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     void Connect(Terminal pin)
     {
         if (running) Stop();
-        if (startPin is null) { startPin = pin; pending.Text = $"Первый вывод: {pin.Pin}. Выберите второй вывод; Escape отменяет соединение."; }
+        if (startPin is null) startPin = pin;
         else
         {
             if (startPin != pin && !project.Wires.Any(w => w.From == startPin && w.To == pin || w.From == pin && w.To == startPin))
             { if (project.Wires.Count >= 200) throw new InvalidDataException("На схеме допускается до 200 проводов."); Checkpoint(); var color = new[] { "#26966C", "#D94444", "#30363D", "#326CD7" }[Math.Clamp(wireColor.SelectedIndex,0,3)]; project.Wires.Add(new(Guid.NewGuid().ToString("N"), startPin, pin, color)); Save(); }
-            startPin = null; pending.Text = "Соединение: нажмите вывод, затем второй вывод.";
+            startPin = null;
         }
         Refresh();
     }
     protected override void OnKeyDown(KeyEventArgs e)
     {
         if(e.Key==Key.Escape && manipulation is not null) { EndManipulation(true); e.Handled=true; return; }
-        if (e.Key == Key.Escape) { startPin = null; pending.Text = "Соединение отменено."; Draw(); e.Handled = true; }
+        if (e.Key == Key.Escape) { startPin = null; Draw(); e.Handled = true; }
         base.OnKeyDown(e);
     }
     async Task Compile(bool run)
@@ -583,8 +576,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     string Svg()
     {
         string E(string text) => System.Security.SecurityElement.Escape(text) ?? "";
-        var scene = SceneSize();
-        var b = new StringBuilder(FormattableString.Invariant($"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {scene.Width} {scene.Height}\"><rect width=\"{scene.Width}\" height=\"{scene.Height}\" fill=\"white\"/>"));
+        var scene = PartArtwork.Bounds(project.Parts);
+        var b = new StringBuilder(FormattableString.Invariant($"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{scene.X} {scene.Y} {scene.Width} {scene.Height}\"><rect x=\"{scene.X}\" y=\"{scene.Y}\" width=\"{scene.Width}\" height=\"{scene.Height}\" fill=\"white\"/>"));
         b.Append(PartArtwork.SvgDefinitions());
         foreach (var w in project.Wires)
         {
@@ -603,10 +596,11 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         return b.Append("</svg>").ToString();
     }
+    void ApplyEditorTheme()=>editor.SyntaxHighlighting=CodeAppearance.CppForTheme();
     public void Dispose()
     {
         if (disposed) return; disposed = true; Stop(); autosave.Stop();
         try { Save(); } catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error("Не удалось сохранить схему: " + e.Message); }
-        sync?.Dispose(); resultsView?.Dispose();
+        ThemeManager.Changed-=ApplyEditorTheme;sync?.Dispose(); resultsView?.Dispose();
     }
 }

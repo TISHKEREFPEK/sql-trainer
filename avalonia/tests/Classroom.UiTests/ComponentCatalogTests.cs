@@ -59,7 +59,7 @@ public sealed class ComponentCatalogTests
         var search=view.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Watermark=="Поиск деталей…"); search.Text="ESP32"; window.UpdateLayout();
         for (var i=0;i<50 && view.GetVisualDescendants().OfType<Button>().Count(b=>AutomationProperties.GetName(b)?.StartsWith("Добавить:")==true)!=2;i++) { await Task.Delay(10); window.UpdateLayout(); }
         var cards=view.GetVisualDescendants().OfType<Button>().Where(b=>AutomationProperties.GetName(b)?.StartsWith("Добавить:")==true).ToArray(); Assert.Equal(2,cards.Length);
-        view.GetVisualDescendants().OfType<Button>().First(b=>b.Content?.ToString()=="☆").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        view.GetVisualDescendants().OfType<Button>().First(b=>AutomationProperties.GetName(b)?.StartsWith("Избранное:")==true).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Single(CircuitProject.Parse(File.ReadAllText(path)).Favorites);
         view.GetVisualDescendants().OfType<CheckBox>().Single(c=>c.Content?.ToString()=="С симуляцией").IsChecked=true; window.UpdateLayout();
         Assert.DoesNotContain(view.GetVisualDescendants().OfType<Button>(),b=>AutomationProperties.GetName(b)?.StartsWith("Добавить:")==true);

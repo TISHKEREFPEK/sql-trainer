@@ -76,13 +76,16 @@ public sealed class MainWindow : Window
         MinHeight = 600;
         var header = new Grid
         {
-            ColumnDefinitions = new("*,Auto"),
-            Margin = new Thickness(18, 12)
+            ColumnDefinitions = new("240,*"),
+            Margin = new Thickness(20, 12,24,12),
+            MinHeight=48
         };
-        var heading = Ui.Text(Title, 22);
-        heading.Bind(TextBlock.ForegroundProperty,new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BackgroundInkBrush"));
-        header.Children.Add(heading);
+        var mark=new Border{Width=32,Height=32,CornerRadius=new CornerRadius(8),Child=new TextBlock{Text=">_",FontFamily=new FontFamily("Consolas"),FontSize=15,FontWeight=FontWeight.Bold,Foreground=Brushes.White,HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center}};
+        Ui.BindBrush(mark,Border.BackgroundProperty,"Accent");
+        var brandName=Ui.Text("",18);brandName.Inlines!.Add(new Avalonia.Controls.Documents.Run("sql"));var brandDot=new Avalonia.Controls.Documents.Run(".");Ui.BindBrush(brandDot,Avalonia.Controls.Documents.TextElement.ForegroundProperty,"Accent");brandName.Inlines.Add(brandDot);brandName.Inlines.Add(new Avalonia.Controls.Documents.Run("пространство"));
+        var brand=Ui.Row(mark,brandName);brand.VerticalAlignment=VerticalAlignment.Center;header.Children.Add(brand);
         Grid.SetColumn(actions, 1);
+        actions.HorizontalAlignment=HorizontalAlignment.Right;
         header.Children.Add(actions);
         var message = Ui.Text("");
         message.Bind(TextBlock.ForegroundProperty,new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BackgroundInkBrush"));
@@ -91,7 +94,7 @@ public sealed class MainWindow : Window
         {
             RowDefinitions = new("Auto,*,Auto")
         };
-        root.Children.Add(header);
+        var headerBorder=new Border{Child=header,BorderThickness=new Thickness(0,0,0,1)};Ui.BindBrush(headerBorder,Border.BackgroundProperty,"Surface");Ui.BindBrush(headerBorder,Border.BorderBrushProperty,"Line");root.Children.Add(headerBorder);
         Grid.SetRow(body, 1);
         root.Children.Add(body);
         var messageBorder = new Border
@@ -220,7 +223,7 @@ public sealed class MainWindow : Window
         code.Watermark = "XXXX-XXXX-XXXX";
         code.MaxLength = 20;
         code.FontSize = 24;
-        var connect = Ui.Button("Подключиться", () => Safe(async () =>
+        var connect = Ui.Primary(Ui.Button("Подключиться", () => Safe(async () =>
         {
             state.Status = "Ищем преподавателя…";
             var connection = await TeacherDiscovery.Find(code.Text ?? "");
@@ -233,7 +236,7 @@ public sealed class MainWindow : Window
             File.WriteAllText(path, Wire.Write(next.Connection));
             await ShowLogin();
             state.Status = "";
-        }));
+        })));
         body.Content = new Border
         {
             Child = Ui.Card(Ui.Stack(Ui.Text("Подключение к занятию", 24), Ui.Text("Введите код, который показывает преподаватель."), Ui.Field("Код преподавателя", code), connect)),
@@ -262,7 +265,7 @@ public sealed class MainWindow : Window
         if (!teacher)
             fields.Children.Add(Ui.Field("Логин", name));
         fields.Children.Add(Ui.Field("Пароль", password));
-        fields.Children.Add(Ui.Button(setup ? "Создать пароль" : "Войти", () => Safe(async () =>
+        fields.Children.Add(Ui.Primary(Ui.Button(setup ? "Создать пароль" : "Войти", () => Safe(async () =>
         {
             if (setup)
                 await api.Post<JsonElement>("setup", new PasswordRequest(password.Text ?? ""));
@@ -338,7 +341,7 @@ public sealed class MainWindow : Window
             }
 
             state.Status = "";
-        })));
+        }))));
         if (!teacher)
             fields.Children.Add(Ui.Button("Другой преподаватель", () =>
             {

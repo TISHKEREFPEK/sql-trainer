@@ -21,6 +21,7 @@ public sealed class ClassroomApplication : Application
         style.Setters.Add(new Setter(Window.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BackgroundBrush")));
         style.Setters.Add(new Setter(Window.ForegroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("InkBrush")));
         Styles.Add(style);
+        Styles.Add(new StyleInclude(new Uri("avares://Classroom.Desktop/")) { Source = new Uri("avares://Classroom.Desktop/WebStyles.axaml") });
         ThemeManager.Apply(new());
     }
 

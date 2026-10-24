@@ -33,7 +33,7 @@ public sealed record CircuitProject
         if (Version != 1) throw new InvalidDataException("Версия схемы не поддерживается. Исходный файл сохранён без изменений.");
         if (Parts.Count > 80 || Wires.Count > 200 || Code.Length > 100_000 || Name.Length > 120 || Favorites.Count > 256 || Favorites.Any(f => f.Length > 100))
             throw new InvalidDataException("Превышен размер проекта: 80 компонентов, 200 проводов, 100 000 символов кода.");
-        if (Parts.Any(p => string.IsNullOrWhiteSpace(p.Id) || p.Id.Length > 64 || !Enum.IsDefined(p.Kind) || !double.IsFinite(p.Value) || !double.IsFinite(p.X) || !double.IsFinite(p.Y) || p.X < 0 || p.X > 4000 || p.Y < 0 || p.Y > 3000 || p.Rotation is < 0 or > 3) || Parts.Select(p => p.Id).Distinct().Count() != Parts.Count)
+        if (Parts.Any(p => string.IsNullOrWhiteSpace(p.Id) || p.Id.Length > 64 || !Enum.IsDefined(p.Kind) || !double.IsFinite(p.Value) || !double.IsFinite(p.X) || !double.IsFinite(p.Y) || Math.Abs(p.X)>Classroom.Contracts.ElectronicsProjectFormat.CoordinateLimit || Math.Abs(p.Y)>Classroom.Contracts.ElectronicsProjectFormat.CoordinateLimit || p.Rotation is < 0 or > 3) || Parts.Select(p => p.Id).Distinct().Count() != Parts.Count)
             throw new InvalidDataException("Некорректный компонент или координаты.");
         foreach (var p in Parts)
         {

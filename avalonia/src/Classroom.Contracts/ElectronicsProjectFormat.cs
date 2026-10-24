@@ -6,6 +6,7 @@ namespace Classroom.Contracts;
 // additionally validates device models and actual terminal names before rendering.
 public static class ElectronicsProjectFormat
 {
+    public const double CoordinateLimit=1_000_000;
     public static readonly string[] ReportKinds=["submitted","compiled","compile-error","started","run-error"];
     public static (string Name,int Parts,int Wires) Inspect(string json)
     {
@@ -26,7 +27,7 @@ public static class ElectronicsProjectFormat
                 if(!ids.Add(Text(p.GetProperty("id"),64))) throw new InvalidDataException("Повтор компонента.");
                 var kind=Text(p.GetProperty("kind"),32);
                 if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
-                Number(p.GetProperty("x"),0,4000); Number(p.GetProperty("y"),0,3000);
+                Number(p.GetProperty("x"),-CoordinateLimit,CoordinateLimit); Number(p.GetProperty("y"),-CoordinateLimit,CoordinateLimit);
                 if(p.TryGetProperty("value",out var value)) Number(value,-1_000_000,1_000_000);
                 if(p.TryGetProperty("scale",out var scale)) Number(scale,0.4,2);
                 if(p.TryGetProperty("angle",out var angleDegrees)) { Number(angleDegrees,0,360); if(angleDegrees.GetDouble()>=360) throw new InvalidDataException("Некорректный угол детали."); }

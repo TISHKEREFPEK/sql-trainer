@@ -16,15 +16,18 @@ public sealed class ElectronicsSnapshotView : UserControl
 {
     readonly CircuitProject project;
     readonly Canvas canvas=new(){Background=Brushes.WhiteSmoke};
+    readonly CircuitViewport viewport;
     double zoom=1;
     public ElectronicsSnapshotView(ElectronicsSnapshot snapshot)
     {
         project=CircuitProject.Parse(snapshot.ProjectJson);
-        var scroll=new ScrollViewer{Content=canvas,HorizontalScrollBarVisibility=Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,VerticalScrollBarVisibility=Avalonia.Controls.Primitives.ScrollBarVisibility.Auto};
+        var scroll=viewport=new CircuitViewport(canvas);viewport.ZoomRequested=(anchor,scale)=>{var world=viewport.ToWorld(anchor);zoom=scale;viewport.SetView(zoom,new(anchor.X-world.X*zoom,anchor.Y-world.Y*zoom));Draw();};
         var scene=new Grid{RowDefinitions=new("Auto,*"),RowSpacing=8};
         scene.Children.Add(Ui.Row(Ui.Button("−",()=>Change(-0.1)),Ui.Button("+",()=>Change(0.1)),Ui.Button("Вписать",()=>{Fit(scroll);return Task.CompletedTask;})));
         Grid.SetRow(scroll,1); scene.Children.Add(scroll);
         var code=new TextEditor{Text=project.Code,IsReadOnly=true,ShowLineNumbers=true,FontFamily=new FontFamily("Cascadia Code, Consolas"),FontSize=14,SyntaxHighlighting=AvaloniaEdit.Highlighting.HighlightingManager.Instance.GetDefinition("C++")};
+        Ui.BindBrush(code,TextEditor.BackgroundProperty,"Editor");Ui.BindBrush(code,TextEditor.ForegroundProperty,"EditorInk");code.Padding=new Thickness(16,20);code.SyntaxHighlighting=CodeAppearance.CppForTheme();
+        void ApplyTheme()=>code.SyntaxHighlighting=CodeAppearance.CppForTheme();AttachedToVisualTree+=(_,_)=>{ThemeManager.Changed+=ApplyTheme;ApplyTheme();};DetachedFromVisualTree+=(_,_)=>ThemeManager.Changed-=ApplyTheme;
         var detail=Ui.Input(snapshot.Detail.Length==0?"Подробных сообщений нет.":snapshot.Detail,true); detail.IsReadOnly=true;
         var tabs=new TabControl{ItemsSource=new[]{new TabItem{Header="Схема · снимок",Content=scene},new TabItem{Header="Код ученика",Content=code},new TabItem{Header="Сообщение запуска",Content=detail}}};
         var root=new Grid{RowDefinitions=new("Auto,Auto,*"),RowSpacing=8};
@@ -32,11 +35,11 @@ public sealed class ElectronicsSnapshotView : UserControl
         var description=Ui.Text(ElectronicsLabels.Kind(snapshot.Kind)+" · получено "+ElectronicsLabels.Date(snapshot.At)+"\nПросмотр без редактирования. Состояние запуска сообщено приложением ученика; это не оценка задания.",12); Grid.SetRow(description,1);root.Children.Add(description); Grid.SetRow(tabs,2);root.Children.Add(tabs); Content=root;
         Draw(); var first=true; scroll.LayoutUpdated+=(_,_)=>{if(first&&scroll.Bounds.Width>150){first=false;Fit(scroll);}};
     }
-    Task Change(double delta){zoom=Math.Clamp(zoom+delta,0.2,2);Draw();return Task.CompletedTask;}
-    void Fit(ScrollViewer scroll){var right=project.Parts.Select(p=>p.X+PartArtwork.Body(p).Width+80).DefaultIfEmpty(800).Max();var bottom=project.Parts.Select(p=>p.Y+PartArtwork.Body(p).Height+50).DefaultIfEmpty(600).Max();zoom=Math.Clamp(Math.Min(scroll.Bounds.Width/right,scroll.Bounds.Height/bottom),0.2,1.5);Draw();}
+    Task Change(double delta){var anchor=new Point(viewport.Bounds.Width/2,viewport.Bounds.Height/2);var world=viewport.ToWorld(anchor);zoom=Math.Clamp(zoom+delta,0.1,3);viewport.SetView(zoom,new(anchor.X-world.X*zoom,anchor.Y-world.Y*zoom));Draw();return Task.CompletedTask;}
+    void Fit(CircuitViewport scroll){scroll.Fit(PartArtwork.Bounds(project.Parts));zoom=scroll.Zoom;Draw();}
     void Draw()
     {
-        canvas.Children.Clear();canvas.Width=Math.Max(800,project.Parts.Select(p=>p.X+PartArtwork.Body(p).Width+100).DefaultIfEmpty().Max())*zoom;canvas.Height=Math.Max(600,project.Parts.Select(p=>p.Y+PartArtwork.Body(p).Height+80).DefaultIfEmpty().Max())*zoom;
+        canvas.Children.Clear();canvas.Width=Math.Max(1,viewport.Bounds.Width);canvas.Height=Math.Max(1,viewport.Bounds.Height);canvas.ClipToBounds=false;viewport.SetView(zoom,viewport.Pan);
         foreach(var wire in project.Wires)
         {
             var a=PartArtwork.Pin(project.Parts.Single(p=>p.Id==wire.From.Part),wire.From.Pin);var b=PartArtwork.Pin(project.Parts.Single(p=>p.Id==wire.To.Part),wire.To.Pin);

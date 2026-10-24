@@ -54,7 +54,14 @@ public sealed partial class ElectronicsScreen
     static bool ValidSelectionColor(string color)=>System.Text.RegularExpressions.Regex.IsMatch(color,"^#[0-9a-fA-F]{6}$");
     void SelectionColorControls()
     {
-        properties.Children.Add(Ui.Text("Цвет выделения",14));
+        properties.Children.Add(Ui.Muted("ВЫДЕЛЕНИЕ",10));
+        var palette=Ui.Row();palette.Spacing=6;
+        foreach(var color in new[]{"#168BFF","#705CC6","#10B981","#F59E0B","#EF4444","#EC4899"})
+        {
+            var swatch=new Button{Content=new Avalonia.Controls.Shapes.Ellipse{Width=18,Height=18,Fill=Brush.Parse(color)},Width=28,Height=28,MinWidth=0,MinHeight=0,Padding=new Thickness(0),HorizontalContentAlignment=Avalonia.Layout.HorizontalAlignment.Center,VerticalContentAlignment=Avalonia.Layout.VerticalAlignment.Center,CornerRadius=new CornerRadius(14)};
+            ToolTip.SetTip(swatch,color);Avalonia.Automation.AutomationProperties.SetName(swatch,"Цвет выделения "+color);swatch.Click+=(_,_)=>_=Perform(()=>{File.WriteAllText(savePath+".selection-color",color);selectionColor=color;DrawSelection();Inspect();});palette.Children.Add(swatch);
+        }
+        properties.Children.Add(palette);
         var input=Ui.Input(selectionColor);input.MaxLength=7;input.Watermark="#RRGGBB";
         Avalonia.Automation.AutomationProperties.SetName(input,"Цвет выделения");properties.Children.Add(input);
         properties.Children.Add(Ui.Button("Применить цвет",()=>Perform(()=>
@@ -80,7 +87,7 @@ public sealed partial class ElectronicsScreen
             Handle(corners[i],i,new Cursor(cursor),"Потяните угол: размер детали. Shift — сохранить пропорции.");
         }
         var midpoint=new Point((corners[0].X+corners[1].X)/2,(corners[0].Y+corners[1].Y)/2);
-        var radians=PartArtwork.Degrees(part)*Math.PI/180;var knob=midpoint+new Vector(Math.Sin(radians)*34,-Math.Cos(radians)*34);var rotation=new Point(Math.Max(9,knob.X),Math.Max(9,knob.Y));
+        var radians=PartArtwork.Degrees(part)*Math.PI/180;var rotation=midpoint+new Vector(Math.Sin(radians)*34,-Math.Cos(radians)*34);
         overlay.Children.Add(new Line{StartPoint=midpoint,EndPoint=rotation,Stroke=brush,StrokeThickness=2,IsHitTestVisible=false});
         Handle(rotation,-1,new Cursor(StandardCursorType.Hand),"Потяните круг: свободный поворот. Shift — шаг 15°.");
         void Handle(Point point,int corner,Cursor cursor,string tip)

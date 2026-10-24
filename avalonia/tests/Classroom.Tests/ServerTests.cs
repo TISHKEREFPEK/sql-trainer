@@ -268,7 +268,7 @@ public sealed class ServerTests
             }
 
             var electronicsStudent = (await admin.Get<TeacherOverview>("teacher/overview")).Students.Single(s=>s.Login=="test-00").Id;
-            var electronicsJson = Wire.Write(new { version=1,name="Работа для проверки восстановления",code="void setup(){} void loop(){}",parts=Array.Empty<object>(),wires=Array.Empty<object>() });
+            var electronicsJson = Wire.Write(new { version=1,name="Работа для проверки восстановления",code="void setup(){} void loop(){}",parts=new[]{new{id="r",kind="Resistor",x=-5000,y=-6000,value=330}},wires=Array.Empty<object>() });
             var electronicsClient=Guid.NewGuid().ToString("N"); var electronicsReport=Guid.NewGuid().ToString("N");
             await first.Put<ElectronicsSyncReceipt>("electronics/work",new ElectronicsSyncRequest(electronicsClient,1,electronicsJson,[new(electronicsReport,"submitted",electronicsJson,"")]));
             var backup = await admin.Post<JsonElement>("teacher/backups");

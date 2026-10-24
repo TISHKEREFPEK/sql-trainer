@@ -22,6 +22,177 @@ public static class TestApplication
 
 public sealed class UiTests
 {
+    [AvaloniaFact]
+    public async Task ConnectionCodeFindsTheRightTeacherAndRetainsPinnedTlsAndLogin()
+    {
+        await using var first = await LiveClassroom.Start();
+        await using var second = await LiveClassroom.Start();
+        var firstCode = PairingCode.Create(first.Pairing);
+        var secondCode = PairingCode.Create(second.Pairing);
+        Assert.NotEqual(firstCode, secondCode);
+        using var found = new ClassroomApi(await TeacherDiscovery.Find(PairingCode.Format(secondCode).ToLowerInvariant()));
+        Assert.Equal(second.Admin.Connection.Fingerprint, found.Connection.Fingerprint);
+        Assert.Equal(second.Admin.Connection.Address, found.Connection.Address);
+        Assert.False((await found.Get<StatusDto>("status")).NeedsSetup);
+        Assert.Equal(401, (await Assert.ThrowsAsync<ApiException>(() => found.Login(new("student", "ui-test", "wrong-password")))).Status);
+        var login = await found.Login(new("student", "ui-test", "synthetic-student-password"));
+        Assert.Equal(second.StudentId, login.Id);
+        Assert.Equal("sql", login.Destination!.StandId);
+        using var wrongCertificate = new ClassroomApi(found.Connection with { Fingerprint = new string('0', 64) });
+        await Assert.ThrowsAsync<HttpRequestException>(() => wrongCertificate.Get<StatusDto>("status"));
+        await Assert.ThrowsAsync<IOException>(() => TeacherDiscovery.Find("2222-2222-2222"));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(900)]
+    [InlineData(1320)]
+    public async Task CodeConnectionScreensHaveOneStudentFieldAndReadableTeacherCode(int width)
+    {
+        var window = new MainWindow(false, false) { Width = width, Height = 700 };
+        typeof(MainWindow).GetMethod("ShowConnect", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(window, null);
+        window.Show();
+        Assert.Single(window.GetVisualDescendants().OfType<TextBox>());
+        Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Код преподавателя");
+        window.UpdateLayout();
+        Capture(window, $"student-connect-{width}.png");
+        window.Close();
+        var teacher = new MainWindow(true, false) { Width = width, Height = 700 };
+        var host = new HostManager();
+        typeof(HostManager).GetProperty(nameof(HostManager.ConnectionCode))!.SetValue(host, "ABCD-EFGH-JKLM");
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        using var view = new TeacherScreen(teacher, api, host);
+        teacher.Preview(view); teacher.Show();
+        await view.ShowConnectionCode();
+        teacher.UpdateLayout();
+        Assert.Contains(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "ABCD-EFGH-JKLM" && t.FontSize >= 40);
+        Capture(teacher, $"teacher-connection-code-{width}.png");
+        teacher.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task TeacherCodeIsHiddenUntilLoginAndRemovedOnLogout()
+    {
+        await using var fixture = await LiveClassroom.Start();
+        var teacher = new MainWindow(true, false);
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(MainWindow).GetField("api", flags)!.SetValue(teacher, fixture.Admin);
+        var host = (HostManager)typeof(MainWindow).GetField("host", flags)!.GetValue(teacher)!;
+        var code = PairingCode.Format(PairingCode.Create(fixture.Pairing));
+        typeof(HostManager).GetProperty(nameof(HostManager.ConnectionCode))!.SetValue(host, code);
+        await (Task)typeof(MainWindow).GetMethod("ShowLogin", flags)!.Invoke(teacher, null)!;
+        teacher.Show();
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<Button>(), b => b.Content?.ToString() == "Код подключения");
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        teacher.GetVisualDescendants().OfType<TextBox>().Single().Text = "synthetic-teacher-password";
+        teacher.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Войти").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        for (var i = 0; i < 150 && !teacher.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Код подключения"); i++) await Task.Delay(50);
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TabItem>(), t => t.Header?.ToString() == "Подключение");
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        Assert.Contains(teacher.GetVisualDescendants().OfType<ComboBox>(), c => c.Items.OfType<string>().SequenceEqual(new[] { "SQL", "Электроника" }));
+        teacher.Width = 900; teacher.UpdateLayout();
+        Capture(teacher, "teacher-stand-selector-900.png");
+        teacher.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Код подключения").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        teacher.UpdateLayout();
+        Assert.Contains(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        teacher.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Выйти").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        for (var i = 0; i < 150 && !teacher.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Войти"); i++) await Task.Delay(50);
+        Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(), b => b.Content?.ToString() == "Войти");
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == code);
+        Assert.DoesNotContain(teacher.GetVisualDescendants().OfType<Button>(), b => b.Content?.ToString() == "Код подключения");
+        teacher.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task PausedLoginRecoversAndRejectedSqlDoesNotBecomeAPermanentRetry()
+    {
+        await using var fixture = await LiveClassroom.Start();
+        var definition = Catalog.Data.Tasks.Single(t => t.Id == "database");
+        await fixture.Admin.Put<System.Text.Json.JsonElement>("teacher/tasks/database", new SaveTaskRequest(Catalog.Write(definition), true));
+        await fixture.Student.Post<System.Text.Json.JsonElement>("tasks/database/violation");
+        var window = new MainWindow(false, false);
+        using var view = new StudentScreen(window, fixture.Student);
+        window.Preview(view); window.Show();
+        // Previously Load threw 423 before starting its polling timer.
+        await view.Load();
+        var run = view.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Запустить");
+        Assert.False(run.IsEnabled);
+        await fixture.Admin.Post<System.Text.Json.JsonElement>($"teacher/students/{fixture.StudentId}/unlock");
+        for (var i = 0; i < 60 && !run.IsEnabled; i++) await Task.Delay(100);
+        Assert.True(run.IsEnabled);
+        view.Dispose(); window.Close();
+
+        var task = await fixture.Student.Get<StudentTask>("tasks/database");
+        var catalogue = await fixture.Student.Get<CatalogueDto>("catalog");
+        var staleWindow = new MainWindow(false, false);
+        using var staleView = new StudentScreen(staleWindow, fixture.Student);
+        staleView.Preview(catalogue, task, new(false, new([], []), [], null, null));
+        staleWindow.Preview(staleView); staleWindow.Show();
+        var editor = staleView.GetVisualDescendants().OfType<TextEditor>().Single();
+        await fixture.Student.Post<System.Text.Json.JsonElement>("tasks/database/violation");
+        editor.Text = "SELECT 7;";
+        var rejected = await Assert.ThrowsAsync<ApiException>(staleView.CheckShortcut);
+        Assert.Equal(423, rejected.Status);
+        Assert.Null(staleWindow.PendingFor("database"));
+        await fixture.Admin.Post<System.Text.Json.JsonElement>($"teacher/students/{fixture.StudentId}/unlock");
+        editor.Text = definition.Solution;
+        await staleView.CheckShortcut();
+        Assert.True((await fixture.Student.Get<StudentTask>("tasks/database")).Completed);
+        var details = await fixture.Admin.Get<LearningTaskDetail>($"teacher/learning/{fixture.StudentId}/database");
+        Assert.Equal(definition.Solution, details.AcceptedCode);
+        Assert.Single(details.Events, e => e.Action == "check");
+
+        var projectSource = Catalog.Data.Tasks.First(t => t.Project == "library");
+        await (Task)typeof(StudentScreen).GetMethod("Select", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(staleView, [projectSource.Id])!;
+        var assigned = await fixture.Student.Get<StudentTask>($"tasks/{projectSource.Id}");
+        editor.Text = assigned.VariantIndex == 1 ? projectSource.Solution : Variants.Create(projectSource)[assigned.VariantIndex - 2].Solution;
+        var check = staleView.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Проверить");
+        check.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        for (var i = 0; i < 100 && !(await fixture.Student.Get<StudentTask>($"tasks/{projectSource.Id}")).Completed; i++) await Task.Delay(100);
+        await Task.Delay(100);
+        Assert.True((await fixture.Student.Get<StudentTask>($"tasks/{projectSource.Id}")).Completed);
+        Assert.False(check.IsEnabled); // Button's async-finally must preserve the completed-project policy.
+        staleWindow.Close();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(0, 1320)]
+    [InlineData(1, 1320)]
+    [InlineData(2, 1320)]
+    [InlineData(3, 1320)]
+    [InlineData(0, 900)]
+    [InlineData(1, 900)]
+    [InlineData(2, 900)]
+    [InlineData(3, 900)]
+    public void LearningStatisticsRendersEveryLevelAndIncludesUnstartedStudents(int level, int width)
+    {
+        ThemeManager.Apply(new());
+        var window = new MainWindow(true, false) { Width = width, Height = 900 };
+        using var api = new ClassroomApi(new("https://127.0.0.1:1", new string('0', 64)));
+        var view = new LearningStatisticsView(window, api);
+        var at = DateTimeOffset.Parse("2026-10-19T09:00:00+03:00").ToUnixTimeMilliseconds();
+        var record = new LearningRecord("s1", "database", "База, таблица, строка", "01 · Старт", 1, 1, at, at + 600000, at + 600000, 120, 120, 3, 2, 1, 2, 2, 1);
+        var overview = new LearningOverview([new("g", "Демо · ИСП-31"), new("empty", "Пустая группа")], [new("s1", "demo-01", "g", 1, 2, at + 600000, ["database", "columns"]), new("s2", "demo-02", "g", 0, 2, null, ["database", "columns"])], [new("database", record.Title, record.Module, null), new("columns", "Выбираем столбцы", record.Module, null)], [record], at + 600000);
+        var detail = new LearningTaskDetail(record, "Покажи все строки таблицы students.", "SELECT 7; -- текущий черновик", "SELECT * FROM students;", [new("c", at + 600000, "check", "correct", "SELECT * FROM students;", null), new("e", at + 30000, "check", "near \"SELEC\": syntax error", "SELEC 1;", "Проверьте написание SELECT."), new("h", at + 20000, "hint", "Подсказка №1", null, null)], false, 3);
+        view.Preview(overview, level > 0 ? "g" : null, level > 1 ? "s1" : null, level == 3 ? detail : null);
+        window.Preview(view); window.Show(); window.UpdateLayout();
+        var labels = view.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").ToArray();
+        if (level == 0)
+        {
+            var grid = view.GetVisualDescendants().OfType<DataGrid>().Single();
+            var row = grid.ItemsSource.Cast<StatisticsRow>().Single(r => r.Id == "g");
+            Assert.Equal(25, row.Percent); Assert.Equal(2, row.Count);
+            Assert.Contains(grid.ItemsSource.Cast<StatisticsRow>(), r => r.Id == "empty" && r.Count == 0);
+        }
+        if (level == 2) Assert.Contains(view.GetVisualDescendants().OfType<DataGrid>().Single().ItemsSource.Cast<StatisticsRow>(), r => r.Id == "columns" && r.State == "Не начато");
+        if (level == 3)
+        {
+            Assert.Contains("Принятый ответ", labels);
+            Assert.Contains(view.GetVisualDescendants().OfType<TextBox>(), t => t.IsReadOnly && t.Text == detail.AcceptedCode);
+            Assert.Contains(labels, t => t.Contains(Ui.Time(at)));
+        }
+        Capture(window, $"statistics-{level}-{width}.png"); window.Close();
+    }
+
     [AvaloniaTheory]
     [InlineData(true)]
     [InlineData(false)]
@@ -173,11 +344,11 @@ public sealed class UiTests
         window.Close();
     }
 
-    static void Capture(Window window, string name)
+    static void Capture(Window window, string name, int minimumWidth = 850)
     {
         using var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame);
-        Assert.True(frame!.PixelSize.Width >= 850);
+        Assert.True(frame!.PixelSize.Width >= minimumWidth);
         var dir = Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT") ?? Path.Combine(AppContext.BaseDirectory, "screenshots");
         Directory.CreateDirectory(dir);
         frame.Save(Path.Combine(dir, name));

@@ -9,12 +9,16 @@ using Classroom.Contracts;
 namespace Classroom.Desktop;
 public static class Ui
 {
-    public static TextBlock Text(string text, double size = 14) => new()
+    public static TextBlock Text(string text, double size = 14)
     {
-        Text = text,
-        FontSize = size,
-        TextWrapping = TextWrapping.Wrap
-    };
+        var block=new TextBlock {Text=text,FontSize=size,TextWrapping=TextWrapping.Wrap,LineHeight=size*1.5};
+        if(size>=18)block.Classes.Add("heading");
+        return block;
+    }
+    public static T BindBrush<T>(T control,Avalonia.AvaloniaProperty property,string resource) where T: AvaloniaObject
+    { control.Bind(property,new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(resource+"Brush"));return control; }
+    public static TextBlock Muted(string text,double size=13){var block=Text(text,size);block.Classes.Add("muted");return block;}
+    public static Button Primary(Button button){button.Classes.Add("primary");return button;}
     public static StackPanel Stack(params Control[] children)
     {
         var panel = new StackPanel
@@ -38,13 +42,13 @@ public static class Ui
         return panel;
     }
 
-    public static Button Button(string title, Func<Task> action)
+    public static Button Button(string title, Func<Task> action, Func<bool>? enabledAfter = null)
     {
         var button = new Button
         {
             Content = title,
-            MinHeight = 36,
-            Padding = new Thickness(14, 7)
+            MinHeight = 38,
+            Padding = new Thickness(14, 9)
         };
         button.Click += async (_, _) =>
         {
@@ -55,7 +59,7 @@ public static class Ui
             }
             finally
             {
-                button.IsEnabled = true;
+                button.IsEnabled = enabledAfter?.Invoke() ?? true;
             }
         };
         return button;
@@ -66,8 +70,8 @@ public static class Ui
         var border = new Border
         {
             Child = child,
-            Padding = new Thickness(18),
-            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(24),
+            CornerRadius = new CornerRadius(12),
             BorderThickness = new Thickness(1)
         };
         border.Bind(Border.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("SurfaceBrush"));
@@ -118,7 +122,7 @@ public static class ThemeManager
     public static event Action? Changed;
     public static readonly Dictionary<string, (string Name, string Background, string Surface, string Accent, string Editor)> Presets = new()
     {
-        ["light"] = ("Светлая", "#EDF2F4", "#FFFFFF", "#137C80", "#20343D"),
+        ["light"] = ("Светлая", "#F6F7F9", "#FFFFFF", "#705CC6", "#242938"),
         ["mist"] = ("Туман", "#E9EDF5", "#F7F9FF", "#5267AA", "#28334F"),
         ["paper"] = ("Бумага", "#EFECE5", "#FFFCF5", "#71613D", "#36362F"),
         ["dark"] = ("Тёмная", "#20262C", "#2A323A", "#6BC9BF", "#1A2026"),
@@ -152,17 +156,23 @@ public static class ThemeManager
         foreach (var(name, value)in new[]
         {
             ("Background", background),
+            ("BackgroundInk", Ink(background)=="#000000"?"#292B38":Ink(background)),
             ("Surface", surface),
             ("Accent", accent),
             ("Editor", editor),
-            ("Ink", Ink(surface)),
-            ("EditorInk", Ink(editor)),
-            ("Line", Ink(surface) == "#FFFFFF" ? "#454B53" : "#D5E0E4")
+            ("Ink", Ink(surface)=="#000000"?"#292B38":"#ECEEF5"),
+            ("EditorInk", Ink(editor)=="#FFFFFF"?"#E5E7F2":"#292B38"),
+            ("AccentInk",Ink(accent)),
+            ("Muted", Ink(surface)=="#FFFFFF"?"#A8ADBE":"#6B7080"),
+            ("Hover",Ink(surface)=="#FFFFFF"?"#343346":"#F3F1FB"),
+            ("Subtle",Ink(surface)=="#FFFFFF"?"#242A38":"#F0F1F5"),
+            ("Line", Ink(surface) == "#FFFFFF" ? "#454B53" : "#E3E5EB")
         }
 
         )
             app.Resources[name + "Brush"] = new SolidColorBrush(Color.Parse(value));
         app.Resources["SystemAccentColor"] = Color.Parse(accent);
+        foreach(var key in new[]{"SystemAccentColorLight1","SystemAccentColorLight2","SystemAccentColorDark1","SystemAccentColorDark2"})app.Resources[key]=Color.Parse(accent);
         Changed?.Invoke();
     }
 }

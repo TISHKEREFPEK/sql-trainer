@@ -12,6 +12,13 @@ public static class Routes
     public static void Map(WebApplication app, ServerState state, string dataDir, WorkerRunner worker)
     {
         var api = app.MapGroup("/api/v1");
+        ElectronicsRoutes.Map(api,state);
+        api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
+        {
+            state.Authorize(ctx, "teacher");
+            return state.SelectLesson(input);
+        });
+        LearningAnalytics.Map(api, state);
         api.MapGet("/status", () => state.Read(async db => new StatusDto(!await db.Profiles.AnyAsync(p => p.Role == "teacher"), "0.1.0")));
         api.MapPost("/setup", async (HttpContext ctx, PasswordRequest input) =>
         {
@@ -74,6 +81,7 @@ public static class Routes
             {
                 var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
                 row.Draft = input.Code;
+                row.LastActivityAt = ServerState.Now;
                 return new
                 {
                     ok = true
@@ -85,10 +93,33 @@ public static class Routes
             var session = state.Authorize(ctx, "student");
             if (input.Seconds is < 0 or > 30)
                 throw new HttpFault(400, "Некорректное время активности.");
+            if (input.EventId is not null && (!Guid.TryParseExact(input.EventId, "N", out _) || input.Sequence < 1))
+                throw new HttpFault(400, "Некорректный номер активности.");
             return await state.Write(async db =>
             {
                 var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
-                row.ActiveSeconds += input.Seconds;
+                var receiptId = "activity:" + input.EventId;
+                var hash = id + ":" + input.Seconds;
+                if (input.EventId is not null)
+                {
+                    var receipt = await db.Operations.FindAsync(session.ProfileId, receiptId);
+                    if (receipt is not null)
+                    {
+                        var previous = long.Parse(receipt.ResponseJson, System.Globalization.CultureInfo.InvariantCulture);
+                        if (input.Sequence == previous && receipt.RequestHash != hash)
+                            throw new HttpFault(409, "Номер активности уже использован.");
+                        if (input.Sequence <= previous)
+                            return new { ok = true };
+                        receipt.RequestHash = hash; receipt.ResponseJson = input.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture); receipt.At = ServerState.Now;
+                    }
+                    else db.Operations.Add(new() { StudentId = session.ProfileId, Id = receiptId, RequestHash = hash, ResponseJson = input.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture), At = ServerState.Now });
+                }
+                // Clamp by elapsed server time: concurrent clients/retries cannot inflate time.
+                var elapsed = row.LastHeartbeatAt is { } at ? Math.Clamp((ServerState.Now - at) / 1000, 0, 30) : Math.Min(2, input.Seconds);
+                if (Profile(db, session.ProfileId).LockedUntil <= ServerState.Now && row.CompletedAt is null)
+                    row.ActiveSeconds += (int)Math.Min(input.Seconds, elapsed);
+                row.LastHeartbeatAt = ServerState.Now;
+                row.LastActivityAt = ServerState.Now;
                 return new
                 {
                     ok = true
@@ -111,7 +142,10 @@ public static class Routes
                 if (input.Index > times.Length)
                     throw new HttpFault(409, "Откройте предыдущую подсказку.");
                 if (input.Index == times.Length)
+                {
                     row.HintsJson = Wire.Write(times.Append(ServerState.Now).ToArray());
+                    row.LastActivityAt = ServerState.Now;
+                }
                 return true;
             });
             return await state.GetTask(session, id);

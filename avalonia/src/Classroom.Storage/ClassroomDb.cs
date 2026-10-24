@@ -60,6 +60,12 @@ public sealed class AssignmentEntity
     public int ActiveSeconds { get; set; }
     public int Checks { get; set; }
     public int Errors { get; set; }
+    public long? StartedAt { get; set; }
+    public long? LastActivityAt { get; set; }
+    public long? LastHeartbeatAt { get; set; }
+    public string? AcceptedCode { get; set; }
+    public int? ActiveSecondsAtCompletion { get; set; }
+    public int TrackingVersion { get; set; }
 }
 
 public sealed class SnapshotEntity
@@ -76,6 +82,9 @@ public sealed class AttemptEntity
     public string TaskId { get; set; } = "";
     public string Kind { get; set; } = "";
     public long At { get; set; }
+    public string? Action { get; set; }
+    public string? Code { get; set; }
+    public string? Explanation { get; set; }
 }
 
 public sealed class OperationEntity
@@ -93,6 +102,30 @@ public sealed class ImportEntity
     public long At { get; set; }
 }
 
+public sealed class ElectronicsWorkEntity
+{
+    public string StudentId { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public long Sequence { get; set; }
+    public string ProjectJson { get; set; } = "";
+    public string ProjectHash { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int Parts { get; set; }
+    public int Wires { get; set; }
+    public long UpdatedAt { get; set; }
+}
+public sealed class ElectronicsReportEntity
+{
+    public string StudentId { get; set; } = "";
+    public string Id { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string ProjectJson { get; set; } = "";
+    public string ProjectHash { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public string Name { get; set; } = "";
+    public long At { get; set; }
+}
 public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbContext(options)
 {
     public DbSet<GroupEntity> Groups => Set<GroupEntity>();
@@ -105,6 +138,8 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<AttemptEntity> Attempts => Set<AttemptEntity>();
     public DbSet<OperationEntity> Operations => Set<OperationEntity>();
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
+    public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
+    public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -147,9 +182,15 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<SnapshotEntity>().HasKey(x => new { x.StudentId, x.Project });
         model.Entity<SnapshotEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<AttemptEntity>().HasKey(x => x.Id);
+        model.Entity<AttemptEntity>().HasIndex(x => new { x.StudentId, x.TaskId, x.At });
         model.Entity<AttemptEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<OperationEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<OperationEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ImportEntity>().HasKey(x => x.Hash);
+        model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
+        model.Entity<ElectronicsWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });
+        model.Entity<ElectronicsReportEntity>().HasIndex(x => new { x.StudentId, x.At, x.Id });
+        model.Entity<ElectronicsReportEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
     }
 }

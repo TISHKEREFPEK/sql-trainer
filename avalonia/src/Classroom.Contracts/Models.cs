@@ -11,7 +11,7 @@ public static class Wire
 public record ApiError(string Error);
 public record StatusDto(bool NeedsSetup, string Version);
 public record LoginRequest(string Role, string Login, string Password);
-public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets);
+public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets, LessonDestination? Destination = null);
 public record PasswordRequest(string Password);
 public record CatalogueItem(string Id, string Title, string Module, string? Project);
 public record CatalogueDto(CatalogueItem[] Tasks, string[] Completed, long LockedUntil);
@@ -19,7 +19,8 @@ public record CatalogueDto(CatalogueItem[] Tasks, string[] Completed, long Locke
 public record StudentTask(string Id, string Title, string Module, string Prompt, string Concept, string Example, string Starter, string[] Terms, Dictionary<string, string> Definitions, string? Project, int VariantIndex, int Revision, bool Restricted, string[] OpenedHints, long[] HintOpenedAt, int HintTotal, string Draft, bool Completed, long LockedUntil);
 public record HintRequest(int Index);
 public record DraftRequest(string Code);
-public record ActivityRequest(int Seconds);
+public record ActivityRequest(int Seconds, string? EventId = null, long Sequence = 0);
+public record TaskEventRequest(string EventId, string Action);
 public record ExecuteRequest(string OperationId, string Code, bool Check);
 public record SqlResult(string[] Columns, JsonElement[][] Values);
 public record ColumnDefinition(string Name, string Type, bool NotNull, bool PrimaryKey);
@@ -48,3 +49,9 @@ public record ImportCommitRequest(string PreviewId);
 public record BackupDto(string Name, long CreatedAt);
 public record ServerSettings(string Address = "127.0.0.1", int Port = 47831);
 public record ConnectionSettings(string Address, string Fingerprint);
+// Detailed analytics are teacher-only; SQL is fetched only when opening one student's task.
+public record LearningRecord(string StudentId, string TaskId, string Title, string Module, int Variant, int Revision, long? StartedAt, long? LastActivityAt, long? CompletedAt, int ActiveSeconds, int? ActiveSecondsAtCompletion, int Checks, int Errors, int Hints, int HintTotal, int Violations, int? FirstCheckFailed);
+public record LearningStudent(string Id, string Login, string? GroupId, int Completed, int Total, long? LastActivityAt, string[] TaskIds);
+public record LearningOverview(GroupDto[] Groups, LearningStudent[] Students, CatalogueItem[] Tasks, LearningRecord[] Records, long GeneratedAt);
+public record LearningEvent(string Id, long At, string Action, string Result, string? Code, string? Explanation);
+public record LearningTaskDetail(LearningRecord Record, string Prompt, string Draft, string? AcceptedCode, LearningEvent[] Events, bool HasMore, int NextOffset);

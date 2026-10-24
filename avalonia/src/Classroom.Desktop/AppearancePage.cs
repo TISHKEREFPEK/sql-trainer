@@ -5,8 +5,10 @@ using Classroom.Client;
 using Classroom.Contracts;
 
 namespace Classroom.Desktop;
-public sealed class AppearanceWindow : Window
+public sealed class AppearancePage : UserControl, IDisposable
 {
+    readonly MainWindow owner;
+    readonly Action<ThemePreference?> completed;
     readonly ThemePreference original;
     readonly ClassroomApi api;
     readonly ComboBox preset = new();
@@ -14,17 +16,16 @@ public sealed class AppearanceWindow : Window
     readonly TextBlock message = Ui.Text("");
     readonly Dictionary<string, TextBox> colors = new();
     bool committed;
-    public AppearanceWindow(ClassroomApi api, ThemePreference original)
+    bool disposed;
+    public AppearancePage(MainWindow owner, ClassroomApi api, ThemePreference original, Action<ThemePreference?> completed)
     {
+        this.owner = owner;
+        this.completed = completed;
         this.api = api;
         this.original = original;
-        Title = "Оформление";
-        Width = 580;
-        Height = 750;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
         preset.ItemsSource = ThemeManager.Presets.Select(p => new Choice(p.Key, p.Value.Name)).ToArray();
         preset.SelectedItem = (preset.ItemsSource as Choice[])!.First(p => p.Id == original.Preset);
-        var panel = Ui.Stack(Ui.Text("Оформление", 24), Ui.Field("Тема", preset));
+        var panel = Ui.Stack(Ui.Field("Тема", preset));
         foreach (var(key, label)in new[]
         {
             ("background", "Фон"),
@@ -47,11 +48,12 @@ public sealed class AppearanceWindow : Window
         {
             var theme = Preference();
             await api.Put<JsonElement>("theme", theme);
+            if (disposed) return;
             committed = true;
-            Close(theme);
+            completed(theme);
         })), Ui.Button("Отменить", () =>
         {
-            Close(null);
+            completed(null);
             return Task.CompletedTask;
         })));
         var name = Ui.Input();
@@ -75,7 +77,7 @@ public sealed class AppearanceWindow : Window
         {
             await api.Post<ThemePreset[]>("theme-presets", new ThemePresetRequest(name.Text ?? "", Preference()));
             await Refresh();
-            message.Text = "Пресет сохранён.";
+            if (!disposed) owner.Message("Пресет сохранён.");
         })));
         panel.Children.Add(Ui.Button("Удалить пресет", () => Safe(async () =>
         {
@@ -86,17 +88,19 @@ public sealed class AppearanceWindow : Window
             }
         })));
         panel.Children.Add(message);
-        Content = new Border
-        {
-            Padding = new Thickness(20),
-            Child = Ui.Scroll(panel)
-        };
-        Opened += async (_, _) => await Safe(Refresh);
-        Closed += (_, _) =>
-        {
-            if (!committed)
-                ThemeManager.Apply(original);
-        };
+        var card = Ui.Card(Ui.Scroll(panel));
+        card.Padding = new Thickness(20);
+        card.MaxWidth = 760;
+        card.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+        Content = card;
+    }
+
+    public Task Load() => Safe(Refresh);
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        if (!committed) ThemeManager.Apply(original);
     }
 
     ThemePreference Preference()
@@ -109,6 +113,7 @@ public sealed class AppearanceWindow : Window
 
     void Preview()
     {
+        if (disposed) return;
         try
         {
             ThemeManager.Apply(Preference());
@@ -122,19 +127,13 @@ public sealed class AppearanceWindow : Window
 
     async Task Refresh()
     {
-        personal.ItemsSource = (await api.Get<ThemePreset[]>("theme-presets")).Select(p => new Saved(p)).ToArray();
+        var presets = await api.Get<ThemePreset[]>("theme-presets");
+        if (!disposed) personal.ItemsSource = presets.Select(p => new Saved(p)).ToArray();
     }
 
     async Task Safe(Func<Task> action)
     {
-        try
-        {
-            await action();
-        }
-        catch (Exception e)when (e is InvalidDataException or ApiException or HttpRequestException or TaskCanceledException)
-        {
-            message.Text = e.Message;
-        }
+        if (!disposed) await owner.Safe(action);
     }
 
     sealed record Choice(string Id, string Name)

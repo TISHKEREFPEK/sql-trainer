@@ -23,6 +23,15 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
     public static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public bool HasActiveChecks => !busy.IsEmpty;
     public bool Stopping { get; set; }
+    LessonDestination lesson = new("sql");
+    public LessonDestination Lesson => Volatile.Read(ref lesson);
+    public LessonDestination SelectLesson(LessonDestination next)
+    {
+        if (next.StandId is not ("sql" or "electronics") || next.TaskId is not null)
+            throw new HttpFault(400, "Выберите стенд SQL или Электроника.");
+        Volatile.Write(ref lesson, next);
+        return next;
+    }
 
     public async Task<T> Write<T>(Func<ClassroomDb, Task<T>> change)
     {
@@ -110,7 +119,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 throw new HttpFault(401, "Неверный логин или пароль.");
             var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             Sessions[Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))] = new(profile.Id, profile.Role, Now + 8 * 3600000);
-            return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson));
+            return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson), Lesson);
         });
     }
 
@@ -227,7 +236,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 {
                     VariantIndex = index
                 };
-            db.Assignments.Add(new() { StudentId = student.Id, TaskId = link.Id, Json = Catalog.Write(assigned), Revision = link.Revision, ProjectOrder = nextOrder++ });
+            db.Assignments.Add(new() { StudentId = student.Id, TaskId = link.Id, Json = Catalog.Write(assigned), Revision = link.Revision, ProjectOrder = nextOrder++, TrackingVersion = 1 });
         }
 
         await db.SaveChangesAsync();
@@ -306,6 +315,12 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 await using var db = Db();
                 await using var transaction = await db.Database.BeginTransactionAsync();
                 var assignment = (await db.Assignments.FindAsync(session.ProfileId, taskId))!;
+                if (!string.IsNullOrWhiteSpace(input.Code))
+                {
+                    if (assignment.TrackingVersion > 0)
+                        assignment.StartedAt ??= Now;
+                    assignment.LastActivityAt = Now;
+                }
                 if (input.Check)
                 {
                     assignment.Checks++;
@@ -313,6 +328,11 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                         assignment.Errors++;
                     if (reply.Result.Correct)
                     {
+                        if (assignment.CompletedAt is null)
+                        {
+                            assignment.AcceptedCode = input.Code;
+                            assignment.ActiveSecondsAtCompletion = assignment.ActiveSeconds;
+                        }
                         assignment.CompletedAt ??= Now;
                         if (reply.Snapshot is not null && task.Project is not null)
                         {
@@ -324,8 +344,10 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                         }
                     }
 
-                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), StudentId = session.ProfileId, TaskId = taskId, Kind = reply.Result.Error ?? (reply.Result.Correct ? "correct" : "different"), At = Now });
                 }
+
+                if (input.Check || !string.IsNullOrWhiteSpace(input.Code))
+                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now });
 
                 db.Operations.Add(new() { StudentId = session.ProfileId, Id = input.OperationId, RequestHash = requestHash, ResponseJson = Wire.Write(reply.Result), At = Now });
                 await db.SaveChangesAsync();

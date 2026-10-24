@@ -8,11 +8,124 @@ using Classroom.Storage;
 using Classroom.Worker;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Xunit;
 
 namespace Classroom.Tests;
+
 public sealed class CoreTests
 {
+    [Fact]
+    public void EveryBundledTaskAndVariantIsValidForAuthoringAndRestore()
+    {
+        foreach (var source in Catalog.Data.Tasks)
+            foreach (var task in new[] { source }.Concat(Variants.Create(source)))
+                Catalog.Validate(task);
+    }
+    [Theory]
+    [InlineData("partial")]
+    [InlineData("bytes")]
+    [InlineData("future")]
+    [InlineData("json")]
+    [InlineData("snapshot")]
+    [InlineData("foreign-key")]
+    public async Task InvalidRestoreLeavesTheWorkingDatabaseUsable(string damage)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "classroom-restore-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "classroom.sqlite");
+        try
+        {
+            await using (var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + path).Options))
+            {
+                await db.Database.MigrateAsync();
+                db.Profiles.Add(new()
+                {
+                    Id = "teacher",
+                    Login = "teacher",
+                    Role = "teacher",
+                    PasswordHash = Passwords.Hash("restore-test-password")
+                });
+                db.Tasks.Add(new()
+                {
+                    Id = Catalog.Data.Tasks[0].Id,
+                    Json = Catalog.Write(Catalog.Data.Tasks[0])
+                });
+                await db.SaveChangesAsync();
+            }
+            var backups = new Backups(path);
+            var good = backups.Create("good");
+            var broken = Path.Combine(backups.DirectoryPath, "invalid-" + damage + ".sqlite");
+            if (damage == "bytes")
+                File.WriteAllText(broken, "This is not SQLite.");
+            else if (damage != "partial")
+                File.Copy(good, broken);
+            if (damage != "bytes")
+                using (var con = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = broken, Pooling = false }.ToString()))
+                {
+                    con.Open();
+                    using var cmd = con.CreateCommand();
+                    cmd.CommandText = damage switch
+                    {
+                        "partial" => "CREATE TABLE Profiles(Id TEXT); CREATE TABLE Assignments(Id TEXT); CREATE TABLE __EFMigrationsHistory(MigrationId TEXT PRIMARY KEY,ProductVersion TEXT);",
+                        "future" => "INSERT INTO __EFMigrationsHistory VALUES('20990101000000_Unknown','99.0.0');",
+                        "json" => "UPDATE Tasks SET Json='{}';",
+                        "snapshot" => "INSERT INTO Snapshots(StudentId,Project,Base64) VALUES('teacher','library','not-a-database');",
+                        _ => "PRAGMA foreign_keys=OFF; INSERT INTO Profiles(Id,Login,PasswordHash,Role,Slot,LockedUntil,ThemeJson,PresetsJson,GroupId) SELECT 'orphan','orphan',PasswordHash,'student',0,0,ThemeJson,PresetsJson,'missing-group' FROM Profiles LIMIT 1;"
+                    };
+                    cmd.ExecuteNonQuery();
+                }
+            Assert.Throws<InvalidDataException>(() => backups.Restore(Path.GetFileName(broken)));
+            await using var verify = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + path).Options);
+            Assert.Single(await verify.Profiles.ToArrayAsync());
+            Assert.Equal(Catalog.Write(Catalog.Data.Tasks[0]), (await verify.Tasks.SingleAsync()).Json);
+        }
+        finally { SqliteConnection.ClearAllPools(); Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task RestoreMigratesAnOlderBackupWithoutChangingTheBackupFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "classroom-old-restore-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "classroom.sqlite");
+        try
+        {
+            await using (var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + path).Options))
+            {
+                await db.Database.MigrateAsync();
+                db.Tasks.Add(new()
+                {
+                    Id = Catalog.Data.Tasks[0].Id,
+                    Json = Catalog.Write(Catalog.Data.Tasks[0])
+                });
+                await db.SaveChangesAsync();
+            }
+            var backups = new Backups(path);
+            var copy = backups.Create("older");
+            await using (var old = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite(new SqliteConnectionStringBuilder { DataSource = copy, Pooling = false }.ToString()).Options))
+                old.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>().Migrate("20261009070548_TaskRevisions");
+            var originalCopy = File.ReadAllBytes(copy);
+            await using (var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + path).Options))
+            {
+                db.Groups.Add(new()
+                {
+                    Id = "later",
+                    Name = "После копии"
+                });
+                await db.SaveChangesAsync();
+            }
+            backups.Restore(Path.GetFileName(copy));
+            await using var restored = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + path).Options);
+            Assert.Empty(await restored.Database.GetPendingMigrationsAsync());
+            Assert.Empty(await restored.Groups.ToArrayAsync());
+            Assert.Single(await restored.Tasks.ToArrayAsync());
+            Assert.Equal(originalCopy, File.ReadAllBytes(copy));
+            DatabaseHealth.Validate(restored);
+        }
+        finally { SqliteConnection.ClearAllPools(); Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public void AllVariantsMatchTypeScriptAndAllSolutionsPass()
     {
@@ -58,7 +171,7 @@ public sealed class CoreTests
             var snapshots = new Dictionary<string, string>();
             foreach (var source in Catalog.Data.Tasks.Where(t => t.Project is not null))
             {
-                var task = (variant == 1 ? source : Variants.Create(source)[variant - 2])with
+                var task = (variant == 1 ? source : Variants.Create(source)[variant - 2]) with
                 {
                     VariantIndex = variant
                 };
@@ -76,7 +189,10 @@ public sealed class CoreTests
     public void RewritingPreservesLiteralsAndComments()
     {
         var sql = "SELECT * FROM books WHERE title='books'; -- books\n/* books */ SELECT \"books\".id FROM [books]";
-        Assert.Equal("SELECT * FROM books_v2 WHERE title='books'; -- books\n/* books */ SELECT \"books_v2\".id FROM [books_v2]", Variants.Sql(sql, new() { ["books"] = "books_v2" }));
+        Assert.Equal("SELECT * FROM books_v2 WHERE title='books'; -- books\n/* books */ SELECT \"books_v2\".id FROM [books_v2]", Variants.Sql(sql, new()
+        {
+            ["books"] = "books_v2"
+        }));
     }
 
     [Fact]
@@ -122,7 +238,10 @@ public sealed class CoreTests
             Ordered = true
         };
         Assert.False(SqlEngine.Evaluate(new(task, null, "SELECT 2 AS value UNION ALL SELECT 1 AS value", true)).Result.Correct);
-        Assert.True(SqlEngine.Evaluate(new(task with { Ordered = false }, null, "SELECT 2 AS value UNION ALL SELECT 1 AS value", true)).Result.Correct);
+        Assert.True(SqlEngine.Evaluate(new(task with
+        {
+            Ordered = false
+        }, null, "SELECT 2 AS value UNION ALL SELECT 1 AS value", true)).Result.Correct);
         var indexed = task with
         {
             Mode = "state",
@@ -148,8 +267,8 @@ public sealed class CoreTests
         using var rsa = RSA.Create(2048);
         using var cert = new CertificateRequest("CN=classroom", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1).CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
         Assert.True(ClassroomApi.VerifyCertificate(cert, Convert.ToHexString(SHA256.HashData(cert.RawData))));
-        Assert.False(ClassroomApi.VerifyCertificate(cert, new string ('0', 64)));
-        Assert.Throws<InvalidDataException>(() => new ClassroomApi(new("http://127.0.0.1:1", new string ('0', 64))));
+        Assert.False(ClassroomApi.VerifyCertificate(cert, new string('0', 64)));
+        Assert.Throws<InvalidDataException>(() => new ClassroomApi(new("http://127.0.0.1:1", new string('0', 64))));
     }
 
     [Fact]
@@ -173,7 +292,7 @@ public sealed class CoreTests
             Assert.NotNull(snapshot);
             var state = new
             {
-                teacherHash = (string? )null,
+                teacherHash = (string?)null,
                 students = new[]
                 {
                     new
@@ -207,7 +326,11 @@ public sealed class CoreTests
             await using var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + target).Options);
             await db.Database.MigrateAsync();
             foreach (var task in Catalog.Data.Tasks)
-                db.Tasks.Add(new() { Id = task.Id, Json = Catalog.Write(task) });
+                db.Tasks.Add(new()
+                {
+                    Id = task.Id,
+                    Json = Catalog.Write(task)
+                });
             await db.SaveChangesAsync();
             var preview = ElectronImport.Preview(source, "project");
             Assert.Equal(1, preview.Projects);
@@ -244,7 +367,7 @@ public sealed class CoreTests
             var task = Catalog.Data.Tasks[0];
             var state = new
             {
-                teacherHash = (string? )null,
+                teacherHash = (string?)null,
                 students = new[]
                 {
                     new
@@ -285,7 +408,11 @@ public sealed class CoreTests
             await using (var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + target).Options))
             {
                 await db.Database.MigrateAsync();
-                db.Tasks.Add(new() { Id = task.Id, Json = Catalog.Write(task) });
+                db.Tasks.Add(new()
+                {
+                    Id = task.Id,
+                    Json = Catalog.Write(task)
+                });
                 await db.SaveChangesAsync();
                 var preview = ElectronImport.Preview(source, "bad");
                 await Assert.ThrowsAsync<InvalidDataException>(() => ElectronImport.Commit(db, source, preview.SourceHash, new Backups(target)));
@@ -378,8 +505,18 @@ public sealed class CoreTests
             var preview = ElectronImport.Preview(source, "preview");
             await using var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite("Data Source=" + target).Options);
             await db.Database.MigrateAsync();
-            db.Tasks.Add(new() { Id = task.Id, Json = Catalog.Write(task) });
-            db.Profiles.Add(new() { Id = "teacher", Login = "teacher", Role = "teacher", PasswordHash = Passwords.Hash("new-teacher-password") });
+            db.Tasks.Add(new()
+            {
+                Id = task.Id,
+                Json = Catalog.Write(task)
+            });
+            db.Profiles.Add(new()
+            {
+                Id = "teacher",
+                Login = "teacher",
+                Role = "teacher",
+                PasswordHash = Passwords.Hash("new-teacher-password")
+            });
             await db.SaveChangesAsync();
             var backups = new Backups(target);
             Assert.True(await ElectronImport.Commit(db, source, preview.SourceHash, backups));

@@ -30,6 +30,7 @@ public record TaskDefinition
 public sealed record CourseData(TaskDefinition[] Tasks, Dictionary<string, string> Glossary, Dictionary<string, string> GlossaryLong, Dictionary<string, string>? SeedProfiles = null);
 public static class Catalog
 {
+    public const int MaxSeedLength = 2_000_000;
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     public static readonly CourseData Data = Load();
     static CourseData Load()
@@ -46,7 +47,7 @@ public static class Catalog
     public static string Write(TaskDefinition task) => JsonSerializer.Serialize(task, Json);
     public static void Validate(TaskDefinition task)
     {
-        if (!Regex.IsMatch(task.Id ?? "", "^[a-zA-Z0-9_-]{1,100}$") || string.IsNullOrWhiteSpace(task.Title) || string.IsNullOrWhiteSpace(task.Prompt) || string.IsNullOrWhiteSpace(task.Solution) || task.Hints is null || task.Terms is null || task.Seed is null || task.Concept is null || task.Example is null || task.Starter is null || task.Module is null || task.Terms.Any(t => string.IsNullOrWhiteSpace(t)) || task.Terms.Distinct().Count() != task.Terms.Length || task.Hints.Any(h => h is null) || task.Minutes is < 0 or > 1440 || task.Mode is not (null or "query" or "state") || task.Solution.Length > 12000 || task.Seed.Length > 500000)
+        if (!Regex.IsMatch(task.Id ?? "", "^[a-zA-Z0-9_-]{1,100}$") || string.IsNullOrWhiteSpace(task.Title) || string.IsNullOrWhiteSpace(task.Prompt) || string.IsNullOrWhiteSpace(task.Solution) || task.Hints is null || task.Terms is null || task.Seed is null || task.Concept is null || task.Example is null || task.Starter is null || task.Module is null || task.Terms.Any(t => string.IsNullOrWhiteSpace(t)) || task.Terms.Distinct().Count() != task.Terms.Length || task.Hints.Any(h => h is null) || task.Minutes is < 0 or > 1440 || task.Mode is not (null or "query" or "state") || task.Solution.Length > 12000 || task.Seed.Length > MaxSeedLength)
             throw new InvalidDataException("Проверьте поля задания.");
     }
 }

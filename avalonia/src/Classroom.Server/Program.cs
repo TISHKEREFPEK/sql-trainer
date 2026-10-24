@@ -8,7 +8,18 @@ using Microsoft.AspNetCore.RateLimiting;
 
 var dataDir = Path.GetFullPath(Environment.GetEnvironmentVariable("CLASSROOM_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "teacher"));
 Directory.CreateDirectory(dataDir);
-using var instanceLease = new FileStream(Path.Combine(dataDir, "server.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+FileStream instanceLease;
+try
+{
+    instanceLease = new FileStream(Path.Combine(dataDir, "server.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+}
+catch (IOException)
+{
+    Console.Error.WriteLine("Не удалось открыть блокировку сервера. Возможно, эта папка данных уже используется другим сервером. Закройте прежний экземпляр и повторите запуск.");
+    Environment.ExitCode = 2;
+    return;
+}
+using var serverLease = instanceLease;
 if (!OperatingSystem.IsWindows())
     File.SetUnixFileMode(dataDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 var settingsPath = Path.Combine(dataDir, "server-settings.json");
@@ -48,6 +59,11 @@ builder.WebHost.ConfigureKestrel(options =>
         options.Listen(IPAddress.Loopback, settings.Port, listen => listen.UseHttps(certificate));
 });
 builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(60));
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.RespectNullableAnnotations = true;
+    options.SerializerOptions.RespectRequiredConstructorParameters = true;
+});
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -57,6 +73,18 @@ var workerPath = Environment.GetEnvironmentVariable("CLASSROOM_WORKER") ?? Path.
 var worker = new WorkerRunner(Path.GetFullPath(workerPath));
 var state = new ServerState(Path.Combine(dataDir, "classroom.sqlite"), worker);
 await state.Initialize();
+if (args.Contains("--check-database"))
+{
+    await using var db = state.Db();
+    Classroom.Storage.DatabaseHealth.Validate(db);
+    Console.WriteLine("Database schema, integrity, relations, assignments and snapshots are valid.");
+    return;
+}
+if (args.Contains("--seed-demo"))
+{
+    await DemoData.Create(state, dataDir);
+    return;
+}
 var importIndex = Array.IndexOf(args, "--import-electron");
 if (importIndex >= 0)
 {
@@ -71,6 +99,9 @@ if (importIndex >= 0)
         return;
 }
 
+var pairing = new PairingAnnouncement(settings.Port, info.Fingerprint, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
+File.WriteAllText(Path.Combine(dataDir, "pairing.json"), Wire.Write(pairing));
+builder.Services.AddHostedService(_ => new PairingDiscovery(pairing, address));
 var app = builder.Build();
 app.Use(async (context, next) =>
 {

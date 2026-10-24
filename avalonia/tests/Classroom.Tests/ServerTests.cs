@@ -90,6 +90,19 @@ public sealed class ServerTests
         try
         {
             var admin = await Start();
+            var duplicateInfo = new ProcessStartInfo(process!.StartInfo.FileName) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+            duplicateInfo.ArgumentList.Add(Path.Combine(root, $"src/Classroom.Server/bin/{config}/net10.0/Classroom.Server.dll"));
+            duplicateInfo.Environment["CLASSROOM_DATA"] = dir;
+            using (var duplicate = Process.Start(duplicateInfo)!)
+            {
+                var error = duplicate.StandardError.ReadToEndAsync();
+                using var duplicateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await duplicate.WaitForExitAsync(duplicateTimeout.Token);
+                Assert.Equal(2, duplicate.ExitCode);
+                Assert.Contains("блокировку сервера", await error);
+                Assert.False(process.HasExited);
+                await admin.Get<StatusDto>("status");
+            }
             await admin.Post<JsonElement>("setup", new PasswordRequest("teacher-test-password"));
             await admin.Login(new("teacher", "", "teacher-test-password"));
             using (var wrong = new ClassroomApi(admin.Connection with { Fingerprint = new string ('0', 64) }))
@@ -105,10 +118,29 @@ public sealed class ServerTests
             }
 
             var first = students[0];
+            Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => first.Put<JsonElement>("tasks/database/draft", new { code = (string?)null }))).Status);
+            Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => first.Post<JsonElement>("tasks/database/execute", new { operationId = Guid.NewGuid().ToString(), check = true }))).Status);
+            Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => admin.Post<JsonElement>("login", new { role = "student", login = (string?)null, password = "synthetic-password" }))).Status);
             var forbidden = await Assert.ThrowsAsync<ApiException>(() => first.Get<TeacherOverview>("teacher/overview"));
             Assert.Equal(403, forbidden.Status);
             Assert.Equal(120, (await first.Get<CatalogueDto>("catalog")).Tasks.Length);
             var task = await first.Get<StudentTask>("tasks/database");
+            var openedEvent = new TaskEventRequest(Guid.NewGuid().ToString("N"), "opened");
+            await first.Post<JsonElement>("tasks/database/events", openedEvent);
+            var learningBefore = await admin.Get<LearningOverview>("teacher/learning");
+            var learningStudentId = learningBefore.Students.Single(s => s.Login == "test-00").Id;
+            var startedAt = learningBefore.Records.Single(r => r.StudentId == learningStudentId && r.TaskId == "database").StartedAt;
+            Assert.NotNull(startedAt);
+            await first.Post<JsonElement>("tasks/database/events", openedEvent);
+            await first.Post<JsonElement>("tasks/database/events", openedEvent with { EventId = Guid.NewGuid().ToString("N") });
+            var activity = new ActivityRequest(2, Guid.NewGuid().ToString("N"), 1);
+            await first.Post<JsonElement>("tasks/database/activity", activity);
+            await first.Post<JsonElement>("tasks/database/activity", activity);
+            Assert.Equal(2, (await admin.Get<LearningOverview>("teacher/learning")).Records.Single(r => r.StudentId == learningStudentId && r.TaskId == "database").ActiveSeconds);
+            await first.Post<JsonElement>("tasks/database/activity", activity with { Sequence = 2 });
+            await first.Post<JsonElement>("tasks/database/activity", activity);
+            Assert.Equal(403, (await Assert.ThrowsAsync<ApiException>(() => first.Get<LearningOverview>("teacher/learning"))).Status);
+            Assert.Equal(403, (await Assert.ThrowsAsync<ApiException>(() => first.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database"))).Status);
             var publicJson = Wire.Write(task);
             foreach (var secret in new[]
             {
@@ -131,10 +163,51 @@ public sealed class ServerTests
             Assert.True((await first.Post<ExecutionDto>("tasks/database/execute", operation)).Correct);
             var overview = await admin.Get<TeacherOverview>("teacher/overview");
             Assert.Single(overview.Attempts, a => a.Student == "test-00");
+            var learning = await admin.Get<LearningOverview>("teacher/learning");
+            Assert.DoesNotContain("\"acceptedCode\"", Wire.Write(learning));
+            Assert.DoesNotContain("\"code\"", Wire.Write(learning));
+            var learningDetail = await admin.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database");
+            Assert.Equal(operation.Code, learningDetail.AcceptedCode);
+            Assert.Equal(startedAt, learningDetail.Record.StartedAt);
+            Assert.Equal(1, learningDetail.Record.Checks);
+            Assert.Equal(0, learningDetail.Record.FirstCheckFailed);
+            Assert.Single(learningDetail.Events, e => e.Action == "check");
+            Assert.Single(learningDetail.Events, e => e.Action == "hint");
+            Assert.Equal(operation.Code, learningDetail.Events.Single(e => e.Action == "check").Code);
+            Assert.Equal("SELECT * FROM students; -- черновик", learningDetail.Draft);
+            await new PendingExecution("database", "SELECT 7;", true).Send(first);
+            var afterWrong = await admin.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database");
+            Assert.Equal(operation.Code, afterWrong.AcceptedCode);
+            Assert.Equal(learningDetail.Record.CompletedAt, afterWrong.Record.CompletedAt);
+            Assert.Equal(learningDetail.Record.ActiveSecondsAtCompletion, afterWrong.Record.ActiveSecondsAtCompletion);
+            Assert.Equal(2, afterWrong.Record.Checks);
             Assert.Equal(409, (await Assert.ThrowsAsync<ApiException>(() => first.Post<ExecutionDto>("tasks/database/execute", operation with { Code = "SELECT 2" }))).Status);
             var group = await admin.Post<GroupDto>("teacher/groups", new GroupRequest("Тестовая группа"));
             await admin.Put<JsonElement>("teacher/students/" + overview.Students.Single(s => s.Login == "test-00").Id + "/group", new GroupMembershipRequest(group.Id));
             Assert.Equal(group.Id, (await admin.Get<TeacherOverview>("teacher/overview")).Students.Single(s => s.Login == "test-00").GroupId);
+            var temporaryGroup = await admin.Post<GroupDto>("teacher/groups", new GroupRequest("Проверка управления"));
+            var temporaryProfile = await admin.Post<JsonElement>("teacher/students", new CreateStudentRequest("temporary", "temporary-old-password", temporaryGroup.Id));
+            var temporaryId = temporaryProfile.GetProperty("id").GetString()!;
+            await admin.Put<JsonElement>($"teacher/students/{temporaryId}/password", new PasswordRequest("temporary-new-password"));
+            using (var temporary = new ClassroomApi(admin.Connection))
+            {
+                Assert.Equal(401, (await Assert.ThrowsAsync<ApiException>(() => temporary.Login(new("student", "temporary", "temporary-old-password")))).Status);
+                await temporary.Login(new("student", "temporary", "temporary-new-password"));
+                await admin.Put<JsonElement>($"teacher/students/{temporaryId}/group", new GroupMembershipRequest(group.Id));
+                Assert.Equal(group.Id, (await admin.Get<TeacherOverview>("teacher/overview")).Students.Single(s => s.Id == temporaryId).GroupId);
+                await admin.Put<JsonElement>($"teacher/students/{temporaryId}/group", new GroupMembershipRequest(temporaryGroup.Id));
+                await admin.Delete<JsonElement>($"teacher/groups/{temporaryGroup.Id}");
+                Assert.Null((await admin.Get<TeacherOverview>("teacher/overview")).Students.Single(s => s.Id == temporaryId).GroupId);
+                await admin.Delete<JsonElement>($"teacher/students/{temporaryId}");
+                Assert.Equal(401, (await Assert.ThrowsAsync<ApiException>(() => temporary.Get<CatalogueDto>("catalog"))).Status);
+            }
+            var custom = Catalog.Data.Tasks[0] with { Id = "audit-custom", Title = "Проверка нового задания", VariantEligible = false };
+            await admin.Put<JsonElement>("teacher/tasks/audit-custom", new SaveTaskRequest(Catalog.Write(custom), false));
+            Assert.Contains((await first.Get<CatalogueDto>("catalog")).Tasks, t => t.Id == custom.Id);
+            await first.Get<StudentTask>("tasks/audit-custom");
+            await admin.Delete<JsonElement>("teacher/tasks/audit-custom");
+            Assert.Contains((await first.Get<CatalogueDto>("catalog")).Tasks, t => t.Id == custom.Id);
+            Assert.DoesNotContain((await students[2].Get<CatalogueDto>("catalog")).Tasks, t => t.Id == custom.Id);
             var source = Catalog.Data.Tasks[0] with
             {
                 Prompt = "Обновлённое условие"
@@ -143,6 +216,18 @@ public sealed class ServerTests
             Assert.Equal(task.Prompt, (await first.Get<StudentTask>("tasks/database")).Prompt);
             Assert.Equal(source.Prompt, (await students[1].Get<StudentTask>("tasks/database")).Prompt);
             Assert.True((await first.Get<StudentTask>("tasks/database")).Restricted);
+            var capture = new TaskEventRequest(Guid.NewGuid().ToString("N"), "capture");
+            await first.Post<JsonElement>("tasks/database/events", capture);
+            await first.Post<JsonElement>("tasks/database/events", capture);
+            Assert.Equal(409, (await Assert.ThrowsAsync<ApiException>(() => first.Post<JsonElement>("tasks/database/events", capture with { Action = "copy" }))).Status);
+            Assert.Equal(1, (await admin.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database")).Record.Violations);
+            for (var pageEvent = 0; pageEvent < 100; pageEvent++)
+                await first.Post<JsonElement>("tasks/database/events", capture with { EventId = Guid.NewGuid().ToString("N") });
+            var firstPage = await admin.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database");
+            Assert.Equal(100, firstPage.Events.Length); Assert.True(firstPage.HasMore);
+            var secondPage = await admin.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database?offset={firstPage.NextOffset}");
+            Assert.NotEmpty(secondPage.Events); Assert.False(secondPage.HasMore);
+            Assert.Empty(firstPage.Events.Select(e => e.Id).Intersect(secondPage.Events.Select(e => e.Id)));
             var assignedWhere = await first.Get<StudentTask>("tasks/where");
             var whereVariant = Variants.Create(Catalog.Data.Tasks.Single(t => t.Id == "where"))[0];
             var variantRequest = new SaveVariantRequest(Catalog.Write(whereVariant), true);
@@ -160,6 +245,11 @@ public sealed class ServerTests
             await first.Put<JsonElement>("theme", new ThemePreference("onyx"));
             await first.Post<ThemePreset[]>("theme-presets", new ThemePresetRequest("Личная", new("paper")));
             Assert.Empty(await students[1].Get<ThemePreset[]>("theme-presets"));
+            ThemePreset[] savedPresets = [];
+            for (var preset = 0; preset < 30; preset++)
+                savedPresets = await students[1].Post<ThemePreset[]>("theme-presets", new ThemePresetRequest("Проверка " + preset, new("light")));
+            Assert.Equal(400, (await Assert.ThrowsAsync<ApiException>(() => students[1].Post<ThemePreset[]>("theme-presets", new ThemePresetRequest("Лишняя", new("paper"))))).Status);
+            Assert.Equal(29, (await students[1].Delete<ThemePreset[]>($"theme-presets/{savedPresets[0].Id}")).Length);
             var watch = Stopwatch.StartNew();
             var load = await Task.WhenAll(students.Select(s => new PendingExecution("columns", "SELECT name, city FROM students;", true).Send(s)));
             Assert.All(load, r => Assert.True(r.Correct, r.Error));
@@ -177,6 +267,10 @@ public sealed class ServerTests
                 Assert.True((await new PendingExecution(baseTask.Id, definition.Solution, true).Send(first)).Correct);
             }
 
+            var electronicsStudent = (await admin.Get<TeacherOverview>("teacher/overview")).Students.Single(s=>s.Login=="test-00").Id;
+            var electronicsJson = Wire.Write(new { version=1,name="Работа для проверки восстановления",code="void setup(){} void loop(){}",parts=new[]{new{id="r",kind="Resistor",x=-5000,y=-6000,value=330}},wires=Array.Empty<object>() });
+            var electronicsClient=Guid.NewGuid().ToString("N"); var electronicsReport=Guid.NewGuid().ToString("N");
+            await first.Put<ElectronicsSyncReceipt>("electronics/work",new ElectronicsSyncRequest(electronicsClient,1,electronicsJson,[new(electronicsReport,"submitted",electronicsJson,"")]));
             var backup = await admin.Post<JsonElement>("teacher/backups");
             var backupName = backup.GetProperty("name").GetString()!;
             await Stop();
@@ -193,6 +287,7 @@ public sealed class ServerTests
             await admin.Post<JsonElement>("teacher/backups/" + Uri.EscapeDataString(backupName) + "/restore");
             await admin.Login(new("teacher", "", "teacher-test-password"));
             Assert.NotEmpty(await admin.Get<TaskRevisionDto[]>("teacher/tasks/database/revisions"));
+            Assert.Equal(electronicsJson,(await admin.Get<ElectronicsSnapshot>($"teacher/electronics/{electronicsStudent}/report/{electronicsReport}")).ProjectJson);
             await first.Login(new("student", "test-00", "student-test-password"));
             await students[2].Login(new("student", "test-02", "student-test-password"));
             await admin.Delete<JsonElement>("teacher/tasks/database");
@@ -202,6 +297,7 @@ public sealed class ServerTests
             admin = await Start();
             await admin.Login(new("teacher", "", "teacher-test-password"));
             var restored = new ClassroomApi(admin.Connection);
+            Assert.Equal(electronicsJson,(await admin.Get<ElectronicsSnapshot>($"teacher/electronics/{electronicsStudent}/work/{electronicsClient}")).ProjectJson);
             clients.Add(restored);
             var login = await restored.Login(new("student", "test-00", "student-test-password"));
             Assert.Equal("onyx", login.Theme.Preset);
@@ -210,6 +306,9 @@ public sealed class ServerTests
             Assert.Single(stored.OpenedHints);
             Assert.Contains("черновик", stored.Draft);
             Assert.True(stored.Completed);
+            var persistedLearning = await admin.Get<LearningTaskDetail>($"teacher/learning/{learningStudentId}/database");
+            Assert.Equal(operation.Code, persistedLearning.AcceptedCode);
+            Assert.Equal(startedAt, persistedLearning.Record.StartedAt);
             Assert.True((await restored.Post<ExecutionDto>("tasks/database/execute", operation)).Correct);
             Assert.All(Catalog.Data.Tasks.Where(t => t.Project == "library"), t => Assert.Contains(t.Id, (restored.Get<CatalogueDto>("catalog").GetAwaiter().GetResult()).Completed));
         }

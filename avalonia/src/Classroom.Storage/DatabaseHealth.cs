@@ -58,7 +58,9 @@ public static class DatabaseHealth
             }
         // Materialize all remaining tables to reject incomplete or incompatible columns.
         _ = db.Groups.AsNoTracking().ToArray();
-        _ = db.Attempts.AsNoTracking().ToArray();
+        foreach (var attempt in db.Attempts.AsNoTracking())
+            if (attempt.WorkScope is not null && attempt.WorkScope != "course" && (attempt.LessonId is null || attempt.WorkScope != "lesson:" + attempt.LessonId))
+                throw new InvalidDataException("Некорректная привязка SQL-события к работе.");
         _ = db.Imports.AsNoTracking().ToArray();
         var lessons = db.LessonSessions.AsNoTracking().ToArray();
         foreach (var lesson in lessons)
@@ -82,6 +84,25 @@ public static class DatabaseHealth
             foreach (var alternative in Wire.Read<string[]>(issued.AlternativesJson)) Task(issued.TaskId, alternative);
             if (lesson is null || issued.IssuedAt < lesson.CreatedAt || issued.Position < 0 || issued.Revision < 1)
                 throw new InvalidDataException("Некорректная выдача задания на занятие.");
+        }
+        foreach (var work in db.LessonSqlWorks.AsNoTracking())
+        {
+            var definition = Task(work.TaskId, work.Json);
+            if (work.PreviousJson is not null) Task(work.TaskId, work.PreviousJson);
+            var policy = db.LessonSqlTasks.AsNoTracking().SingleOrDefault(t => t.LessonId == work.LessonId && t.TaskId == work.PolicyTaskId);
+            var lesson = lessons.SingleOrDefault(s => s.Id == work.LessonId);
+            if (policy is null || lesson is null || work.Project != definition.Project || work.RequireNewSolution != policy.RequireNewSolution || work.CreatedAt < lesson.CreatedAt ||
+                !db.LessonParticipants.Any(p => p.SessionId == work.LessonId && p.StudentId == work.StudentId) ||
+                work.TaskId != policy.TaskId && (definition.Project is null || definition.Project != Catalog.Read(policy.Json).Project) &&
+                    (work.RequireNewSolution || work.PreviousJson != work.Json) ||
+                Wire.Read<long[]>(work.HintsJson).Length > definition.Hints.Length || work.Checks < 0 || work.Errors < 0 || work.Errors > work.Checks || work.ActiveSeconds < 0)
+                throw new InvalidDataException("Некорректная SQL-работа занятия.");
+        }
+        foreach (var snapshot in db.LessonSqlSnapshots.AsNoTracking())
+        {
+            if (!db.LessonParticipants.Any(p => p.SessionId == snapshot.LessonId && p.StudentId == snapshot.StudentId))
+                throw new InvalidDataException("Некорректный владелец снимка SQL-проекта занятия.");
+            ElectronImport.ValidateSnapshot(snapshot.Base64);
         }
         foreach (var row in db.ElectronicsWorks.AsNoTracking())
         {

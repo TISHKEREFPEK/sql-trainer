@@ -50,14 +50,14 @@ public sealed class MainWindow : Window
     internal string? LastTaskId { get; set; }
     internal bool IsLessonVisible => !pageOpen && body.Content is StudentScreen;
 
-    string DraftKey(string id) => $"{login?.Id}:{id}";
+    string DraftKey(string id, string? workScope = null) => $"{login?.Id}:{login?.LessonId}:{workScope ?? student?.CurrentWorkScope ?? "course"}:{id}";
     readonly Dictionary<string, PendingExecution> pendingRequests = new();
-    internal PendingExecution? PendingFor(string id) => pendingRequests.GetValueOrDefault(DraftKey(id));
-    internal void RememberPending(PendingExecution request) => pendingRequests[DraftKey(request.TaskId)] = request;
-    internal void ForgetPending(string id) => pendingRequests.Remove(DraftKey(id));
-    internal void RememberDraft(string id, string code) => unsavedDrafts[DraftKey(id)] = code;
-    internal string? UnsavedDraft(string id) => unsavedDrafts.GetValueOrDefault(DraftKey(id));
-    internal void ForgetDraft(string id) => unsavedDrafts.Remove(DraftKey(id));
+    internal PendingExecution? PendingFor(string id, string? workScope = null) => pendingRequests.GetValueOrDefault(DraftKey(id, workScope));
+    internal void RememberPending(PendingExecution request) => pendingRequests[DraftKey(request.TaskId, request.Request.WorkScope)] = request;
+    internal void ForgetPending(string id, string? workScope = null) => pendingRequests.Remove(DraftKey(id, workScope));
+    internal void RememberDraft(string id, string code, string? workScope = null) => unsavedDrafts[DraftKey(id, workScope)] = code;
+    internal string? UnsavedDraft(string id, string? workScope = null) => unsavedDrafts.GetValueOrDefault(DraftKey(id, workScope));
+    internal void ForgetDraft(string id, string? workScope = null) => unsavedDrafts.Remove(DraftKey(id, workScope));
     bool discardDraft;
     DispatcherTimer? admissionPoll;
     readonly DispatcherTimer lessonPoll = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -470,7 +470,7 @@ public sealed class MainWindow : Window
         screen = student;
         body.Content = student;
         if (first) await student!.Load(taskId);
-        else if (taskId is not null) await student.OpenTask(taskId);
+        else await student.OpenTask(taskId ?? LastTaskId);
         Protect(student.Restricted);
     }
 
@@ -486,7 +486,7 @@ public sealed class MainWindow : Window
         await RefreshLessonPermission();
     }
 
-    async Task ShowStudentHome()
+    internal async Task ShowStudentHome()
     {
         if (api is null) return;
         if (student is not null) await student.SaveDraft();

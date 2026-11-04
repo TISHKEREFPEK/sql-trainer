@@ -128,7 +128,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
     {
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         Sessions[Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))] = new(profile.Id, profile.Role, Now + 8 * 3600000, lessonId);
-        return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson), Lesson);
+        return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson), Lesson, lessonId);
     }
 
     public async Task<TaskEntity[]> Tasks(ClassroomDb db)
@@ -202,7 +202,26 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
         }
     }
 
-    public async Task<AssignmentEntity> Assignment(ClassroomDb db, ProfileEntity student, string taskId, string? lessonId = null, bool retainedSave = false)
+    public static string Scope(ISqlWork work) => work is LessonSqlWorkEntity lesson ? "lesson:" + lesson.LessonId : "course";
+
+    public async Task<ISqlWork> Assignment(ClassroomDb db, ProfileEntity student, string taskId, string? lessonId = null, bool retainedSave = false, string? workScope = null)
+    {
+        if (lessonId is not null)
+        {
+            if (retainedSave && workScope == "course")
+                return await db.Assignments.FindAsync(student.Id, taskId) ?? throw new HttpFault(404, "Прежняя работа курса не найдена.");
+            await LessonSqlTasks.RequireTask(db, student, lessonId, taskId, retainedSave);
+            var policy = await LessonSqlWorkspaces.Binding(db, student, lessonId, taskId, retainedSave);
+            var expected = policy is null ? "course" : "lesson:" + lessonId;
+            if (workScope is not null && workScope != expected)
+                throw new HttpFault(409, "Выдача этой работы изменилась. Прежний черновик сохранён; откройте работу через «Моё занятие».");
+            if (policy is not null)
+                return await LessonSqlWorkspaces.Open(this, db, student, lessonId, taskId, policy);
+        }
+        return await LegacyAssignment(db, student, taskId, lessonId, retainedSave);
+    }
+
+    internal async Task<AssignmentEntity> LegacyAssignment(ClassroomDb db, ProfileEntity student, string taskId, string? lessonId = null, bool retainedSave = false)
     {
         if (lessonId is not null) await LessonSqlTasks.RequireTask(db, student, lessonId, taskId, retainedSave);
         var saved = await db.Assignments.FindAsync(student.Id, taskId);
@@ -260,7 +279,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
         return (await db.Assignments.FindAsync(student.Id, taskId))!;
     }
 
-    public async Task<StudentTask> GetTask(Session session, string taskId)
+    public async Task<StudentTask> GetTask(Session session, string taskId, string? expectedWorkScope = null)
     {
         await Gate.WaitAsync();
         try
@@ -268,11 +287,11 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             await using var db = Db();
             var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(401, "Войдите в приложение.");
             await LessonRoutes.RequireMember(this, db, session);
-            var assignment = await Assignment(db, student, taskId, session.LessonId);
+            var assignment = await Assignment(db, student, taskId, session.LessonId, workScope: expectedWorkScope);
             var task = Catalog.Read(assignment.Json);
             var row = await db.Tasks.FindAsync(taskId);
             var times = Wire.Read<long[]>(assignment.HintsJson);
-            return new(task.Id, task.Title, task.Module, task.Prompt, task.Concept, task.Example, task.Starter, task.Terms, task.Terms.ToDictionary(t => t, t => Catalog.Data.Glossary.GetValueOrDefault(t, "")), task.Project, task.VariantIndex ?? 1, assignment.Revision, row?.Restricted ?? false, task.Hints.Take(times.Length).ToArray(), times, task.Hints.Length, assignment.Draft, assignment.CompletedAt is not null, student.LockedUntil);
+            return new(task.Id, task.Title, task.Module, task.Prompt, task.Concept, task.Example, task.Starter, task.Terms, task.Terms.ToDictionary(t => t, t => Catalog.Data.Glossary.GetValueOrDefault(t, "")), task.Project, task.VariantIndex ?? 1, assignment.Revision, row?.Restricted ?? false, task.Hints.Take(times.Length).ToArray(), times, task.Hints.Length, assignment.Draft, assignment.CompletedAt is not null, student.LockedUntil, Scope(assignment));
         }
         finally
         {
@@ -282,17 +301,19 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
 
     public async Task<ExecutionDto> Execute(Session session, string taskId, ExecuteRequest input)
     {
+        LessonRoutes.CheckContext(session, input.LessonId);
         if (Stopping)
             throw new HttpFault(503, "Преподаватель завершает работу сервера.");
         if (!Guid.TryParse(input.OperationId, out _) || input.Code.Length > 12000)
             throw new HttpFault(400, "Некорректная операция или слишком длинный SQL.");
-        var requestHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Wire.Write(new { taskId, input.Code, input.Check }))));
+        var requestHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Wire.Write(new { session.LessonId, taskId, input.Code, input.Check, input.WorkScope }))));
         if (!busy.TryAdd(session.ProfileId, 0))
             throw new HttpFault(429, "Предыдущий запрос ещё выполняется. Повторите позже с тем же номером операции.");
         try
         {
             TaskDefinition task;
             string? snapshot;
+            string executingScope;
             await Gate.WaitAsync();
             try
             {
@@ -309,18 +330,19 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 await LessonRoutes.RequireWork(this, db, session, "sql");
                 if (student.LockedUntil > Now)
                     throw new HttpFault(423, "Работа приостановлена на 30 секунд.");
-                var assignment = await Assignment(db, student, taskId, session.LessonId);
+                var assignment = await Assignment(db, student, taskId, session.LessonId, workScope: input.WorkScope);
+                executingScope = Scope(assignment);
                 task = Catalog.Read(assignment.Json);
                 if (task.Project is not null)
                 {
-                    var chain = (await db.Assignments.Where(a => a.StudentId == student.Id).ToArrayAsync()).Where(a => Catalog.Read(a.Json).Project == task.Project).ToDictionary(a => a.TaskId);
-                    if (chain.Values.Any(a => a.ProjectOrder < assignment.ProjectOrder && a.CompletedAt is null))
+                    var chain = await LessonSqlWorkspaces.Chain(db, assignment, task.Project);
+                    if (chain.Any(a => a.ProjectOrder < assignment.ProjectOrder && a.CompletedAt is null))
                         throw new HttpFault(409, "Сначала завершите предыдущий шаг проекта.");
                     if (input.Check && assignment.CompletedAt is not null)
                         throw new HttpFault(409, "Этот шаг проекта уже сохранён.");
                 }
 
-                snapshot = task.Project is null ? null : (await db.Snapshots.FindAsync(student.Id, task.Project))?.Base64;
+                snapshot = task.Project is null ? null : await LessonSqlWorkspaces.Snapshot(db, assignment, task.Project);
             }
             finally
             {
@@ -333,7 +355,8 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             {
                 await using var db = Db();
                 await using var transaction = await db.Database.BeginTransactionAsync();
-                var assignment = (await db.Assignments.FindAsync(session.ProfileId, taskId))!;
+                var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(401, "Профиль не найден.");
+                var assignment = await Assignment(db, student, taskId, session.LessonId, retainedSave: true, workScope: executingScope);
                 if (!string.IsNullOrWhiteSpace(input.Code))
                 {
                     if (assignment.TrackingVersion > 0)
@@ -353,20 +376,17 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                             assignment.ActiveSecondsAtCompletion = assignment.ActiveSeconds;
                         }
                         assignment.CompletedAt ??= Now;
+                        var promoted = await LessonSqlWorkspaces.Promote(db, assignment);
                         if (reply.Snapshot is not null && task.Project is not null)
                         {
-                            var row = await db.Snapshots.FindAsync(session.ProfileId, task.Project);
-                            if (row is null)
-                                db.Snapshots.Add(new() { StudentId = session.ProfileId, Project = task.Project, Base64 = reply.Snapshot });
-                            else
-                                row.Base64 = reply.Snapshot;
+                            await LessonSqlWorkspaces.SaveSnapshot(db, assignment, task.Project, reply.Snapshot, promoted);
                         }
                     }
 
                 }
 
                 if (input.Check || !string.IsNullOrWhiteSpace(input.Code))
-                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now });
+                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), LessonId = session.LessonId, WorkScope = executingScope, StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now });
 
                 db.Operations.Add(new() { StudentId = session.ProfileId, Id = input.OperationId, RequestHash = requestHash, ResponseJson = Wire.Write(reply.Result), At = Now });
                 await db.SaveChangesAsync();

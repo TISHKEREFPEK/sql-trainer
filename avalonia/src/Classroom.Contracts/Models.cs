@@ -11,17 +11,17 @@ public static class Wire
 public record ApiError(string Error);
 public record StatusDto(bool NeedsSetup, string Version);
 public record LoginRequest(string Role, string Login, string Password);
-public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets, LessonDestination? Destination = null);
+public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets, LessonDestination? Destination = null, string? LessonId = null);
 public record PasswordRequest(string Password);
 public record CatalogueItem(string Id, string Title, string Module, string? Project);
 public record CatalogueDto(CatalogueItem[] Tasks, string[] Completed, long LockedUntil, string[]? Required = null, bool FreePractice = true);
 // This type deliberately cannot hold solution, seed, snapshots or unopened hints.
-public record StudentTask(string Id, string Title, string Module, string Prompt, string Concept, string Example, string Starter, string[] Terms, Dictionary<string, string> Definitions, string? Project, int VariantIndex, int Revision, bool Restricted, string[] OpenedHints, long[] HintOpenedAt, int HintTotal, string Draft, bool Completed, long LockedUntil);
-public record HintRequest(int Index);
-public record DraftRequest(string Code);
-public record ActivityRequest(int Seconds, string? EventId = null, long Sequence = 0);
-public record TaskEventRequest(string EventId, string Action);
-public record ExecuteRequest(string OperationId, string Code, bool Check);
+public record StudentTask(string Id, string Title, string Module, string Prompt, string Concept, string Example, string Starter, string[] Terms, Dictionary<string, string> Definitions, string? Project, int VariantIndex, int Revision, bool Restricted, string[] OpenedHints, long[] HintOpenedAt, int HintTotal, string Draft, bool Completed, long LockedUntil, string WorkScope = "course");
+public record HintRequest(int Index, string? LessonId = null, string? WorkScope = null);
+public record DraftRequest(string Code, string? LessonId = null, string? WorkScope = null);
+public record ActivityRequest(int Seconds, string? EventId = null, long Sequence = 0, string? LessonId = null, string? WorkScope = null);
+public record TaskEventRequest(string EventId, string Action, string? LessonId = null, string? WorkScope = null);
+public record ExecuteRequest(string OperationId, string Code, bool Check, string? LessonId = null, string? WorkScope = null);
 public record SqlResult(string[] Columns, JsonElement[][] Values);
 public record ColumnDefinition(string Name, string Type, bool NotNull, bool PrimaryKey);
 public record ForeignKeyDefinition(string Column, string Table, string Target);

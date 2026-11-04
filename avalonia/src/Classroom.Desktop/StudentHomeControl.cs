@@ -35,6 +35,7 @@ public sealed class StudentHomeControl : UserControl
             foreach (var work in data.Required)
             {
                 var status = work.State switch { "completed-before" => "Решено раньше", "completed" => "Решено", "in-progress" => "В работе", _ => "Не начато" };
+                if (work.RequireNewSolution && work.State == "not-started") status = "Нужно решить на занятии";
                 var action = Ui.Button(work.State == "in-progress" ? "Продолжить" : "Открыть", () => owner.Safe(() => open("sql", work.Id)));
                 action.IsEnabled = canWork;
                 section.Children.Add(Ui.Card(Ui.Stack(Ui.Text(work.Title, 18), Ui.Text(work.Module + " · " + status), action)));

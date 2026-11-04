@@ -11,4 +11,5 @@ public sealed class LessonSqlTaskEntity
     public string AlternativesJson { get; set; } = "[]";
     public long IssuedAt { get; set; }
     public bool Withdrawn { get; set; }
+    public bool RequireNewSolution { get; set; }
 }

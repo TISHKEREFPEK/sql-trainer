@@ -48,7 +48,7 @@ public sealed class VariantEntity
     public string Json { get; set; } = "";
 }
 
-public sealed class AssignmentEntity
+public sealed class AssignmentEntity : ISqlWork
 {
     public string StudentId { get; set; } = "";
     public string TaskId { get; set; } = "";
@@ -78,6 +78,8 @@ public sealed class SnapshotEntity
 
 public sealed class AttemptEntity
 {
+    public string? LessonId { get; set; }
+    public string? WorkScope { get; set; }
     public string Id { get; set; } = "";
     public string StudentId { get; set; } = "";
     public string TaskId { get; set; } = "";
@@ -142,6 +144,8 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<LessonSessionEntity> LessonSessions => Set<LessonSessionEntity>();
     public DbSet<LessonParticipantEntity> LessonParticipants => Set<LessonParticipantEntity>();
     public DbSet<LessonSqlTaskEntity> LessonSqlTasks => Set<LessonSqlTaskEntity>();
+    public DbSet<LessonSqlWorkEntity> LessonSqlWorks => Set<LessonSqlWorkEntity>();
+    public DbSet<LessonSqlSnapshotEntity> LessonSqlSnapshots => Set<LessonSqlSnapshotEntity>();
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
 
@@ -205,6 +209,14 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<LessonSqlTaskEntity>().HasKey(x => new { x.LessonId, x.TaskId });
         model.Entity<LessonSqlTaskEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<LessonSqlTaskEntity>().HasOne<TaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSqlWorkEntity>().HasKey(x => new { x.LessonId, x.StudentId, x.TaskId });
+        model.Entity<LessonSqlWorkEntity>().HasIndex(x => new { x.StudentId, x.Project, x.CreatedAt });
+        model.Entity<LessonSqlWorkEntity>().HasOne<LessonSqlTaskEntity>().WithMany().HasForeignKey(x => new { x.LessonId, x.PolicyTaskId }).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSqlWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonSqlSnapshotEntity>().HasKey(x => new { x.LessonId, x.StudentId, x.Project });
+        model.Entity<LessonSqlSnapshotEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSqlSnapshotEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<AttemptEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
         model.Entity<ElectronicsWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });

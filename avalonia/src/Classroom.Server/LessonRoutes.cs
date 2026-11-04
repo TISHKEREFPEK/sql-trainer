@@ -76,6 +76,11 @@ public static class LessonRoutes
         if (subject == "sql" && !lesson.AllowSql || subject == "electronics" && !lesson.AllowElectronics)
             throw new HttpFault(403, "Преподаватель не разрешил это направление на занятии.");
     }
+    public static void CheckContext(Session session, string? lessonId)
+    {
+        if (lessonId is not null && lessonId != session.LessonId)
+            throw new HttpFault(409, "Этот запрос относится к другому занятию. Его черновик не должен заменять новую работу.");
+    }
 
     public static void Map(RouteGroupBuilder api, ServerState state)
     {

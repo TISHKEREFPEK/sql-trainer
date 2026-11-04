@@ -98,6 +98,9 @@ namespace Classroom.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("StudentId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -106,7 +109,12 @@ namespace Classroom.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("WorkScope")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("LessonId");
 
                     b.HasIndex("StudentId", "TaskId", "At");
 
@@ -305,6 +313,28 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("LessonSessions");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.LessonSqlSnapshotEntity", b =>
+                {
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Project")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Base64")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("LessonId", "StudentId", "Project");
+
+                    b.HasIndex("StudentId");
+
+                    b.ToTable("LessonSqlSnapshots");
+                });
+
             modelBuilder.Entity("Classroom.Storage.LessonSqlTaskEntity", b =>
                 {
                     b.Property<string>("LessonId")
@@ -327,6 +357,9 @@ namespace Classroom.Storage.Migrations
                     b.Property<int>("Position")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("RequireNewSolution")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Revision")
                         .HasColumnType("INTEGER");
 
@@ -338,6 +371,96 @@ namespace Classroom.Storage.Migrations
                     b.HasIndex("TaskId");
 
                     b.ToTable("LessonSqlTasks");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSqlWorkEntity", b =>
+                {
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TaskId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AcceptedCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActiveSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ActiveSecondsAtCompletion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Checks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Draft")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Errors")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("HintsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastActivityAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastHeartbeatAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PolicyTaskId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreviousAcceptedCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("PreviousCompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PreviousJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Project")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ProjectOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RequireNewSolution")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TrackingVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("LessonId", "StudentId", "TaskId");
+
+                    b.HasIndex("LessonId", "PolicyTaskId");
+
+                    b.HasIndex("StudentId", "Project", "CreatedAt");
+
+                    b.ToTable("LessonSqlWorks");
                 });
 
             modelBuilder.Entity("Classroom.Storage.OperationEntity", b =>
@@ -510,6 +633,11 @@ namespace Classroom.Storage.Migrations
 
             modelBuilder.Entity("Classroom.Storage.AttemptEntity", b =>
                 {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()
                         .HasForeignKey("StudentId")
@@ -564,6 +692,21 @@ namespace Classroom.Storage.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Classroom.Storage.LessonSqlSnapshotEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Classroom.Storage.LessonSqlTaskEntity", b =>
                 {
                     b.HasOne("Classroom.Storage.LessonSessionEntity", null)
@@ -575,6 +718,21 @@ namespace Classroom.Storage.Migrations
                     b.HasOne("Classroom.Storage.TaskEntity", null)
                         .WithMany()
                         .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSqlWorkEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.LessonSqlTaskEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId", "PolicyTaskId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

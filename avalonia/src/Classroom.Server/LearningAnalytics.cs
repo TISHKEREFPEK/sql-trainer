@@ -10,7 +10,7 @@ public static class LearningAnalytics
     static bool Check(AttemptEntity e) => e.Action == "check" || e.Action is null && e.Kind is not ("clipboard" or "capture");
     static bool Violation(AttemptEntity e) => e.Kind is "clipboard" or "capture";
 
-    public static LearningRecord Record(AssignmentEntity a, AttemptEntity[] events)
+    public static LearningRecord Record(ISqlWork a, AttemptEntity[] events)
     {
         var task = Catalog.Read(a.Json);
         var first = events.Where(Check).OrderBy(e => e.At).ThenBy(e => e.Id).FirstOrDefault();
@@ -72,16 +72,17 @@ public static class LearningAnalytics
         api.MapPost("/tasks/{id}/events", (HttpContext ctx, string id, TaskEventRequest input) =>
         {
             var session = state.Authorize(ctx, "student");
+            LessonRoutes.CheckContext(session, input.LessonId);
             if (!Guid.TryParseExact(input.EventId, "N", out _) || input.Action is not ("opened" or "copy" or "cut" or "paste" or "clipboard" or "drop" or "capture"))
                 throw new HttpFault(400, "Некорректное событие.");
             return state.Write(async db =>
             {
                 var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(404, "Профиль не найден.");
                 await LessonRoutes.RequireMember(state, db, session, saving: true);
-                var a = await state.Assignment(db, student, id, session.LessonId, retainedSave: true);
+                var a = await state.Assignment(db, student, id, session.LessonId, retainedSave: true, workScope: input.WorkScope);
                 var eventId = student.Id + ":" + input.EventId;
                 var receipt = await db.Operations.FindAsync(student.Id, "event:" + input.EventId);
-                var hash = id + ":" + input.Action;
+                var hash = session.LessonId + ":" + ServerState.Scope(a) + ":" + id + ":" + input.Action;
                 if (receipt is not null && receipt.RequestHash != hash)
                     throw new HttpFault(409, "Событие уже использовано.");
                 if (receipt is not null)
@@ -96,7 +97,7 @@ public static class LearningAnalytics
                 }
                 else if ((await db.Tasks.FindAsync(id))?.Restricted == true)
                 {
-                    db.Attempts.Add(new() { Id = eventId, StudentId = student.Id, TaskId = id, Action = input.Action, Kind = input.Action == "capture" ? "capture" : "clipboard", At = ServerState.Now });
+                    db.Attempts.Add(new() { Id = eventId, LessonId = session.LessonId, WorkScope = ServerState.Scope(a), StudentId = student.Id, TaskId = id, Action = input.Action, Kind = input.Action == "capture" ? "capture" : "clipboard", At = ServerState.Now });
                     a.LastActivityAt = ServerState.Now;
                     if (input.Action != "capture" && student.LockedUntil <= ServerState.Now)
                         student.LockedUntil = ServerState.Now + 30000;

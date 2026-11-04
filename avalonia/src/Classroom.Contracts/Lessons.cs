@@ -18,7 +18,7 @@ public record LessonSqlSelectionRequest(string[] TaskIds, string[]? RequireNewTa
 public record LessonSqlTaskInfo(string Id, string Title, string Module, string? Project, int Revision, long IssuedAt, bool RequireNewSolution = false);
 public record LessonSqlSelection(LessonSqlTaskInfo[] Tasks);
 public record StudentLessonWork(string Id, string Title, string Module, string State, int? Variant, int? Revision, long? CompletedAt, bool RequireNewSolution = false, long? PreviousCompletedAt = null);
-public record StudentHomeDto(string Name, string Group, LessonView Lesson, StudentLessonWork[] Required);
+public record StudentHomeDto(string Name, string Group, LessonView Lesson, StudentLessonWork[] Required, StudentElectronicsWork[]? Electronics = null);
 public record LessonSqlWorkDetail(string LessonId, string StudentId, string TaskId, string Title, string Prompt,
     int Variant, int Revision, bool RequireNewSolution, string Draft, string? AcceptedCode, long? CompletedAt,
     long CreatedAt, long? StartedAt, int Checks, int Errors, int ActiveSeconds, string? PreviousTitle,

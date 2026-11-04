@@ -15,6 +15,7 @@ public static class Routes
         LessonRoutes.Map(api, state);
         LessonSqlTasks.Map(api, state);
         ElectronicsRoutes.Map(api,state);
+        ElectronicsAssignments.Map(api, state);
         api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
         {
             state.Authorize(ctx, "teacher");

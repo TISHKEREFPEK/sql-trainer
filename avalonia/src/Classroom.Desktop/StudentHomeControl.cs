@@ -50,6 +50,13 @@ public sealed class StudentHomeControl : UserControl
         }
         if (data.Lesson.AllowElectronics)
         {
+            foreach (var work in data.Electronics ?? [])
+            {
+                var status = work.State switch { "awaiting-review" => "Ожидает проверки", "accepted" => "Принято", "changes-requested" => "На доработке", "rejected" => "Не принято", "draft" => "В работе", _ => "Не начато" };
+                var action = Ui.Button(work.State == "draft" ? "Продолжить схему" : "Открыть схему", () => owner.Safe(() => open("electronics", work.TaskId)));
+                action.IsEnabled = canWork;
+                page.Children.Add(Ui.Card(Ui.Stack(Ui.Text(work.Title, 18), Ui.Text("Электроника · " + status), action)));
+            }
             var electronics = Ui.Button("Открыть электронику", () => owner.Safe(() => open("electronics", null)));
             electronics.IsEnabled = canWork;
             page.Children.Add(Ui.Card(Ui.Stack(Ui.Text("Электроника", 20), electronics)));

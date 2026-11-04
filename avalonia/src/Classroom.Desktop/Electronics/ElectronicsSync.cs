@@ -12,25 +12,29 @@ public sealed class ElectronicsSync : IDisposable
         public string ProjectJson { get; set; }="";
         public bool Dirty { get; set; }
         public List<ElectronicsReportRequest> Reports { get; set; }=[];
+        public string? AssignmentId { get; set; }
     }
     readonly ClassroomApi api;
     readonly string path;
     readonly Action<string> status;
+    readonly Action<ElectronicsSyncReceipt>? receipt;
     readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(2)};
     readonly CancellationTokenSource lifetime=new();
     readonly object stateGate=new();
     Outbox state=new();
     volatile bool busy,disposed,lastFailure;
     public bool Pending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
-    public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true)
+    public bool PendingSubmission {get{lock(stateGate)return state.Reports.Any(r=>r.Kind=="submitted");}}
+    public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null)
     {
-        this.api=api; this.path=path; this.status=status;
+        this.api=api; this.path=path; this.status=status; this.receipt=receipt;
         try
         {
             if(File.Exists(path))
             {
                 if(new FileInfo(path).Length>64_000_000) throw new InvalidDataException("Слишком большая очередь.");
                 state=Wire.Read<Outbox>(File.ReadAllText(path));
+                if(state.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходная очередь сохранена отдельно.");
                 if(!Guid.TryParseExact(state.ClientId,"N",out _)||state.Sequence<0||state.Reports.Count>100) throw new InvalidDataException("Некорректная очередь результатов.");
                 if(state.ProjectJson.Length>0) CircuitProject.Parse(state.ProjectJson);
                 foreach(var report in state.Reports) { CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000) throw new InvalidDataException("Некорректный отчёт."); }
@@ -41,6 +45,7 @@ public sealed class ElectronicsSync : IDisposable
             if(File.Exists(path)) File.Move(path,path+".corrupt-"+Guid.NewGuid().ToString("N"));
             state=new(); status("Повреждённая очередь сохранена отдельно. Работа будет отправлена новой копией.");
         }
+        state.AssignmentId=assignmentId;
         // Re-send the local draft once after login, including after server restore.
         state.Dirty=true;
         timer.Tick+=async(_,_)=>await Flush();
@@ -62,6 +67,7 @@ public sealed class ElectronicsSync : IDisposable
         {
         if(disposed) return;
         if(!ElectronicsProjectFormat.ReportKinds.Contains(kind)) throw new InvalidDataException("Неизвестный вид результата.");
+        if(state.AssignmentId is not null && kind=="submitted" && state.Reports.Any(r=>r.Kind=="submitted")) return;
         if(state.Reports.Count>=100 || state.Reports.Sum(r=>r.ProjectJson.Length)+(long)json.Length>16_000_000) throw new InvalidDataException("Очередь результатов заполнена. Подключитесь к преподавателю и повторите отправку; локальная схема сохранена.");
         var explanation = detail.Length>16000 ? detail[..15900]+"\n[Сообщение сокращено. Полный текст сохранён в приложении ученика.]" : detail;
         state.Reports.Add(new(Guid.NewGuid().ToString("N"),kind,json,explanation)); Persist(); status("Результат сохранён локально и ожидает передачи.");
@@ -69,22 +75,23 @@ public sealed class ElectronicsSync : IDisposable
     }
     public async Task<bool> Flush()
     {
-        ElectronicsReportRequest[] reports;long sequence;string json,client;
+        ElectronicsReportRequest[] reports;long sequence;string json,client;string? assignmentId;
         lock(stateGate)
         {
             if(disposed||busy||!Pending||state.ProjectJson.Length==0) return !Pending;
-            busy=true;reports=state.Reports.Take(10).ToArray();sequence=state.Sequence;json=state.ProjectJson;client=state.ClientId;
+            busy=true;reports=state.Reports.Take(10).ToArray();sequence=state.Sequence;json=state.ProjectJson;client=state.ClientId;assignmentId=state.AssignmentId;
         }
         try
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); timeout.CancelAfter(TimeSpan.FromSeconds(5));
-            var ack=await api.Send<ElectronicsSyncReceipt>(HttpMethod.Put,"electronics/work",new ElectronicsSyncRequest(client,sequence,json,reports),timeout.Token);
+            var ack=await api.Send<ElectronicsSyncReceipt>(HttpMethod.Put,"electronics/work",new ElectronicsSyncRequest(client,sequence,json,reports,assignmentId),timeout.Token);
             lock(stateGate)
             {
             if(disposed) return false;
             lastFailure=false;
             if(state.Sequence==sequence && state.ProjectJson==json) state.Dirty=false;
             var ids=ack.ReportIds.ToHashSet(); state.Reports.RemoveAll(r=>ids.Contains(r.Id)); Persist();
+            receipt?.Invoke(ack);
             status(Pending?"Часть результатов передана; очередь отправляется…":"Схема и результаты сохранены у преподавателя."); return !Pending;
             }
         }

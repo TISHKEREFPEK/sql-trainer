@@ -22,6 +22,7 @@ public sealed class LessonControl : UserControl
     readonly Button finish;
     readonly Button apply;
     readonly LessonTaskPicker taskPicker;
+    readonly LessonElectronicsPicker electronicsPicker;
     string draftId = Guid.NewGuid().ToString("N");
     LessonView? current;
     bool busy;
@@ -31,11 +32,12 @@ public sealed class LessonControl : UserControl
     {
         this.owner = owner; this.api = api;
         taskPicker = new(owner, api);
+        electronicsPicker = new(owner, api);
         start = Ui.Primary(Ui.Button("Начать занятие", () => Run(async () =>
         {
             var creating = current is null;
             current ??= await api.Post<LessonView>("teacher/lessons", new CreateLessonRequest(draftId, Policy()));
-            if (creating || current.State == "preparing") await taskPicker.Save(current.Id);
+            if (creating || current.State == "preparing") { await taskPicker.Save(current.Id); await electronicsPicker.Save(current.Id); }
             var action = current.State == "preparing" ? "start" : !current.Activated ? "restore" : current.State == "paused" ? "resume" : "pause";
             current = await api.Post<LessonView>($"teacher/lessons/{current.Id}/{action}");
         })));
@@ -57,6 +59,7 @@ public sealed class LessonControl : UserControl
             Ui.Card(Ui.Stack(Ui.Field("Группа", group), Ui.Row(sql, electronics), admission, allGroups, registration,
                 practice, apply)),
             taskPicker,
+            electronicsPicker,
             Ui.Card(Ui.Stack(Ui.Text("Предыдущие занятия", 20), history))));
     }
 
@@ -78,6 +81,7 @@ public sealed class LessonControl : UserControl
         var groups = knownGroups;
         var before = current?.Id; current = dashboard.Current;
         await taskPicker.Refresh(current?.Id, availableTasks);
+        await electronicsPicker.Refresh(current?.Id);
         if (before is not null && current is null) draftId = Guid.NewGuid().ToString("N");
         var selected = (group.SelectedItem as GroupChoice)?.Id;
         group.ItemsSource = new[] { new GroupChoice("", "Выберите группу") }.Concat(groups.Select(g => new GroupChoice(g.Id, g.Name))).ToArray();

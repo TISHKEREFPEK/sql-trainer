@@ -23,12 +23,15 @@ public sealed class NotificationState : ObservableObject
 public sealed class MainWindow : Window
 {
     readonly bool teacher;
+    readonly string? studentDataRoot;
     readonly HostManager? host;
     ClassroomApi? api;
     LoginDto? login;
     IDisposable? screen;
     StudentScreen? student;
     ElectronicsScreen? electronics;
+    ElectronicsScreen? practiceElectronics;
+    readonly Dictionary<string, ElectronicsScreen> assignedElectronics = new();
     StudentHomeControl? studentHome;
     object? pageReturnContent;
     Action? pageCleanup;
@@ -70,9 +73,10 @@ public sealed class MainWindow : Window
     {
     }
 
-    internal MainWindow(bool teacher, bool initializeOnOpen)
+    internal MainWindow(bool teacher, bool initializeOnOpen, string? studentDataRoot = null)
     {
         this.teacher = teacher;
+        this.studentDataRoot = studentDataRoot;
         host = teacher ? new() : null;
         Title = teacher ? "SQL · Преподаватель" : "SQL · Ученик";
         if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
@@ -271,7 +275,8 @@ public sealed class MainWindow : Window
         ClosePage(false);
         screen?.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
-        electronics?.Dispose();
+        foreach (var editor in assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
+        assignedElectronics.Clear(); practiceElectronics = null;
         electronics = null;
         screen = null;
         student = null;
@@ -457,9 +462,24 @@ public sealed class MainWindow : Window
         if (destination?.StandId == "electronics")
         {
             Protect(false);
-            var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+            var directory = studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
             var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(api!.Connection.Fingerprint + ":" + login!.Id)));
-            electronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"),api);
+            if (taskId is not null)
+            {
+                var work = await api.Get<ElectronicsAssignmentDto>("electronics/tasks/" + Uri.EscapeDataString(taskId));
+                if (!assignedElectronics.TryGetValue(work.Id, out var editor))
+                {
+                    editor = new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + "-" + work.Id + ".json"), api, assignment: work);
+                    assignedElectronics.Add(work.Id, editor);
+                }
+                else editor.UpdateAssignment(work);
+                electronics = editor;
+            }
+            else
+            {
+                practiceElectronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"), api);
+                electronics = practiceElectronics;
+            }
             screen = electronics;
             body.Content = electronics;
             return;
@@ -503,6 +523,11 @@ public sealed class MainWindow : Window
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
         var currentAllowed = screen is ElectronicsScreen ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
+        if (body.Content is ElectronicsScreen circuit && circuit.AssignmentId is { } workId)
+        {
+            circuit.UpdateAssignmentStatus(await api.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + workId + "/status"));
+            currentAllowed &= circuit.AssignmentAvailable;
+        }
         var canWork = lesson.CanWork && currentAllowed;
         if (body.Content is StudentHomeControl home)
         {
@@ -665,7 +690,7 @@ public sealed class MainWindow : Window
         if (electronics is not null) await electronics.Synchronize();
         ClosePage(false);
         screen?.Dispose();
-        electronics?.Dispose();
+        foreach (var editor in assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
         if (host is not null)
             await host.Stop(api);

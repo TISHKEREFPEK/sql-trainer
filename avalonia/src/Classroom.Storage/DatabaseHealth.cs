@@ -104,14 +104,55 @@ public static class DatabaseHealth
                 throw new InvalidDataException("Некорректный владелец снимка SQL-проекта занятия.");
             ElectronImport.ValidateSnapshot(snapshot.Base64);
         }
+        void ElectronicTask(string title, string prompt, string? starter)
+        {
+            if (string.IsNullOrWhiteSpace(title) || title.Length > 120 || title.Any(char.IsControl) || string.IsNullOrWhiteSpace(prompt) || prompt.Length > 32000)
+                throw new InvalidDataException("Некорректное электронное задание.");
+            if (starter is not null) ElectronicsProjectFormat.Inspect(starter);
+        }
+        foreach (var task in db.ElectronicsTasks.AsNoTracking())
+        {
+            ElectronicTask(task.Title, task.Prompt, task.StarterJson);
+            if (task.Revision < 1 || task.CreatedAt < 1 || task.UpdatedAt < task.CreatedAt)
+                throw new InvalidDataException("Некорректные даты/редакция электронного задания.");
+        }
+        foreach (var revision in db.ElectronicsTaskRevisions.AsNoTracking())
+        {
+            ElectronicTask(revision.Title, revision.Prompt, revision.StarterJson);
+            if (revision.Revision < 1 || revision.At < 1) throw new InvalidDataException("Некорректная редакция электронного задания.");
+        }
+        foreach (var issued in db.LessonElectronicsTasks.AsNoTracking())
+        {
+            ElectronicTask(issued.Title, issued.Prompt, issued.StarterJson);
+            var lesson = lessons.SingleOrDefault(s => s.Id == issued.LessonId);
+            if (lesson is null || issued.Revision < 1 || issued.Position < 0 || issued.IssuedAt < lesson.CreatedAt)
+                throw new InvalidDataException("Некорректная выдача электронного задания.");
+        }
+        var electronicAssignments = db.ElectronicsAssignments.AsNoTracking().ToDictionary(a => a.Id);
+        foreach (var assignment in electronicAssignments.Values)
+        {
+            ElectronicsProjectFormat.Inspect(assignment.InitialProjectJson);
+            var lesson = lessons.SingleOrDefault(s => s.Id == assignment.LessonId);
+            if (lesson is null || assignment.OpenedAt < lesson.CreatedAt || assignment.StateVersion < 1 || !Guid.TryParseExact(assignment.Id, "N", out _) ||
+                !db.LessonParticipants.Any(p => p.SessionId == assignment.LessonId && p.StudentId == assignment.StudentId) ||
+                assignment.State is not ("draft" or "awaiting-review" or "accepted" or "changes-requested" or "rejected"))
+                throw new InvalidDataException("Некорректная электронная работа занятия.");
+        }
+        void ElectronicOwner(string? assignmentId, string studentId, long at)
+        {
+            if (assignmentId is not null && (!electronicAssignments.TryGetValue(assignmentId, out var assignment) || assignment.StudentId != studentId || at < assignment.OpenedAt))
+                throw new InvalidDataException("Электронная копия относится к другой работе.");
+        }
         foreach (var row in db.ElectronicsWorks.AsNoTracking())
         {
+            ElectronicOwner(row.AssignmentId, row.StudentId, row.UpdatedAt);
             var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);
             if (row.Sequence < 1 || row.UpdatedAt < 1 || !profiles.Any(p=>p.Id==row.StudentId&&p.Role=="student") || !Guid.TryParse(row.ClientId,out _) || metadata.Name != row.Name || metadata.Parts != row.Parts || metadata.Wires != row.Wires || row.ProjectHash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row.ProjectJson))))
                 throw new InvalidDataException("Повреждена электронная работа.");
         }
         foreach (var row in db.ElectronicsReports.AsNoTracking())
         {
+            ElectronicOwner(row.AssignmentId, row.StudentId, row.At);
             var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);
             if (row.At < 1 || !profiles.Any(p=>p.Id==row.StudentId&&p.Role=="student") || !Guid.TryParse(row.Id,out _) || !Guid.TryParse(row.ClientId,out _) || !ElectronicsProjectFormat.ReportKinds.Contains(row.Kind) || row.Detail.Length > 16000 || metadata.Name != row.Name || row.ProjectHash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row.ProjectJson))))
                 throw new InvalidDataException("Повреждён результат по электронике.");

@@ -107,7 +107,7 @@ public static class LessonSqlTasks
                 }).ToArray();
                 return new StudentHomeDto(student.FullName ?? student.Login,
                     student.GroupId is null ? "Без группы" : (await db.Groups.FindAsync(student.GroupId))?.Name ?? "Без группы",
-                    await LessonRoutes.View(state, db, lesson), work);
+                    await LessonRoutes.View(state, db, lesson), work, await ElectronicsAssignments.Home(db, session));
             });
         });
         api.MapGet("/teacher/lessons/{id}/sql-tasks", (HttpContext ctx, string id) =>

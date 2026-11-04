@@ -121,12 +121,61 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("Attempts");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.ElectronicsAssignmentEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("CanSubmit")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InitialProjectJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LessonId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("OpenedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StateVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StudentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StudentId");
+
+                    b.HasIndex("LessonId", "TaskId");
+
+                    b.HasIndex("LessonId", "StudentId", "TaskId")
+                        .IsUnique();
+
+                    b.ToTable("ElectronicsAssignments");
+                });
+
             modelBuilder.Entity("Classroom.Storage.ElectronicsReportEntity", b =>
                 {
                     b.Property<string>("StudentId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssignmentId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("At")
@@ -158,9 +207,77 @@ namespace Classroom.Storage.Migrations
 
                     b.HasKey("StudentId", "Id");
 
+                    b.HasIndex("AssignmentId");
+
                     b.HasIndex("StudentId", "At", "Id");
 
                     b.ToTable("ElectronicsReports");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsTaskEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Deleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Restricted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StarterJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ElectronicsTasks");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsTaskRevisionEntity", b =>
+                {
+                    b.Property<string>("TaskId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("At")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Restricted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StarterJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("TaskId", "Revision");
+
+                    b.ToTable("ElectronicsTaskRevisions");
                 });
 
             modelBuilder.Entity("Classroom.Storage.ElectronicsWorkEntity", b =>
@@ -169,6 +286,9 @@ namespace Classroom.Storage.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ClientId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssignmentId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
@@ -196,6 +316,8 @@ namespace Classroom.Storage.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("StudentId", "ClientId");
+
+                    b.HasIndex("AssignmentId");
 
                     b.ToTable("ElectronicsWorks");
                 });
@@ -225,6 +347,47 @@ namespace Classroom.Storage.Migrations
                     b.HasKey("Hash");
 
                     b.ToTable("Imports");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonElectronicsTaskEntity", b =>
+                {
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TaskId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("IssuedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Restricted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StarterJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Withdrawn")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("LessonId", "TaskId");
+
+                    b.HasIndex("TaskId");
+
+                    b.ToTable("LessonElectronicsTasks");
                 });
 
             modelBuilder.Entity("Classroom.Storage.LessonParticipantEntity", b =>
@@ -645,8 +808,28 @@ namespace Classroom.Storage.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Classroom.Storage.ElectronicsAssignmentEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.LessonElectronicsTaskEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId", "TaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Classroom.Storage.ElectronicsReportEntity", b =>
                 {
+                    b.HasOne("Classroom.Storage.ElectronicsAssignmentEntity", null)
+                        .WithMany()
+                        .HasForeignKey("AssignmentId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()
                         .HasForeignKey("StudentId")
@@ -654,12 +837,41 @@ namespace Classroom.Storage.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Classroom.Storage.ElectronicsTaskRevisionEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ElectronicsTaskEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Classroom.Storage.ElectronicsWorkEntity", b =>
                 {
+                    b.HasOne("Classroom.Storage.ElectronicsAssignmentEntity", null)
+                        .WithMany()
+                        .HasForeignKey("AssignmentId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()
                         .HasForeignKey("StudentId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonElectronicsTaskEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ElectronicsTaskEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

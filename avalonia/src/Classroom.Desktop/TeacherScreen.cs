@@ -63,6 +63,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
     readonly LessonControl lessonControl;
     readonly TabControl resultPages;
     readonly Electronics.ElectronicsResultsView electronicsResults;
+    readonly ElectronicsTaskAuthoring electronicsAuthoring;
     public TeacherScreen(MainWindow owner, ClassroomApi api, HostManager host)
     {
         this.owner = owner;
@@ -71,6 +72,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         learning = new(owner, api);
         lessonControl = new(owner, api, ShowConnectionCode);
         electronicsResults = new(owner, api);
+        electronicsAuthoring = new(owner, api);
         students.SelectionChanged += (_, _) =>
         {
         };
@@ -92,6 +94,14 @@ public sealed class TeacherScreen : UserControl, IDisposable
             new TabItem { Header = "Электроника", Content = electronicsResults }
         }};
         resultPages = results;
+        var authoringPages = new TabControl { ItemsSource = new[] {
+            new TabItem { Header = "SQL", Content = Authoring() },
+            new TabItem { Header = "Электроника", Content = electronicsAuthoring }
+        }};
+        authoringPages.SelectionChanged += async (_, e) =>
+        {
+            if (e.Source == authoringPages && authoringPages.SelectedIndex == 1) await owner.Safe(electronicsAuthoring.Refresh);
+        };
         results.SelectionChanged += async (_, e) =>
         {
             if (e.Source != results) return;
@@ -115,7 +125,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
                 new TabItem
                 {
                     Header = "Задания",
-                    Content = Authoring()
+                    Content = authoringPages
                 },
                 new TabItem
                 {

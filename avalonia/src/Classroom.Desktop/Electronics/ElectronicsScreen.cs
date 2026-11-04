@@ -23,6 +23,10 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     readonly CircuitViewport viewport;
     readonly TextBlock zoomText=Ui.Text("100%",12);
     readonly ElectronicsSync? sync;
+    ElectronicsAssignmentDto? assignment;
+    readonly Button? submitButton;
+    public string? AssignmentId => assignment?.Id;
+    public bool AssignmentAvailable => assignment?.Available ?? true;
     readonly ElectronicsResultsView? resultsView;
     readonly TextBlock syncStatus = Ui.Text("",12);
     CircuitProject project = CircuitProject.Blink();
@@ -57,9 +61,11 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     CancellationTokenSource? compilation;
     PinDrive[]? outputs;
 
-    public ElectronicsScreen(MainWindow owner, string path, ClassroomApi? classroom = null, bool teacher = false)
+    public ElectronicsScreen(MainWindow owner, string path, ClassroomApi? classroom = null, bool teacher = false, ElectronicsAssignmentDto? assignment = null)
     {
         this.owner = owner; savePath = path;
+        this.assignment = assignment;
+        if (assignment is not null) project = CircuitProject.Parse(assignment.ProjectJson);
         InitializeManipulation();
         string? loadError = null;
         try { if (File.Exists(path)) project = CircuitProject.Parse(File.ReadAllText(path)); }
@@ -106,12 +112,19 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         foreach(var button in toolbar.Children.OfType<Button>()){button.Padding=new Thickness(10,7);button.MinHeight=32;button.FontSize=12;}
         var toolbarCard=Ui.Card(toolbar);toolbarCard.Padding=new Thickness(5);toolbarCard.Margin=new Thickness(12);toolbarCard.HorizontalAlignment=HorizontalAlignment.Left;toolbarCard.VerticalAlignment=VerticalAlignment.Top;sceneLayer.Children.Add(toolbarCard);
         var mainActions=Ui.Row();
-        if (classroom is not null && !teacher) mainActions.Children.Add(Ui.Button("Отправить преподавателю", async () =>
+        if (classroom is not null && !teacher)
         {
+            submitButton = Ui.Button(assignment is null ? "Отправить преподавателю" : "Отправить на проверку", async () =>
+            {
+            if (this.assignment?.CanSubmit == false) { owner.Message("Работа уже отправлена на проверку."); return; }
             Save(); if (!Report("submitted",project.Serialize())) return;
+            if (this.assignment is not null) submitButton!.IsEnabled = false;
             if (await Synchronize()) owner.Message("Работа отправлена преподавателю.");
             else owner.Error("Работа сохранена локально, но передача пока не завершена. "+syncStatus.Text);
-        }));
+            });
+            submitButton.IsEnabled = assignment?.CanSubmit ?? true;
+            mainActions.Children.Add(submitButton);
+        }
         mainActions.Children.Add(Ui.Button("Проверить код",()=>Compile(false)));mainActions.Children.Add(Ui.Primary(Ui.Button("Запустить",()=>Compile(true))));
         var stopButton=Ui.Button("■",()=>Perform(Stop));stopButton.Width=38;stopButton.Padding=new Thickness(0);stopButton.HorizontalContentAlignment=HorizontalAlignment.Center;stopButton.VerticalContentAlignment=VerticalAlignment.Center;ToolTip.SetTip(stopButton,"Остановить симуляцию");Avalonia.Automation.AutomationProperties.SetName(stopButton,"Остановить");mainActions.Children.Add(stopButton);
         showGrid.Content="▦";showGrid.FontSize=16;showGrid.Margin=new Thickness(4,0);ToolTip.SetTip(showGrid,"Сетка");Avalonia.Automation.AutomationProperties.SetName(showGrid,"Сетка");showGrid.IsCheckedChanged+=(_,_)=>Draw();
@@ -132,6 +145,14 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         Grid.SetRow(tabs, 1); root.Children.Add(tabs);
         syncStatus.IsVisible = false;
         var footer = Ui.Stack(status,syncStatus);footer.Spacing=2; Grid.SetRow(footer, 2); root.Children.Add(footer);
+        if (assignment is not null)
+        {
+            root.RowDefinitions = new("Auto,Auto,*,Auto");
+            var statement = Ui.Scroll(Ui.Text(assignment.Prompt)); statement.MaxHeight = 100;
+            var condition = Ui.Card(Ui.Stack(Ui.Text(assignment.Title, 20), statement));
+            root.Children.Add(condition);
+            Grid.SetRow(projectBar, 1); Grid.SetRow(tabs, 2); Grid.SetRow(footer, 3);
+        }
         tabs.SelectionChanged += (_,e) =>
         {
             if(e.Source != tabs) return;
@@ -152,9 +173,35 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         status.Text = loadError ?? "";
         if (classroom is not null && !teacher)
         {
-            sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text);
+            sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,assignmentId:assignment?.Id,receipt:OnReceipt);
             Save();
         }
+    }
+
+    void OnReceipt(ElectronicsSyncReceipt receipt)
+    {
+        if (assignment is null || receipt.CanSubmit is null || receipt.AssignmentVersion < assignment.StateVersion) return;
+        assignment = assignment with { State = receipt.AssignmentState ?? assignment.State, CanSubmit = receipt.CanSubmit.Value, StateVersion = receipt.AssignmentVersion ?? assignment.StateVersion };
+        UpdateSubmit();
+    }
+    public void UpdateAssignment(ElectronicsAssignmentDto value)
+    {
+        if (assignment?.Id != value.Id) throw new InvalidDataException("Это другая электронная работа.");
+        if (value.StateVersion < assignment.StateVersion) return;
+        assignment = value;
+        UpdateSubmit();
+    }
+    public void UpdateAssignmentStatus(ElectronicsAssignmentStatus value)
+    {
+        if (assignment?.Id != value.Id || value.StateVersion < assignment.StateVersion) return;
+        assignment = assignment with { State = value.State, CanSubmit = value.CanSubmit, Available = value.Available, StateVersion = value.StateVersion };
+        UpdateSubmit();
+    }
+    void UpdateSubmit()
+    {
+        if (submitButton is null || assignment is null) return;
+        submitButton.IsEnabled = assignment.CanSubmit && sync?.PendingSubmission != true;
+        submitButton.Content = sync?.PendingSubmission == true ? "Ожидает передачи" : assignment.CanSubmit ? "Отправить на проверку" : "Ожидает проверки";
     }
 
     Task Perform(Action action)

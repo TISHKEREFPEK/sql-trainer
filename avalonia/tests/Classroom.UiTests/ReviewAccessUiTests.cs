@@ -40,13 +40,13 @@ public sealed class ReviewAccessUiTests
         {
             Click(view, "Запустить");
             var editor = view.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
-            editor.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 2; window.UpdateLayout();
-            await WaitFor(() => Task.FromResult(editor.GetVisualDescendants().OfType<TextBox>().Any(t => t.Text?.Contains("REVIEW_ONLY", StringComparison.Ordinal) == true)));
             editor.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1; window.UpdateLayout();
+            await WaitFor(() => Task.FromResult(editor.GetVisualDescendants().OfType<TextBox>().Any(t => t.Text?.Contains("REVIEW_ONLY", StringComparison.Ordinal) == true)));
+            editor.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 0; window.UpdateLayout();
             Assert.Equal(project.Code, editor.GetVisualDescendants().OfType<TextEditor>().Single().Text);
             editor.GetVisualDescendants().OfType<TextEditor>().Single().Text = "void setup(){broken_review_symbol;}void loop(){}";
             Click(view, "Восстановить сданную версию"); window.UpdateLayout();
-            var reset = view.GetVisualDescendants().OfType<ElectronicsScreen>().Single(); reset.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1; window.UpdateLayout();
+            var reset = view.GetVisualDescendants().OfType<ElectronicsScreen>().Single(); window.UpdateLayout();
             Assert.Equal(project.Code, reset.GetVisualDescendants().OfType<TextEditor>().Single().Text);
             Capture(window, "review-sandbox-code-1320.png");
             Assert.Single((await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}")).Reports);
@@ -75,7 +75,7 @@ public sealed class ReviewAccessUiTests
             await WaitFor(() => Task.FromResult(window.GetVisualDescendants().OfType<StudentHomeControl>().Any()));
             await window.EnterLesson(new LessonDestination("electronics")); window.UpdateLayout();
             var original = window.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
-            original.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1; window.UpdateLayout();
+            window.UpdateLayout();
             var draft = "// несданный черновик ученика\nvoid setup(){} void loop(){}";
             original.GetVisualDescendants().OfType<TextEditor>().Single().Text = draft;
             var submitted = CircuitProject.Blink().Serialize(); var report = Guid.NewGuid().ToString("N");

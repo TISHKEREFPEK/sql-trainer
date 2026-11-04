@@ -75,7 +75,7 @@ public sealed class ElectronicsAssignmentUiTests
         static TextEditor Code(ElectronicsScreen view)
         {
             view.UpdateLayout();
-            view.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1; view.UpdateLayout();
+            view.UpdateLayout();
             return view.GetVisualDescendants().OfType<TextEditor>().Single();
         }
         try

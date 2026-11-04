@@ -23,7 +23,7 @@ public sealed class ElectronicsResultsTests
         var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
         async Task Compile(bool run)=>await (Task)typeof(ElectronicsScreen).GetMethod("Compile",flags)!.Invoke(studentView,[run])!;
         await Compile(false);
-        var tabs=studentView.GetVisualDescendants().OfType<TabControl>().Single(); tabs.SelectedIndex=1;student.UpdateLayout();
+        student.UpdateLayout();
         var code=studentView.GetVisualDescendants().OfType<TextEditor>().Single(); code.Text="void setup(){pinMode(13,OUTPUT);}void loop(){digitalWrite(13,HIGH);}";await Task.Delay(50);await Compile(true);studentView.Suspend();
         studentView.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()=="Отправить преподавателю").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitFor(async()=>{await studentView.Synchronize();var row=(await f.Admin.Get<ElectronicsOverview>("teacher/electronics")).Students.Single();return row.Submitted==1&&row.Compiled==1&&row.Errors==1;});
@@ -31,7 +31,7 @@ public sealed class ElectronicsResultsTests
         var error=detail.Reports.Single(r=>r.Kind=="compile-error");Assert.Contains("invalid_student_symbol",(await f.Admin.Get<ElectronicsSnapshot>($"teacher/electronics/{f.StudentId}/report/{error.Id}")).Detail);
         var own=CircuitExamples.Servo();own.Name="Собственная схема преподавателя";var teacherFile=Path.Combine(dir,"teacher.json");File.WriteAllText(teacherFile,own.Serialize());
         var teacher=new MainWindow(true,false){Width=1320,Height=900};using var teacherView=new ElectronicsScreen(teacher,teacherFile,f.Admin,teacher:true);teacher.Preview(teacherView);teacher.Show();teacher.UpdateLayout();
-        var teacherTabs=teacherView.GetVisualDescendants().OfType<TabControl>().Single();teacherTabs.SelectedIndex=3;
+        var teacherTabs=teacherView.GetVisualDescendants().OfType<TabControl>().Single(t=>t.Name=="ElectronicsWorkspaceTabs");teacherTabs.SelectedIndex=1;
         await WaitFor(()=>Task.FromResult(teacherView.GetVisualDescendants().OfType<ListBox>().Any(l=>l.Items.Cast<object>().Any(i=>i.ToString()!.Contains("ui-test")))));teacher.UpdateLayout();Capture(teacher,"electronics-results-overview-1320.png");
         var users=teacherView.GetVisualDescendants().OfType<ListBox>().Single();users.SelectedItem=users.Items.Cast<object>().Single(i=>i.ToString()!.Contains("ui-test"));
         await WaitFor(()=>Task.FromResult(teacherView.GetVisualDescendants().OfType<ElectronicsSnapshotView>().Any()));teacher.UpdateLayout();Capture(teacher,"electronics-results-snapshot-1320.png");

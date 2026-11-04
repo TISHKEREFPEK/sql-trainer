@@ -80,30 +80,30 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         partSearch.TextChanged += (_, _) => RenderLibrary();
         partCategory.SelectionChanged += (_, _) => RenderLibrary();
         simulationOnly.IsCheckedChanged += (_, _) => RenderLibrary(); favoritesOnly.IsCheckedChanged += (_, _) => RenderLibrary();
-        var library = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 8 };
-        library.Children.Add(Ui.Stack(Ui.Text("Детали", 19), partSearch, partCategory, Ui.Row(simulationOnly, favoritesOnly), catalogCount));
-        var cardsScroll = Ui.Scroll(partCards); Grid.SetRow(cardsScroll, 1); library.Children.Add(cardsScroll);
+        var library = Ui.Stack(Ui.Text("Детали", 19), partSearch, partCategory, Ui.Row(simulationOnly, favoritesOnly), catalogCount, partCards); library.Spacing = 8;
         var layout = workGrid;
-        var libraryCard=Ui.Card(library);libraryCard.Padding=new Thickness(12,16);layout.Children.Add(libraryCard);
+        var libraryCard=Ui.Card(Ui.Scroll(library));libraryCard.Padding=new Thickness(12,16);libraryCard.ClipToBounds=true;layout.Children.Add(libraryCard);
         var scroll = viewport = new CircuitViewport(canvas);viewport.ZoomRequested=ZoomAt;viewport.BackgroundPressed=()=>{selected=null;selectedWire=null;DrawSelection();Inspect();};
         var sceneLayer=new Grid();sceneLayer.Children.Add(viewport);
         var sceneCard=Ui.Card(sceneLayer);sceneCard.Padding=new Thickness(0);sceneCard.ClipToBounds=true;Grid.SetColumn(sceneCard, 1); layout.Children.Add(sceneCard);
         var inspector = Ui.Card(Ui.Scroll(properties));inspector.Padding=new Thickness(12,16);Grid.SetColumn(inspector, 2); layout.Children.Add(inspector);
         makeTemplate = Ui.Button("Создать шаблон по схеме", ApplyCodeTemplate);
         var codePage = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 8 };
-        codePage.Children.Add(new Expander { Header = "Подключения и настройка кода", IsExpanded = true, HorizontalAlignment = HorizontalAlignment.Stretch,
+        codePage.Children.Add(new Expander { Header = "Подключения и настройка кода", IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch,
             Content = Ui.Stack(makeTemplate, new ScrollViewer { Content = codeGuideText, MaxHeight = 150 }) });
         Grid.SetRow(editor,1); codePage.Children.Add(editor);
-        var tabItems = new List<TabItem> { new() { Header = "Схема", Content = layout }, new() { Header = "Код Arduino Uno", Content = codePage }, new() { Header = "Последовательный монитор", Content = monitor } };
-        var tabs = new TabControl();
+        var workspace = BuildWorkspace(layout, libraryCard, inspector, codePage);
+        Control body = workspace;
+        TabControl? tabs = null;
         TabItem? resultsTab = null;
         if (classroom is not null && teacher)
         {
             resultsView = new ElectronicsResultsView(owner,classroom);
-            resultsTab = new TabItem { Header = "Результаты учеников", Content = resultsView }; tabItems.Add(resultsTab);
+            resultsTab = new TabItem { Header = "Результаты учеников", Content = resultsView };
+            tabs = new TabControl { Name = "ElectronicsWorkspaceTabs", ItemsSource = new[] { new TabItem { Header = "Рабочая область", Content = workspace }, resultsTab } };
+            body = tabs;
             tabs.SelectionChanged += async (_,e) => { if(e.Source == tabs && tabs.SelectedItem == resultsTab) await owner.Safe(resultsView.Load); };
         }
-        tabs.ItemsSource = tabItems;
         MenuItem Menu(string label,Func<Task> action){var item=new MenuItem{Header=label};item.Click+=async(_,_)=>await owner.Safe(action);return item;}
         var exampleMenu=new MenuItem{Header="Примеры",ItemsSource=CircuitExamples.Names.Select((label,index)=>Menu(label,()=>Replace(CircuitExamples.Create(index)))).ToArray()};
         var wireMenu=new MenuItem{Header="Цвет провода",ItemsSource=new[]{"Зелёный","Красный","Чёрный","Синий"}.Select((label,index)=>Menu(label,()=>{wireColor.SelectedIndex=index;return Task.CompletedTask;})).ToArray()};
@@ -148,7 +148,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         status.Classes.Add("muted");status.FontSize=12;syncStatus.Classes.Add("muted");
         status.IsVisible=false;status.PropertyChanged+=(_,e)=>{if(e.Property==TextBlock.TextProperty)status.IsVisible=!string.IsNullOrWhiteSpace(status.Text);};
         syncStatus.PropertyChanged+=(_,e)=>{if(e.Property==TextBlock.TextProperty)syncStatus.IsVisible=classroom is not null&&!teacher&&!string.IsNullOrWhiteSpace(syncStatus.Text);};
-        Grid.SetRow(tabs, 1); root.Children.Add(tabs);
+        Grid.SetRow(body, 1); root.Children.Add(body);
         syncStatus.IsVisible = false;
         var footer = Ui.Stack(status,syncStatus);footer.Spacing=2; Grid.SetRow(footer, 2); root.Children.Add(footer);
         if (assignment is not null)
@@ -160,9 +160,9 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             var review = Ui.Scroll(reviewStatus); review.MaxHeight = 110;
             var condition = Ui.Card(Ui.Stack(Ui.Text(assignment.Title, 20), statement, review));
             root.Children.Add(condition);
-            Grid.SetRow(projectBar, 1); Grid.SetRow(tabs, 2); Grid.SetRow(footer, 3);
+            Grid.SetRow(projectBar, 1); Grid.SetRow(body, 2); Grid.SetRow(footer, 3);
         }
-        tabs.SelectionChanged += (_,e) =>
+        if (tabs is not null) tabs.SelectionChanged += (_,e) =>
         {
             if(e.Source != tabs) return;
             var results = resultsTab is not null && tabs.SelectedItem == resultsTab;
@@ -338,7 +338,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     void Inspect()
     {
         properties.Children.Clear();
-        workGrid.ColumnDefinitions[2].Width = new GridLength(selected is null && selectedWire is null ? 0 : 260);
+        InspectPanelSelection();
         if (selectedWire is { } wireId && project.Wires.FirstOrDefault(w => w.Id == wireId) is { } wire)
         {
             properties.Children.Add(Ui.Text("Провод", 20));
@@ -502,11 +502,12 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             foreach (var pin in PartLibrary.Pins(p))
             {
                 var point = PinPoint(p, pin);
-                var hole = p.Kind == PartKind.Breadboard; var diameter = hole ? 7 : 13;
-                var button = new Button { MinWidth = 0, MinHeight = 0, Width = diameter * zoom, Height = diameter * zoom, CornerRadius = new CornerRadius(diameter), Padding = new Thickness(0), BorderThickness = new Thickness(1.5), BorderBrush = Brushes.White, Background = startPin == new Terminal(p.Id, pin) ? Brushes.Gold : hole ? Brushes.SlateGray : Brushes.DodgerBlue };
+                var hole = p.Kind == PartKind.Breadboard; var dotDiameter = (hole ? 7 : 13) * zoom; var diameter = hole ? dotDiameter : Math.Max(12, dotDiameter);
+                var dot = new Ellipse { Width = dotDiameter, Height = dotDiameter, Fill = startPin == new Terminal(p.Id, pin) ? Brushes.Gold : hole ? Brushes.SlateGray : Brushes.DodgerBlue, Stroke = Brushes.White, StrokeThickness = 1.5, IsHitTestVisible = false };
+                var button = new Button { MinWidth = 0, MinHeight = 0, Width = diameter, Height = diameter, CornerRadius = new CornerRadius(diameter), Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = Brushes.Transparent, Content = dot, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
                 ToolTip.SetTip(button, pin + (result?.Voltages.TryGetValue(new(p.Id, pin), out var v) == true ? $" · {v:F2} В" : ""));
                 Avalonia.Automation.AutomationProperties.SetName(button, PartLibrary.Name(p) + ": " + pin);
-                Canvas.SetLeft(button, (point.X - p.X - diameter / 2.0) * zoom); Canvas.SetTop(button, (point.Y - p.Y - diameter / 2.0) * zoom); group.Children.Add(button);
+                Canvas.SetLeft(button, (point.X - p.X) * zoom - diameter / 2); Canvas.SetTop(button, (point.Y - p.Y) * zoom - diameter / 2); group.Children.Add(button);
                 if (!hole)
                 {
                     var pico = PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico" && PartLibrary.Pins(p).Length == 40;

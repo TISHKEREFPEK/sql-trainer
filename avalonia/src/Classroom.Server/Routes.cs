@@ -17,6 +17,7 @@ public static class Routes
         ElectronicsRoutes.Map(api,state);
         ElectronicsAssignments.Map(api, state);
         ElectronicsReviews.Map(api, state);
+        ReviewAccessRoutes.Map(api, state);
         api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
         {
             state.Authorize(ctx, "teacher");
@@ -550,6 +551,7 @@ public static class Routes
                 state.Backups.Restore(name);
                 await state.Initialize();
                 state.Sessions.Clear();
+                state.ReviewAccess.Clear();
                 state.ActivatedLessonId = null;
                 return new
                 {

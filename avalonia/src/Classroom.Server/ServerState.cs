@@ -16,6 +16,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
 {
     public readonly SemaphoreSlim Gate = new(1, 1);
     public readonly ConcurrentDictionary<string, Session> Sessions = new();
+    public Classroom.Domain.ReviewAccessRegistry ReviewAccess { get; } = new();
     readonly ConcurrentDictionary<string, byte> busy = new();
     public Backups Backups { get; } = new(databasePath);
 

@@ -53,7 +53,7 @@ public static class ElectronicsReviews
         return row is null ? null : Decision(row);
     }
 
-    static async Task<ElectronicsReviewDetail> Detail(ClassroomDb db, string studentId, string reportId)
+    public static async Task<ElectronicsReviewDetail> Detail(ClassroomDb db, string studentId, string reportId)
     {
         var item = await Items(db).SingleOrDefaultAsync(r => r.StudentId == studentId && r.ReportId == reportId)
             ?? throw new HttpFault(404, "Сданная работа не найдена.");
@@ -67,6 +67,48 @@ public static class ElectronicsReviews
         return new(item.Dto(), prompt, report.ProjectJson, history.Select(Decision).ToArray(), assignment?.CanSubmit ?? false, assignment?.StateVersion, latest);
     }
 
+
+    public static async Task<ElectronicsReviewDecision> Decide(ClassroomDb db, string teacherId, string studentId, string reportId, string id, ElectronicsReviewRequest input)
+    {
+        if (!Guid.TryParseExact(id, "N", out _) || !Decisions.Contains(input.Action) && input.Action != "allow-resubmit" || input.Comment.Length > 8000 ||
+            input.Grade is < 1 or > 5 || input.Action is "accepted" or "rejected" && input.Grade is null || input.Action == "allow-resubmit" && input.Grade is not null)
+            throw new HttpFault(400, "Выберите результат, оценку от 1 до 5 и комментарий до 8000 символов.");
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Wire.Write(new { studentId, reportId, input }))));
+        var duplicate = await db.ElectronicsReviews.FindAsync(id);
+        if (duplicate is not null)
+        {
+            if (duplicate.TeacherId != teacherId || duplicate.RequestHash != hash) throw new HttpFault(409, "Номер решения уже использован для другой операции.");
+            return Decision(duplicate);
+        }
+        var detail = await Detail(db, studentId, reportId);
+        if (detail.History.LastOrDefault()?.Id != input.ExpectedReviewId || detail.AssignmentVersion != input.ExpectedAssignmentVersion)
+            throw new HttpFault(409, "Работа уже изменилась. Обновите сдачу перед сохранением решения.");
+        var assignment = detail.Item.AssignmentId is null ? null : await db.ElectronicsAssignments.FindAsync(detail.Item.AssignmentId);
+        if (input.Action == "allow-resubmit" && (assignment is null || !detail.IsLatestSubmission || detail.Item.State == "awaiting-review" || assignment.CanSubmit))
+            throw new HttpFault(409, "Разрешить пересдачу можно для последней проверенной работы, если она ещё не разрешена.");
+        var row = new ElectronicsReviewEntity { Id = id, StudentId = studentId, ReportId = reportId, TeacherId = teacherId,
+            Sequence = (detail.History.LastOrDefault()?.Sequence ?? 0) + 1, PreviousReviewId = input.ExpectedReviewId,
+            Action = input.Action, Comment = input.Comment, Grade = input.Grade, RequestHash = hash, At = Math.Max(ServerState.Now, detail.Item.SubmittedAt) };
+        db.ElectronicsReviews.Add(row);
+        if (assignment is not null && detail.IsLatestSubmission)
+        {
+            if (input.Action != "allow-resubmit") assignment.State = input.Action;
+            assignment.CanSubmit = input.Action is "changes-requested" or "allow-resubmit";
+            assignment.StateVersion++;
+        }
+        return Decision(row);
+    }
+
+    public static async Task<ElectronicsReviewQueue> Queue(ClassroomDb db, string? studentId = null, string? status = null, string? groupId = null, string? lessonId = null, int offset = 0)
+    {
+        if (offset < 0 || offset > 1000000 || status is not (null or "pending" or "all")) throw new HttpFault(400, "Некорректный фильтр очереди.");
+        var all = Items(db).Where(r => studentId == null || r.StudentId == studentId);
+        var pending = await all.CountAsync(r => r.State == "awaiting-review");
+        var query = all.Where(r => (status == "all" || r.State == "awaiting-review") && (groupId == null || r.GroupId == (groupId == "none" ? null : groupId)) && (lessonId == null || r.LessonId == lessonId));
+        var rows = await query.OrderByDescending(r => r.SubmittedAt).ThenBy(r => r.StudentId).ThenBy(r => r.ReportId).Skip(offset).Take(31).ToArrayAsync();
+        return new ElectronicsReviewQueue(rows.Take(30).Select(r => r.Dto()).ToArray(), pending, rows.Length > 30, offset + Math.Min(30, rows.Length));
+    }
+
     public static void Map(RouteGroupBuilder api, ServerState state)
     {
         api.MapGet("/teacher/reviews/electronics/filters", async (HttpContext ctx) =>
@@ -78,16 +120,7 @@ public static class ElectronicsReviews
         api.MapGet("/teacher/reviews/electronics", (HttpContext ctx, string? status, string? groupId, string? lessonId, int? offset) =>
         {
             state.Authorize(ctx, "teacher");
-            var start = offset ?? 0;
-            if (start < 0 || start > 1000000 || status is not (null or "pending" or "all")) throw new HttpFault(400, "Некорректный фильтр очереди.");
-            return state.Read(async db =>
-            {
-                var all = Items(db);
-                var pending = await all.CountAsync(r => r.State == "awaiting-review");
-                var query = all.Where(r => (status == "all" || r.State == "awaiting-review") && (groupId == null || r.GroupId == (groupId == "none" ? null : groupId)) && (lessonId == null || r.LessonId == lessonId));
-                var rows = await query.OrderByDescending(r => r.SubmittedAt).ThenBy(r => r.StudentId).ThenBy(r => r.ReportId).Skip(start).Take(31).ToArrayAsync();
-                return new ElectronicsReviewQueue(rows.Take(30).Select(r => r.Dto()).ToArray(), pending, rows.Length > 30, start + Math.Min(30, rows.Length));
-            });
+            return state.Read(db => Queue(db, status: status, groupId: groupId, lessonId: lessonId, offset: offset ?? 0));
         });
         api.MapGet("/teacher/reviews/electronics/{studentId}/{reportId}", (HttpContext ctx, string studentId, string reportId) =>
         {
@@ -100,36 +133,7 @@ public static class ElectronicsReviews
         api.MapPut("/teacher/reviews/electronics/{studentId}/{reportId}/decisions/{id}", (HttpContext ctx, string studentId, string reportId, string id, ElectronicsReviewRequest input) =>
         {
             var teacher = state.Authorize(ctx, "teacher");
-            if (!Guid.TryParseExact(id, "N", out _) || !Decisions.Contains(input.Action) && input.Action != "allow-resubmit" || input.Comment.Length > 8000 ||
-                input.Grade is < 1 or > 5 || input.Action is "accepted" or "rejected" && input.Grade is null || input.Action == "allow-resubmit" && input.Grade is not null)
-                throw new HttpFault(400, "Выберите результат, оценку от 1 до 5 и комментарий до 8000 символов.");
-            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Wire.Write(new { studentId, reportId, input }))));
-            return state.Write(async db =>
-            {
-                var duplicate = await db.ElectronicsReviews.FindAsync(id);
-                if (duplicate is not null)
-                {
-                    if (duplicate.TeacherId != teacher.ProfileId || duplicate.RequestHash != hash) throw new HttpFault(409, "Номер решения уже использован для другой операции.");
-                    return Decision(duplicate);
-                }
-                var detail = await Detail(db, studentId, reportId);
-                if (detail.History.LastOrDefault()?.Id != input.ExpectedReviewId || detail.AssignmentVersion != input.ExpectedAssignmentVersion)
-                    throw new HttpFault(409, "Работа уже изменилась. Обновите сдачу перед сохранением решения.");
-                var assignment = detail.Item.AssignmentId is null ? null : await db.ElectronicsAssignments.FindAsync(detail.Item.AssignmentId);
-                if (input.Action == "allow-resubmit" && (assignment is null || !detail.IsLatestSubmission || detail.Item.State == "awaiting-review" || assignment.CanSubmit))
-                    throw new HttpFault(409, "Разрешить пересдачу можно для последней проверенной работы, если она ещё не разрешена.");
-                var row = new ElectronicsReviewEntity { Id = id, StudentId = studentId, ReportId = reportId, TeacherId = teacher.ProfileId,
-                    Sequence = (detail.History.LastOrDefault()?.Sequence ?? 0) + 1, PreviousReviewId = input.ExpectedReviewId,
-                    Action = input.Action, Comment = input.Comment, Grade = input.Grade, RequestHash = hash, At = Math.Max(ServerState.Now, detail.Item.SubmittedAt) };
-                db.ElectronicsReviews.Add(row);
-                if (assignment is not null && detail.IsLatestSubmission)
-                {
-                    if (input.Action != "allow-resubmit") assignment.State = input.Action;
-                    assignment.CanSubmit = input.Action is "changes-requested" or "allow-resubmit";
-                    assignment.StateVersion++;
-                }
-                return Decision(row);
-            });
+            return state.Write(db => Decide(db, teacher.ProfileId, studentId, reportId, id, input));
         });
     }
 }

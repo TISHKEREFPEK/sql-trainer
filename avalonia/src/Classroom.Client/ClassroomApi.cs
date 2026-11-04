@@ -17,6 +17,7 @@ public sealed class ClassroomApi : IDisposable
     public ConnectionSettings Connection { get; }
     public string? Token { get; private set; }
     public string? LessonId { get; private set; }
+    string? reviewToken;
 
     public ClassroomApi(ConnectionSettings connection)
     {
@@ -62,6 +63,7 @@ public sealed class ClassroomApi : IDisposable
         using var request = new HttpRequestMessage(method, route);
         if (Token is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        if (reviewToken is not null) request.Headers.Add("X-Review-Token", reviewToken);
         if (body is HttpContent content)
             request.Content = content;
         else if (body is not null)
@@ -90,6 +92,17 @@ public sealed class ClassroomApi : IDisposable
     public Task<T> Post<T>(string route, object? body = null, CancellationToken cancellation = default) => Send<T>(HttpMethod.Post, route, body, cancellation);
     public Task<T> Put<T>(string route, object body, CancellationToken cancellation = default) => Send<T>(HttpMethod.Put, route, body, cancellation);
     public Task<T> Delete<T>(string route) => Send<T>(HttpMethod.Delete, route);
+    public async Task<(ClassroomApi Api, ReviewAccessSession Session)> StartReview(string code)
+    {
+        var session = await Post<ReviewAccessSession>("review-access/redeem", new RedeemReviewAccess(code));
+        return (new ClassroomApi(Connection) { Token = Token, LessonId = LessonId, reviewToken = session.Token }, session);
+    }
+    public async Task EndReview(CancellationToken cancellation = default)
+    {
+        if (reviewToken is null) return;
+        try { await Send<System.Text.Json.JsonElement>(HttpMethod.Delete, "review-access", cancellation: cancellation); }
+        finally { reviewToken = null; }
+    }
     public async Task<LoginDto> Login(LoginRequest input)
     {
         var result = await Post<LoginDto>("login", input);

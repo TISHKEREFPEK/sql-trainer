@@ -36,6 +36,7 @@ public sealed class MainWindow : Window
     object? pageReturnContent;
     Action? pageCleanup;
     bool pageOpen;
+    StudentReviewPage? teacherReview;
     readonly ContentControl body = new();
     readonly WrapPanel actions = new()
     {
@@ -212,6 +213,7 @@ public sealed class MainWindow : Window
         cleanup?.Invoke();
         if (restore) body.Content = previous;
         RefreshSurface();
+        Protect(student?.Restricted == true);
     }
     internal async Task ShowAppearance()
     {
@@ -271,8 +273,8 @@ public sealed class MainWindow : Window
     async Task ShowLogin()
     {
         admissionPoll?.Stop(); lessonPoll.Stop();
-        body.IsEnabled = true; lessonBlock.IsVisible = false;
         ClosePage(false);
+        body.IsEnabled = true; lessonBlock.IsVisible = false;
         screen?.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
         foreach (var editor in assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
@@ -423,6 +425,7 @@ public sealed class MainWindow : Window
                 electronicsSubjectButton = Ui.Button("Электроника", () => Safe(() => SwitchStudentSubject("electronics")));
                 actions.Children.Insert(0, sqlSubjectButton); actions.Children.Insert(1, electronicsSubjectButton);
                 actions.Children.Insert(0, Ui.Button("Моё занятие", () => Safe(ShowStudentHome)));
+                actions.Children.Add(Ui.Button("Проверка преподавателя", () => Safe(ShowTeacherReview)));
                 await ShowStudentHome();
                 await RefreshLessonPermission(); lessonPoll.Start();
             }
@@ -516,9 +519,26 @@ public sealed class MainWindow : Window
         await studentHome.Refresh();
     }
 
+    async Task ShowTeacherReview()
+    {
+        if (api is null || teacher || login is null) return;
+        if (student is not null) await student.SaveDraft();
+        electronics?.Suspend();
+        ClosePage();
+        var view = new StudentReviewPage(this, api);
+        ShowPage("Проверка преподавателя", view, () =>
+        {
+            teacherReview = null; view.Dispose();
+            body.IsEnabled = false; lessonBlock.IsVisible = true; lessonMessage.Text = "Проверяем доступ к занятию…";
+        });
+        teacherReview = view;
+        body.IsEnabled = true; lessonBlock.IsVisible = false; Protect(false);
+    }
+
     async Task RefreshLessonPermission()
     {
         if (api is null || login is null || teacher) return;
+        if (teacherReview is not null) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
         var lesson = await api.Get<StudentLessonDto>("student/lesson");
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;

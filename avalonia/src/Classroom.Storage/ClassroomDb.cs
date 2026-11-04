@@ -120,6 +120,7 @@ public sealed class ElectronicsWorkEntity
 }
 public sealed class ElectronicsReportEntity
 {
+    public int? ExpectedAssignmentVersion { get; set; }
     public string? AssignmentId { get; set; }
     public string StudentId { get; set; } = "";
     public string Id { get; set; } = "";
@@ -154,6 +155,7 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<ElectronicsAssignmentEntity> ElectronicsAssignments => Set<ElectronicsAssignmentEntity>();
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
+    public DbSet<ElectronicsReviewEntity> ElectronicsReviews => Set<ElectronicsReviewEntity>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -240,5 +242,9 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<ElectronicsReportEntity>().HasIndex(x => new { x.StudentId, x.At, x.Id });
         model.Entity<ElectronicsReportEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReviewEntity>().HasKey(x => x.Id);
+        model.Entity<ElectronicsReviewEntity>().HasIndex(x => new { x.StudentId, x.ReportId, x.Sequence }).IsUnique();
+        model.Entity<ElectronicsReviewEntity>().HasOne<ElectronicsReportEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.ReportId }).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReviewEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.TeacherId).OnDelete(DeleteBehavior.Restrict);
     }
 }

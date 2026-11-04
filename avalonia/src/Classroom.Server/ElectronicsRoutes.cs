@@ -20,7 +20,8 @@ public static class ElectronicsRoutes
             var reports=input.Reports.Select(r=>
             {
                 if(!ElectronicsProjectFormat.ReportKinds.Contains(r.Kind)||r.Detail.Length>16000) throw new HttpFault(400,"Некорректный результат запуска.");
-                var info=ElectronicsProjectFormat.Inspect(r.ProjectJson); return (Id:Id(r.Id),r.Kind,r.ProjectJson,r.Detail,info.Name,Hash:Hash(r.ProjectJson));
+                if(r.ExpectedAssignmentVersion is < 1) throw new HttpFault(400,"Некорректная версия сдачи.");
+                var info=ElectronicsProjectFormat.Inspect(r.ProjectJson); return (Id:Id(r.Id),r.Kind,r.ProjectJson,r.Detail,r.ExpectedAssignmentVersion,info.Name,Hash:Hash(r.ProjectJson));
             }).ToArray();
             if(reports.Select(r=>r.Id).Distinct().Count()!=reports.Length) throw new HttpFault(400,"Повтор результата в очереди.");
             return await state.Write(async db=>
@@ -45,15 +46,20 @@ public static class ElectronicsRoutes
                     var existing=await db.ElectronicsReports.SingleOrDefaultAsync(r=>r.StudentId==session.ProfileId&&r.Id==report.Id);
                     if(existing is not null)
                     {
-                        if(existing.AssignmentId!=assignmentKey||existing.ClientId!=client||existing.ProjectHash!=report.Hash||existing.Kind!=report.Kind||existing.Detail!=report.Detail) throw new HttpFault(409,"Этот номер результата уже использован для другой операции.");
+                        if(existing.AssignmentId!=assignmentKey||existing.ClientId!=client||existing.ProjectHash!=report.Hash||existing.Kind!=report.Kind||existing.Detail!=report.Detail||existing.ExpectedAssignmentVersion!=report.ExpectedAssignmentVersion) throw new HttpFault(409,"Этот номер результата уже использован для другой операции.");
                         continue;
                     }
                     if (report.Kind == "submitted" && assignment is not null)
                     {
                         if (!assignment.CanSubmit) throw new HttpFault(409,"Эта работа уже отправлена. Новая сдача возможна после разрешения преподавателя.");
+                        // Old first submissions may omit the version; every resubmission must bind
+                        // to the permission visible when it was queued, never to a later grant.
+                        if ((report.ExpectedAssignmentVersion ?? 1) != assignment.StateVersion) throw new HttpFault(409,"Эта сдача создана до последнего решения преподавателя. Сохранённая версия остаётся локально; откройте результат и отправьте новую сдачу.");
                         assignment.State = "awaiting-review"; assignment.CanSubmit = false; assignment.StateVersion++;
                     }
-                    db.ElectronicsReports.Add(new(){StudentId=session.ProfileId,ClientId=client,AssignmentId=assignmentKey,Id=report.Id,Kind=report.Kind,ProjectJson=report.ProjectJson,ProjectHash=report.Hash,Detail=report.Detail,Name=report.Name,At=ServerState.Now});
+                    var at=ServerState.Now;
+                    if(report.Kind=="submitted" && assignment is not null) at=Math.Max(at,1+(await db.ElectronicsReports.Where(r=>r.AssignmentId==assignmentKey&&r.Kind=="submitted").MaxAsync(r=>(long?)r.At)??0));
+                    db.ElectronicsReports.Add(new(){StudentId=session.ProfileId,ClientId=client,AssignmentId=assignmentKey,Id=report.Id,Kind=report.Kind,ProjectJson=report.ProjectJson,ProjectHash=report.Hash,Detail=report.Detail,Name=report.Name,At=at,ExpectedAssignmentVersion=report.ExpectedAssignmentVersion});
                 }
                 return new ElectronicsSyncReceipt(work.Sequence,work.UpdatedAt,reports.Select(r=>r.Id).ToArray(),assignment?.State,assignment?.CanSubmit,assignment?.StateVersion);
             });

@@ -157,7 +157,7 @@ public static class ElectronicsAssignments
             {
                 var assignment = await Own(db, session, id);
                 var issued = await db.LessonElectronicsTasks.FindAsync(assignment.LessonId, assignment.TaskId) ?? throw new HttpFault(404, "Выдача не найдена.");
-                return new ElectronicsAssignmentStatus(id, assignment.State, assignment.CanSubmit, !issued.Withdrawn, assignment.StateVersion);
+                return new ElectronicsAssignmentStatus(id, assignment.State, assignment.CanSubmit, !issued.Withdrawn, assignment.StateVersion, await ElectronicsReviews.Latest(db, id));
             });
         });
     }

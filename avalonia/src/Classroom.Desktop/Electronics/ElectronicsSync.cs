@@ -25,6 +25,22 @@ public sealed class ElectronicsSync : IDisposable
     volatile bool busy,disposed,lastFailure;
     public bool Pending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
     public bool PendingSubmission {get{lock(stateGate)return state.Reports.Any(r=>r.Kind=="submitted");}}
+    public bool HasStaleSubmission(int currentVersion)
+    {
+        lock(stateGate) return state.Reports.Any(r => r.Kind == "submitted" && (r.ExpectedAssignmentVersion ?? 1) != currentVersion);
+    }
+    // Called only after the pupil explicitly chooses to create a new submission.
+    // Preserve the unacknowledged intent separately; never rewrite its UUID/version.
+    public void ArchiveStaleSubmissions(int currentVersion)
+    {
+        lock(stateGate)
+        {
+            var stale = state.Reports.Where(r => r.Kind == "submitted" && (r.ExpectedAssignmentVersion ?? 1) != currentVersion).ToArray();
+            if (stale.Length == 0) return;
+            File.WriteAllText(path + ".superseded-" + Guid.NewGuid().ToString("N") + ".json", Wire.Write(new { state.ClientId, state.AssignmentId, Reports = stale }));
+            state.Reports.RemoveAll(r => stale.Any(s => s.Id == r.Id)); Persist();
+        }
+    }
     public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null)
     {
         this.api=api; this.path=path; this.status=status; this.receipt=receipt;
@@ -37,7 +53,7 @@ public sealed class ElectronicsSync : IDisposable
                 if(state.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходная очередь сохранена отдельно.");
                 if(!Guid.TryParseExact(state.ClientId,"N",out _)||state.Sequence<0||state.Reports.Count>100) throw new InvalidDataException("Некорректная очередь результатов.");
                 if(state.ProjectJson.Length>0) CircuitProject.Parse(state.ProjectJson);
-                foreach(var report in state.Reports) { CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000) throw new InvalidDataException("Некорректный отчёт."); }
+                foreach(var report in state.Reports) { CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт."); }
             }
         }
         catch(Exception e) when(e is IOException or InvalidDataException or System.Text.Json.JsonException)
@@ -61,7 +77,7 @@ public sealed class ElectronicsSync : IDisposable
         Persist(); if(Pending) status("Ожидает передачи преподавателю…");
         }
     }
-    public void Record(string kind,string json,string detail="")
+    public void Record(string kind,string json,string detail="",int? expectedAssignmentVersion=null)
     {
         lock(stateGate)
         {
@@ -70,7 +86,7 @@ public sealed class ElectronicsSync : IDisposable
         if(state.AssignmentId is not null && kind=="submitted" && state.Reports.Any(r=>r.Kind=="submitted")) return;
         if(state.Reports.Count>=100 || state.Reports.Sum(r=>r.ProjectJson.Length)+(long)json.Length>16_000_000) throw new InvalidDataException("Очередь результатов заполнена. Подключитесь к преподавателю и повторите отправку; локальная схема сохранена.");
         var explanation = detail.Length>16000 ? detail[..15900]+"\n[Сообщение сокращено. Полный текст сохранён в приложении ученика.]" : detail;
-        state.Reports.Add(new(Guid.NewGuid().ToString("N"),kind,json,explanation)); Persist(); status("Результат сохранён локально и ожидает передачи.");
+        state.Reports.Add(new(Guid.NewGuid().ToString("N"),kind,json,explanation,expectedAssignmentVersion)); Persist(); status("Результат сохранён локально и ожидает передачи.");
         }
     }
     public async Task<bool> Flush()

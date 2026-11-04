@@ -47,9 +47,13 @@ internal sealed class LiveClassroom : IAsyncDisposable
             var path = Path.Combine(directory, "connection.json");
             if (File.Exists(path))
             {
-                var api = new ClassroomApi(Wire.Read<ConnectionSettings>(await File.ReadAllTextAsync(path)));
-                try { await api.Get<StatusDto>("status"); Admin = api; break; }
-                catch (HttpRequestException) { api.Dispose(); }
+                ClassroomApi? api = null;
+                try
+                {
+                    api = new ClassroomApi(Wire.Read<ConnectionSettings>(await File.ReadAllTextAsync(path)));
+                    await api.Get<StatusDto>("status"); Admin = api; break;
+                }
+                catch (Exception e) when (e is HttpRequestException or IOException or JsonException) { api?.Dispose(); }
             }
             await Task.Delay(100);
         }

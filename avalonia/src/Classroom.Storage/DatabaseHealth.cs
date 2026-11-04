@@ -154,8 +154,23 @@ public static class DatabaseHealth
         {
             ElectronicOwner(row.AssignmentId, row.StudentId, row.At);
             var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);
-            if (row.At < 1 || !profiles.Any(p=>p.Id==row.StudentId&&p.Role=="student") || !Guid.TryParse(row.Id,out _) || !Guid.TryParse(row.ClientId,out _) || !ElectronicsProjectFormat.ReportKinds.Contains(row.Kind) || row.Detail.Length > 16000 || metadata.Name != row.Name || row.ProjectHash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row.ProjectJson))))
+            if (row.At < 1 || row.ExpectedAssignmentVersion is < 1 || !profiles.Any(p=>p.Id==row.StudentId&&p.Role=="student") || !Guid.TryParse(row.Id,out _) || !Guid.TryParse(row.ClientId,out _) || !ElectronicsProjectFormat.ReportKinds.Contains(row.Kind) || row.Detail.Length > 16000 || metadata.Name != row.Name || row.ProjectHash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(row.ProjectJson))))
                 throw new InvalidDataException("Повреждён результат по электронике.");
+        }
+        foreach (var history in db.ElectronicsReviews.AsNoTracking().ToArray().GroupBy(r => new { r.StudentId, r.ReportId }))
+        {
+            var report = db.ElectronicsReports.AsNoTracking().SingleOrDefault(r => r.StudentId == history.Key.StudentId && r.Id == history.Key.ReportId);
+            string? previous = null; var sequence = 0;
+            foreach (var review in history.OrderBy(r => r.Sequence))
+            {
+                if (report?.Kind != "submitted" || review.At < report.At || review.Sequence != ++sequence || review.PreviousReviewId != previous ||
+                    !Guid.TryParseExact(review.Id, "N", out _) || !profiles.Any(p => p.Id == review.TeacherId && p.Role == "teacher") ||
+                    review.Action is not ("accepted" or "changes-requested" or "rejected" or "allow-resubmit") || review.Comment.Length > 8000 ||
+                    review.Grade is < 1 or > 5 || review.Action is "accepted" or "rejected" && review.Grade is null ||
+                    review.Action == "allow-resubmit" && review.Grade is not null || review.RequestHash.Length != 64 || review.RequestHash.Any(c => !Uri.IsHexDigit(c)))
+                    throw new InvalidDataException("Повреждена история проверки электронной работы.");
+                previous = review.Id;
+            }
         }
     }
 

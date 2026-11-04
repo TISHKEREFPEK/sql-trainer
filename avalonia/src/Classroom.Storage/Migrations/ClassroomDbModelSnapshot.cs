@@ -189,6 +189,9 @@ namespace Classroom.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ExpectedAssignmentVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -212,6 +215,57 @@ namespace Classroom.Storage.Migrations
                     b.HasIndex("StudentId", "At", "Id");
 
                     b.ToTable("ElectronicsReports");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsReviewEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("At")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Comment")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Grade")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PreviousReviewId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReportId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StudentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TeacherId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TeacherId");
+
+                    b.HasIndex("StudentId", "ReportId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("ElectronicsReviews");
                 });
 
             modelBuilder.Entity("Classroom.Storage.ElectronicsTaskEntity", b =>
@@ -833,6 +887,21 @@ namespace Classroom.Storage.Migrations
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()
                         .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsReviewEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TeacherId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ElectronicsReportEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId", "ReportId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

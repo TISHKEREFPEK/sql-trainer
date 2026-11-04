@@ -1,6 +1,6 @@
 namespace Classroom.Contracts;
 
-public record ElectronicsReportRequest(string Id,string Kind,string ProjectJson,string Detail);
+public record ElectronicsReportRequest(string Id,string Kind,string ProjectJson,string Detail,int? ExpectedAssignmentVersion=null);
 public record ElectronicsSyncRequest(string ClientId,long Sequence,string ProjectJson,ElectronicsReportRequest[] Reports,string? AssignmentId=null);
 public record ElectronicsSyncReceipt(long Sequence,long UpdatedAt,string[] ReportIds,string? AssignmentState=null,bool? CanSubmit=null,int? AssignmentVersion=null);
 public record ElectronicsStudentResult(string StudentId,string Login,string? GroupId,int WorkCount,int Submitted,int Compiled,int Errors,long? LastAt,string? LastKind);
@@ -17,4 +17,12 @@ public record ElectronicsSelectionRequest(string[] TaskIds);
 public record ElectronicsSelection(ElectronicsLessonTask[] Tasks);
 public record ElectronicsAssignmentDto(string Id,string LessonId,string TaskId,string Title,string Prompt,int Revision,bool Restricted,string ProjectJson,string State,bool CanSubmit,bool Available=true,int StateVersion=1);
 public record StudentElectronicsWork(string TaskId,string Title,string State,string? AssignmentId,int Revision);
-public record ElectronicsAssignmentStatus(string Id,string State,bool CanSubmit,bool Available,int StateVersion);
+public record ElectronicsAssignmentStatus(string Id,string State,bool CanSubmit,bool Available,int StateVersion,ElectronicsReviewDecision? LatestReview=null);
+
+public record ElectronicsReviewRequest(string Action,string Comment,int? Grade,string? ExpectedReviewId,int? ExpectedAssignmentVersion);
+public record ElectronicsReviewDecision(string Id,int Sequence,string Action,string Comment,int? Grade,long At);
+public record ElectronicsReviewItem(string StudentId,string StudentName,string? GroupId,string GroupName,string ReportId,string? AssignmentId,string? LessonId,string Title,long SubmittedAt,string State,int? Grade);
+public record ElectronicsReviewQueue(ElectronicsReviewItem[] Items,int PendingCount,bool HasMore,int NextOffset);
+public record ElectronicsReviewLesson(string Id,string GroupName,long CreatedAt);
+public record ElectronicsReviewFilters(GroupDto[] Groups,ElectronicsReviewLesson[] Lessons);
+public record ElectronicsReviewDetail(ElectronicsReviewItem Item,string Prompt,string ProjectJson,ElectronicsReviewDecision[] History,bool CanSubmit,int? AssignmentVersion,bool IsLatestSubmission);

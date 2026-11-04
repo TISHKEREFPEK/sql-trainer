@@ -77,21 +77,19 @@ public sealed class HostManager
                     : "Сервер остановился при запуске. Проверьте адрес, порт и доступ к базе.");
             if (File.Exists(path))
             {
-                Connection = Wire.Read<ConnectionSettings>(File.ReadAllText(path));
-                var api = new ClassroomApi(Connection with { Address = $"https://127.0.0.1:{Settings.Port}" });
+                ClassroomApi? api = null;
                 try
                 {
+                    // Existence does not mean the server has finished writing its announcement.
+                    Connection = Wire.Read<ConnectionSettings>(File.ReadAllText(path));
+                    api = new ClassroomApi(Connection with { Address = $"https://127.0.0.1:{Settings.Port}" });
                     await api.Get<StatusDto>("status");
                     ConnectionCode = PairingCode.Format(PairingCode.Create(Wire.Read<PairingAnnouncement>(File.ReadAllText(Path.Combine(DataDirectory, "pairing.json")))));
                     return api;
                 }
-                catch (HttpRequestException)
+                catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or System.Text.Json.JsonException)
                 {
-                    api.Dispose();
-                }
-                catch (TaskCanceledException)
-                {
-                    api.Dispose();
+                    api?.Dispose();
                 }
             }
 

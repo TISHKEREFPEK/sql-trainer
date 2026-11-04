@@ -64,6 +64,10 @@ public sealed class TeacherScreen : UserControl, IDisposable
     readonly TabControl resultPages;
     readonly Electronics.ElectronicsResultsView electronicsResults;
     readonly ElectronicsTaskAuthoring electronicsAuthoring;
+    readonly Electronics.ElectronicsReviewQueueView reviewQueue;
+    readonly Button reviewButton;
+    long? latestSubmission;
+    int previousPendingCount;
     public TeacherScreen(MainWindow owner, ClassroomApi api, HostManager host)
     {
         this.owner = owner;
@@ -73,6 +77,8 @@ public sealed class TeacherScreen : UserControl, IDisposable
         lessonControl = new(owner, api, ShowConnectionCode);
         electronicsResults = new(owner, api);
         electronicsAuthoring = new(owner, api);
+        reviewQueue = new(owner, api);
+        reviewButton = Ui.Button("Проверка схем", () => owner.Safe(OpenReviewQueue));
         students.SelectionChanged += (_, _) =>
         {
         };
@@ -91,7 +97,8 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var results = new TabControl { ItemsSource = new[] {
             new TabItem { Header = "Статистика SQL", Content = Ui.Card(learning) },
             new TabItem { Header = "Журнал SQL", Content = Reports() },
-            new TabItem { Header = "Электроника", Content = electronicsResults }
+            new TabItem { Header = "Электроника", Content = electronicsResults },
+            new TabItem { Header = "Проверка схем", Content = reviewQueue }
         }};
         resultPages = results;
         var authoringPages = new TabControl { ItemsSource = new[] {
@@ -105,7 +112,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         results.SelectionChanged += async (_, e) =>
         {
             if (e.Source != results) return;
-            await owner.Safe(async () => { if (results.SelectedIndex == 0) await learning.Refresh(); else if (results.SelectedIndex == 2) await electronicsResults.Load(); });
+            await owner.Safe(async () => { if (results.SelectedIndex == 0) await learning.Refresh(); else if (results.SelectedIndex == 2) await electronicsResults.Load(); else if (results.SelectedIndex == 3) await reviewQueue.Load(); });
         };
         tabs = new TabControl
         {
@@ -143,7 +150,11 @@ public sealed class TeacherScreen : UserControl, IDisposable
         connectionPage = Ui.Card(Ui.Scroll(Ui.Stack(Ui.Button("Назад к SQL", ShowWorkspace), new ConnectionCodeView(host.ConnectionCode, host.Settings.Address == "127.0.0.1"))));
         connectionPage.Margin = new Thickness(12);
         connectionPage.IsVisible = false;
-        var pages = new Grid();
+        var pages = new Grid { RowDefinitions = new("Auto,*") };
+        reviewButton.Margin = new Thickness(12, 8, 12, 0);
+        reviewButton.HorizontalAlignment = HorizontalAlignment.Left;
+        pages.Children.Add(reviewButton);
+        Grid.SetRow(tabs, 1); Grid.SetRow(connectionPage, 1);
         pages.Children.Add(tabs);
         pages.Children.Add(connectionPage);
         Content = pages;
@@ -170,6 +181,14 @@ public sealed class TeacherScreen : UserControl, IDisposable
                 refreshing = false;
             }
         };
+    }
+
+    async Task OpenReviewQueue()
+    {
+        await ShowWorkspace();
+        tabs.SelectedIndex = 3;
+        resultPages.SelectedIndex = 3;
+        await reviewQueue.Load();
     }
 
     public async Task Load()
@@ -474,6 +493,13 @@ public sealed class TeacherScreen : UserControl, IDisposable
         if (disposed)
             return;
         await lessonControl.Refresh(availableGroups: data.Groups, availableTasks: data.Tasks);
+        var queue = await api.Get<ElectronicsReviewQueue>("teacher/reviews/electronics");
+        if (disposed) return;
+        reviewButton.Content = $"Проверка схем ({queue.PendingCount})";
+        var newest = queue.Items.Select(i => i.SubmittedAt).DefaultIfEmpty(0).Max();
+        if (latestSubmission is { } previous && (newest > previous || queue.PendingCount > previousPendingCount)) owner.Message("Поступила схема на проверку.");
+        latestSubmission = Math.Max(latestSubmission ?? 0, newest);
+        previousPendingCount = queue.PendingCount;
         RenderOverview(data, updateEditorList);
     }
 
@@ -638,6 +664,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         generation++;
         poll.Stop();
         electronicsResults.Dispose();
+        reviewQueue.Dispose();
     }
 
     sealed record Choice(string Id, string Label)

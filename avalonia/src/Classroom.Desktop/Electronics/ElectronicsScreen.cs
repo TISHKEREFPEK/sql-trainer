@@ -29,6 +29,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     public bool AssignmentAvailable => assignment?.Available ?? true;
     readonly ElectronicsResultsView? resultsView;
     readonly TextBlock syncStatus = Ui.Text("",12);
+    readonly TextBlock reviewStatus = Ui.Text("",13);
     CircuitProject project = CircuitProject.Blink();
     readonly Canvas canvas = new() { Width = 1800, Height = 1200, Background = Brushes.WhiteSmoke };
     readonly StackPanel properties = Ui.Stack();
@@ -114,14 +115,19 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var mainActions=Ui.Row();
         if (classroom is not null && !teacher)
         {
-            submitButton = Ui.Button(assignment is null ? "Отправить преподавателю" : "Отправить на проверку", async () =>
+            submitButton = Ui.Button(assignment is null ? "Отправить преподавателю" : "Отправить на проверку", () => owner.Safe(async () =>
             {
             if (this.assignment?.CanSubmit == false) { owner.Message("Работа уже отправлена на проверку."); return; }
+            if (this.assignment is { } current && sync?.HasStaleSubmission(current.StateVersion) == true)
+            {
+                if (!await owner.Confirm("Преподаватель разрешил новую сдачу. Предыдущая неподтверждённая отправка останется в локальном архиве. Отправить текущую версию?")) return;
+                sync.ArchiveStaleSubmissions(current.StateVersion);
+            }
             Save(); if (!Report("submitted",project.Serialize())) return;
             if (this.assignment is not null) submitButton!.IsEnabled = false;
             if (await Synchronize()) owner.Message("Работа отправлена преподавателю.");
             else owner.Error("Работа сохранена локально, но передача пока не завершена. "+syncStatus.Text);
-            });
+            }), CanSend);
             submitButton.IsEnabled = assignment?.CanSubmit ?? true;
             mainActions.Children.Add(submitButton);
         }
@@ -149,7 +155,10 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
             root.RowDefinitions = new("Auto,Auto,*,Auto");
             var statement = Ui.Scroll(Ui.Text(assignment.Prompt)); statement.MaxHeight = 100;
-            var condition = Ui.Card(Ui.Stack(Ui.Text(assignment.Title, 20), statement));
+            reviewStatus.IsVisible = false;
+            reviewStatus.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) reviewStatus.IsVisible = !string.IsNullOrWhiteSpace(reviewStatus.Text); };
+            var review = Ui.Scroll(reviewStatus); review.MaxHeight = 110;
+            var condition = Ui.Card(Ui.Stack(Ui.Text(assignment.Title, 20), statement, review));
             root.Children.Add(condition);
             Grid.SetRow(projectBar, 1); Grid.SetRow(tabs, 2); Grid.SetRow(footer, 3);
         }
@@ -195,14 +204,17 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         if (assignment?.Id != value.Id || value.StateVersion < assignment.StateVersion) return;
         assignment = assignment with { State = value.State, CanSubmit = value.CanSubmit, Available = value.Available, StateVersion = value.StateVersion };
+        reviewStatus.Text = value.LatestReview is { } review ? $"{ElectronicsReviewLabels.State(review.Action)}{(review.Grade is { } grade ? $" · Оценка: {grade}" : "")} · {ElectronicsLabels.Date(review.At)}\n{review.Comment}" : "";
         UpdateSubmit();
     }
     void UpdateSubmit()
     {
         if (submitButton is null || assignment is null) return;
-        submitButton.IsEnabled = assignment.CanSubmit && sync?.PendingSubmission != true;
-        submitButton.Content = sync?.PendingSubmission == true ? "Ожидает передачи" : assignment.CanSubmit ? "Отправить на проверку" : "Ожидает проверки";
+        var stale = assignment.CanSubmit && sync?.HasStaleSubmission(assignment.StateVersion) == true;
+        submitButton.IsEnabled = CanSend();
+        submitButton.Content = stale ? "Отправить новую сдачу" : sync?.PendingSubmission == true ? "Ожидает передачи" : assignment.CanSubmit ? "Отправить на проверку" : ElectronicsReviewLabels.State(assignment.State);
     }
+    bool CanSend() => assignment?.CanSubmit != false && (sync?.PendingSubmission != true || assignment is { } current && sync.HasStaleSubmission(current.StateVersion));
 
     Task Perform(Action action)
     {
@@ -230,7 +242,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     bool Report(string kind,string json,string detail="")
     {
         if(sync is null) return false;
-        try { sync.Record(kind,json,detail); return true; }
+        try { sync.Record(kind,json,detail,kind == "submitted" ? assignment?.StateVersion : null); return true; }
         catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error(e.Message); return false; }
     }
     public async Task<bool> Synchronize() { Save(); return sync is null || await sync.Drain(); }

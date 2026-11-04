@@ -11,6 +11,7 @@ public sealed class ProfileEntity
 {
     public string Id { get; set; } = "";
     public string Login { get; set; } = "";
+    public string? FullName { get; set; }
     public string PasswordHash { get; set; } = "";
     public string Role { get; set; } = "student";
     public string? GroupId { get; set; }
@@ -138,11 +139,15 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<AttemptEntity> Attempts => Set<AttemptEntity>();
     public DbSet<OperationEntity> Operations => Set<OperationEntity>();
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
+    public DbSet<LessonSessionEntity> LessonSessions => Set<LessonSessionEntity>();
+    public DbSet<LessonParticipantEntity> LessonParticipants => Set<LessonParticipantEntity>();
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        foreach (var entry in ChangeTracker.Entries<LessonSessionEntity>().Where(e => e.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.Validate();
         foreach (var entry in ChangeTracker.Entries<TaskEntity>().Where(e => e.State is EntityState.Added or EntityState.Modified).ToArray())
         {
             var task = entry.Entity;
@@ -187,6 +192,15 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<OperationEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<OperationEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ImportEntity>().HasKey(x => x.Hash);
+        model.Entity<ProfileEntity>().Property(x => x.FullName).HasMaxLength(200);
+        model.Entity<LessonSessionEntity>().HasKey(x => x.Id);
+        // A shared teacher host has at most one unfinished lesson, including preparation.
+        model.Entity<LessonSessionEntity>().HasIndex(x => x.TeacherId).IsUnique().HasFilter("\"EndedAt\" IS NULL");
+        model.Entity<LessonSessionEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.TeacherId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSessionEntity>().HasOne<GroupEntity>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<LessonParticipantEntity>().HasKey(x => new { x.SessionId, x.StudentId });
+        model.Entity<LessonParticipantEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonParticipantEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
         model.Entity<ElectronicsWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });

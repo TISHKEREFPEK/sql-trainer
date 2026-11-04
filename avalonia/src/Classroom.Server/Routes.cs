@@ -336,6 +336,11 @@ public static class Routes
                 var group = await db.Groups.FindAsync(id) ?? throw new HttpFault(404, "Группа не найдена.");
                 foreach (var p in await db.Profiles.Where(p => p.GroupId == id).ToArrayAsync())
                     p.GroupId = null;
+                foreach (var lesson in await db.LessonSessions.Where(s => s.GroupId == id).ToArrayAsync())
+                {
+                    lesson.GroupId = null;
+                    lesson.RegistrationOpen = false;
+                }
                 db.Groups.Remove(group);
                 return new
                 {

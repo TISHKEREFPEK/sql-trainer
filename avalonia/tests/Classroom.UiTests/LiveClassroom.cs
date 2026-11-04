@@ -25,7 +25,7 @@ internal sealed class LiveClassroom : IAsyncDisposable
 
     async Task Initialize()
     {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        var root = new DirectoryInfo(Environment.GetEnvironmentVariable("CLASSROOM_TEST_ROOT") ?? AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Classroom.sln"))) root = root.Parent;
         if (root is null) throw new DirectoryNotFoundException("Classroom.sln");
         var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
@@ -34,9 +34,9 @@ internal sealed class LiveClassroom : IAsyncDisposable
         probe.Start(); var port = ((IPEndPoint)probe.LocalEndpoint).Port; probe.Stop();
         await File.WriteAllTextAsync(Path.Combine(directory, "server-settings.json"), Wire.Write(new ServerSettings("127.0.0.1", port)));
         var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("CLASSROOM_DOTNET") ?? "dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(Path.Combine(root.FullName, $"src/Classroom.Server/bin/{configuration}/net10.0/Classroom.Server.dll"));
+        start.ArgumentList.Add(Environment.GetEnvironmentVariable("CLASSROOM_TEST_SERVER") ?? Path.Combine(root.FullName, $"src/Classroom.Server/bin/{configuration}/net10.0/Classroom.Server.dll"));
         start.Environment["CLASSROOM_DATA"] = directory;
-        start.Environment["CLASSROOM_WORKER"] = Path.Combine(root.FullName, $"src/Classroom.Worker/bin/{configuration}/net10.0/Classroom.Worker.dll");
+        start.Environment["CLASSROOM_WORKER"] = Environment.GetEnvironmentVariable("CLASSROOM_TEST_WORKER") ?? Path.Combine(root.FullName, $"src/Classroom.Worker/bin/{configuration}/net10.0/Classroom.Worker.dll");
         process = Process.Start(start)!;
         process.OutputDataReceived += (_, _) => { }; process.ErrorDataReceived += (_, _) => { };
         process.BeginOutputReadLine(); process.BeginErrorReadLine();

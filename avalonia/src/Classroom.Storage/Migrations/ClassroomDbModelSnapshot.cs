@@ -219,6 +219,89 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("Imports");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.LessonParticipantEntity", b =>
+                {
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GroupNameAtEntry")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("JoinedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("SessionId", "StudentId");
+
+                    b.HasIndex("StudentId");
+
+                    b.ToTable("LessonParticipants");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSessionEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("AllowElectronics")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowSql")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("EndedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("FreePractice")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GroupId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GroupName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("OpenToAllGroups")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("PausedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RegistrationOpen")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TeacherId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupId");
+
+                    b.HasIndex("TeacherId")
+                        .IsUnique()
+                        .HasFilter("\"EndedAt\" IS NULL");
+
+                    b.ToTable("LessonSessions");
+                });
+
             modelBuilder.Entity("Classroom.Storage.OperationEntity", b =>
                 {
                     b.Property<string>("StudentId")
@@ -246,6 +329,10 @@ namespace Classroom.Storage.Migrations
             modelBuilder.Entity("Classroom.Storage.ProfileEntity", b =>
                 {
                     b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FullName")
+                        .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("GroupId")
@@ -407,6 +494,35 @@ namespace Classroom.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("StudentId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonParticipantEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSessionEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.GroupEntity", null)
+                        .WithMany()
+                        .HasForeignKey("GroupId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TeacherId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

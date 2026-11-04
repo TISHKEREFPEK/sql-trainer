@@ -29,6 +29,8 @@ public static class DatabaseHealth
             throw new InvalidDataException("Некорректные профили в резервной копии.");
         foreach (var p in profiles)
         {
+            if (p.FullName is not null && (string.IsNullOrWhiteSpace(p.FullName) || p.FullName.Length > 200 || p.FullName.Any(char.IsControl)))
+                throw new InvalidDataException("Некорректное ФИО ученика.");
             Themes.Validate(Wire.Read<ThemePreference>(p.ThemeJson));
             Themes.ValidatePresets(Wire.Read<ThemePreset[]>(p.PresetsJson));
         }
@@ -58,6 +60,21 @@ public static class DatabaseHealth
         _ = db.Groups.AsNoTracking().ToArray();
         _ = db.Attempts.AsNoTracking().ToArray();
         _ = db.Imports.AsNoTracking().ToArray();
+        var lessons = db.LessonSessions.AsNoTracking().ToArray();
+        foreach (var lesson in lessons)
+        {
+            lesson.Validate();
+            if (!profiles.Any(p => p.Id == lesson.TeacherId && p.Role == "teacher"))
+                throw new InvalidDataException("У занятия отсутствует преподаватель.");
+        }
+        foreach (var member in db.LessonParticipants.AsNoTracking())
+        {
+            var lesson = lessons.SingleOrDefault(s => s.Id == member.SessionId);
+            if (lesson is null || !profiles.Any(p => p.Id == member.StudentId && p.Role == "student") ||
+                member.JoinedAt < (lesson.StartedAt ?? lesson.CreatedAt) || member.LastSeenAt < member.JoinedAt ||
+                member.GroupNameAtEntry.Length > 200)
+                throw new InvalidDataException("Некорректный участник занятия.");
+        }
         foreach (var row in db.ElectronicsWorks.AsNoTracking())
         {
             var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);

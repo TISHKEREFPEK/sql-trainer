@@ -8,6 +8,7 @@ public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds)
 
 public sealed class FirmwareRunner : IDisposable
 {
+    static readonly SemaphoreSlim compilerSlots = new(2, 2);
     Process? process;
     static string Runtime
     {
@@ -22,36 +23,43 @@ public sealed class FirmwareRunner : IDisposable
             return root is null ? deployed : Path.Combine(root.FullName, "artifacts", "electronics-runtime");
         }
     }
-    public static bool Available => File.Exists(Path.Combine(Runtime, "arduino-cli.exe")) && File.Exists(Path.Combine(Runtime, "node.exe")) && Directory.Exists(Path.Combine(Runtime, "data", "packages", "arduino", "hardware", "avr", "1.8.6"));
+    public static bool Available => File.Exists(Path.Combine(Runtime, "arduino-cli.exe")) && File.Exists(Path.Combine(Runtime, "node.exe")) &&
+        File.Exists(Path.Combine(Runtime, "sandbox-avr", "bin", "avr-g++.exe")) && File.Exists(Path.Combine(Runtime, "sandbox-avr", "ctags.exe")) &&
+        Directory.Exists(Path.Combine(Runtime, "data", "packages", "arduino", "hardware", "avr", "1.8.6"));
 
     public static async Task<string> Compile(string code, CancellationToken cancellation)
     {
         if (!Available) throw new IOException("Не установлен автономный комплект Arduino Uno. Подготовьте его командой avalonia/scripts/prepare-electronics.ps1; при работе интернет не требуется.");
+        if (!OperatingSystem.IsWindows()) throw new IOException("Изолированная компиляция требует Windows 10 или новее.");
         var scratch = Path.Combine(Path.GetTempPath(), "classroom-firmware-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(scratch);
+        await compilerSlots.WaitAsync(cancellation);
         try
         {
+            var runtime = await CompilerRuntime.Prepare(Runtime, cancellation);
+            Directory.CreateDirectory(scratch);
             var sketch = Path.Combine(scratch, "sketch"); Directory.CreateDirectory(sketch);
             await File.WriteAllTextAsync(Path.Combine(sketch, "sketch.ino"), code, cancellation);
             var output = Path.Combine(scratch, "compiled");
-            var start = new ProcessStartInfo(Path.Combine(Runtime, "arduino-cli.exe")) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var arg in new[] { "compile", "--fqbn", "arduino:avr:uno", "--output-dir", output, "--warnings", "all", sketch }) start.ArgumentList.Add(arg);
-            start.Environment["ARDUINO_DIRECTORIES_DATA"] = Path.Combine(Runtime, "data");
-            start.Environment["ARDUINO_DIRECTORIES_DOWNLOADS"] = Path.Combine(Runtime, "downloads");
-            start.Environment["ARDUINO_DIRECTORIES_USER"] = Path.Combine(Runtime, "user");
-            using var compiler = Process.Start(start) ?? throw new IOException("Не удалось запустить компилятор.");
-            var stdout = compiler.StandardOutput.ReadToEndAsync(cancellation); var stderr = compiler.StandardError.ReadToEndAsync(cancellation);
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation); limit.CancelAfter(TimeSpan.FromSeconds(60));
-            try { await compiler.WaitForExitAsync(limit.Token); }
-            catch (OperationCanceledException) { if (!compiler.HasExited) compiler.Kill(true); throw new IOException("Компиляция остановлена: отмена или превышен лимит 60 секунд."); }
-            var log = (await stdout) + "\n" + (await stderr);
-            if (compiler.ExitCode != 0) throw new InvalidDataException("Ошибка компиляции Arduino:\n" + log[..Math.Min(8000, log.Length)]);
+            var settings = new Dictionary<string, string>
+            {
+                ["ARDUINO_DIRECTORIES_DATA"] = Path.Combine(runtime, "data"), ["ARDUINO_DIRECTORIES_DOWNLOADS"] = Path.Combine(scratch, "downloads"),
+                ["ARDUINO_DIRECTORIES_USER"] = Path.Combine(runtime, "user"), ["ARDUINO_BUILD_CACHE_PATH"] = Path.Combine(scratch, "cache")
+            };
+            var config = Path.Combine(scratch, "arduino-cli.yaml");
+            await File.WriteAllTextAsync(config, Wire.Write(new { metrics = new { enabled = false }, updater = new { enable_notification = false } }), cancellation);
+            var args = new[] { "--config-file", config, "--no-color", "compile", "--fqbn", "arduino:avr:uno", "--build-path", Path.Combine(scratch, "build"), "--output-dir", output,
+                "--build-property", "compiler.path=" + Path.Combine(runtime, "sandbox-avr", "bin") + Path.DirectorySeparatorChar,
+                "--build-property", "runtime.tools.ctags.path=" + Path.Combine(runtime, "sandbox-avr"), "--warnings", "all", "--jobs", "2", sketch };
+            var result = await Task.Run(() => OperatingSystem.IsWindows() ? WindowsSandboxProcess.Run(Path.Combine(runtime, "arduino-cli.exe"), args, runtime, scratch, settings, cancellation) : throw new IOException("Изолированная компиляция требует Windows."), cancellation);
+            var log = result.Output + "\n" + result.Error;
+            if (result.ExitCode != 0) throw new InvalidDataException("Ошибка компиляции Arduino:\n" + log[..Math.Min(8000, log.Length)]);
             return await File.ReadAllTextAsync(Path.Combine(output, "sketch.ino.hex"), cancellation);
         }
         finally
         {
             var full = Path.GetFullPath(scratch);
-            if (full.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase) && Path.GetFileName(full).StartsWith("classroom-firmware-", StringComparison.Ordinal) && Directory.Exists(full)) Directory.Delete(full, true);
+            try { if (full.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase) && Path.GetFileName(full).StartsWith("classroom-firmware-", StringComparison.Ordinal) && Directory.Exists(full)) Directory.Delete(full, true); }
+            finally { compilerSlots.Release(); }
         }
     }
 

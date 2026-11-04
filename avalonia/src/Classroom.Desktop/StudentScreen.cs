@@ -239,14 +239,16 @@ public sealed class StudentScreen : UserControl, IDisposable
         editor.SyntaxHighlighting = SqlHighlighting.Create(ThemeManager.Ink(((SolidColorBrush)editor.Background!).Color.ToString()));
     }
 
-    public async Task Load()
+    public async Task Load(string? taskId = null)
     {
         catalogue = await api.Get<CatalogueDto>("catalog");
         UpdateModules();
         poll.Start();
         if (catalogue.Tasks.Length > 0)
-            await Select(catalogue.Tasks.Any(t => t.Id == owner.LastTaskId) ? owner.LastTaskId! : catalogue.Tasks[0].Id);
+            await Select(taskId is not null && catalogue.Tasks.Any(t => t.Id == taskId) ? taskId : catalogue.Tasks.Any(t => t.Id == owner.LastTaskId) ? owner.LastTaskId! : catalogue.Tasks[0].Id);
     }
+
+    internal Task OpenTask(string id) => Select(id);
 
     // Same grouping as main's components/task-navigation.tsx.
     static string Category(CatalogueItem item) => item.Project is not null ? "Проекты" : System.Text.RegularExpressions.Regex.IsMatch(item.Module,@"^\d") ? "Курс" : "Практика";

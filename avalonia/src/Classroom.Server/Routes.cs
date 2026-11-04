@@ -13,6 +13,7 @@ public static class Routes
     {
         var api = app.MapGroup("/api/v1");
         LessonRoutes.Map(api, state);
+        LessonSqlTasks.Map(api, state);
         ElectronicsRoutes.Map(api,state);
         api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
         {
@@ -53,18 +54,11 @@ public static class Routes
             var session = state.Authorize(ctx, "student");
             return await state.Read(async db =>
             {
-                await LessonRoutes.RequireMember(state, db, session);
-                var assigned = await db.Assignments.Where(a => a.StudentId == session.ProfileId).ToArrayAsync();
-                var projects = assigned.Select(a => Catalog.Read(a.Json).Project).Where(p => p is not null).ToHashSet();
-                var assignedIds = assigned.Select(a => a.TaskId).ToHashSet();
-                var items = (await state.Tasks(db)).Select(ServerState.Item).Where(t => t.Project is null || !projects.Contains(t.Project) || assignedIds.Contains(t.Id)).ToDictionary(t => t.Id);
-                foreach (var a in assigned)
-                {
-                    var task = Catalog.Read(a.Json);
-                    items[task.Id] = new(task.Id, task.Title, task.Module, task.Project);
-                }
-
-                return new CatalogueDto(items.Values.ToArray(), await db.Assignments.Where(a => a.StudentId == session.ProfileId && a.CompletedAt != null).Select(a => a.TaskId).ToArrayAsync(), Profile(db, session.ProfileId).LockedUntil);
+                var lesson = await LessonRoutes.RequireMember(state, db, session);
+                var student = Profile(db, session.ProfileId);
+                var available = await LessonSqlTasks.Catalogue(state, db, student, lesson);
+                var ids = available.Tasks.Select(t => t.Id).ToArray();
+                return new CatalogueDto(available.Tasks, await db.Assignments.Where(a => a.StudentId == session.ProfileId && a.CompletedAt != null && ids.Contains(a.TaskId)).Select(a => a.TaskId).ToArrayAsync(), student.LockedUntil, available.Required, lesson.FreePractice);
             });
         });
         api.MapGet("/glossary", (HttpContext ctx) =>
@@ -82,7 +76,7 @@ public static class Routes
             return await state.Write(async db =>
             {
                 await LessonRoutes.RequireMember(state, db, session, saving: true);
-                var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
+                var row = await state.Assignment(db, Profile(db, session.ProfileId), id, session.LessonId, retainedSave: true);
                 row.Draft = input.Code;
                 row.LastActivityAt = ServerState.Now;
                 return new
@@ -101,7 +95,7 @@ public static class Routes
             return await state.Write(async db =>
             {
                 var lesson = await LessonRoutes.RequireMember(state, db, session, saving: true);
-                var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
+                var row = await state.Assignment(db, Profile(db, session.ProfileId), id, session.LessonId, retainedSave: true);
                 var receiptId = "activity:" + input.EventId;
                 var hash = id + ":" + input.Seconds;
                 if (input.EventId is not null)
@@ -139,7 +133,7 @@ public static class Routes
                 await LessonRoutes.RequireWork(state, db, session, "sql");
                 if (student.LockedUntil > ServerState.Now)
                     throw new HttpFault(423, "Работа приостановлена.");
-                var row = await state.Assignment(db, student, id);
+                var row = await state.Assignment(db, student, id, session.LessonId);
                 var task = Catalog.Read(row.Json);
                 var times = Wire.Read<long[]>(row.HintsJson);
                 if (input.Index < 0 || input.Index >= task.Hints.Length)
@@ -161,7 +155,7 @@ public static class Routes
             return await state.Write(async db =>
             {
                 var student = Profile(db, session.ProfileId);
-                await state.Assignment(db, student, id);
+                await state.Assignment(db, student, id, session.LessonId);
                 var policy = await db.Tasks.FindAsync(id);
                 if (policy?.Restricted == true && student.LockedUntil <= ServerState.Now)
                 {

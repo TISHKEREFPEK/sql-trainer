@@ -14,7 +14,7 @@ public record LoginRequest(string Role, string Login, string Password);
 public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets, LessonDestination? Destination = null);
 public record PasswordRequest(string Password);
 public record CatalogueItem(string Id, string Title, string Module, string? Project);
-public record CatalogueDto(CatalogueItem[] Tasks, string[] Completed, long LockedUntil);
+public record CatalogueDto(CatalogueItem[] Tasks, string[] Completed, long LockedUntil, string[]? Required = null, bool FreePractice = true);
 // This type deliberately cannot hold solution, seed, snapshots or unopened hints.
 public record StudentTask(string Id, string Title, string Module, string Prompt, string Concept, string Example, string Starter, string[] Terms, Dictionary<string, string> Definitions, string? Project, int VariantIndex, int Revision, bool Restricted, string[] OpenedHints, long[] HintOpenedAt, int HintTotal, string Draft, bool Completed, long LockedUntil);
 public record HintRequest(int Index);

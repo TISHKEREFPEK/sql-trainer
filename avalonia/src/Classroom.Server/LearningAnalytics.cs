@@ -77,7 +77,8 @@ public static class LearningAnalytics
             return state.Write(async db =>
             {
                 var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(404, "Профиль не найден.");
-                var a = await state.Assignment(db, student, id);
+                await LessonRoutes.RequireMember(state, db, session, saving: true);
+                var a = await state.Assignment(db, student, id, session.LessonId, retainedSave: true);
                 var eventId = student.Id + ":" + input.EventId;
                 var receipt = await db.Operations.FindAsync(student.Id, "event:" + input.EventId);
                 var hash = id + ":" + input.Action;

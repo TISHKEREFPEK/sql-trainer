@@ -29,7 +29,7 @@ public static class LessonRoutes
     static LessonView View(ServerState state, LessonSessionEntity row, int members) => new(row.Id, row.GroupId, row.GroupName, row.State,
         row.CreatedAt, row.StartedAt, row.PausedAt, row.EndedAt, row.AllowSql, row.AllowElectronics, row.AdmissionOpen,
         row.OpenToAllGroups, row.RegistrationOpen, row.FreePractice, Active(state, row), members);
-    static async Task<LessonView> View(ServerState state, ClassroomDb db, LessonSessionEntity row) => View(state, row, await db.LessonParticipants.CountAsync(p => p.SessionId == row.Id));
+    public static async Task<LessonView> View(ServerState state, ClassroomDb db, LessonSessionEntity row) => View(state, row, await db.LessonParticipants.CountAsync(p => p.SessionId == row.Id));
     static async Task Policy(ClassroomDb db, LessonSessionEntity row, LessonPolicyRequest input)
     {
         if (!input.AllowSql && !input.AllowElectronics) throw new HttpFault(400, "Разрешите SQL, электронику или оба направления.");

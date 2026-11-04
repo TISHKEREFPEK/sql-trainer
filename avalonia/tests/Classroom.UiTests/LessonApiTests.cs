@@ -28,6 +28,7 @@ public sealed class LessonApiTests
         var policy = new LessonPolicyRequest(first.Id);
         var request = new CreateLessonRequest(Guid.NewGuid().ToString("N"), policy);
         var lesson = await f.Admin.Post<LessonView>("teacher/lessons", request);
+        await f.Admin.Put<LessonSqlSelection>($"teacher/lessons/{lesson.Id}/sql-tasks", new LessonSqlSelectionRequest(["database"]));
         Assert.Equal(lesson.Id, (await f.Admin.Post<LessonView>("teacher/lessons", request)).Id);
         Assert.Equal(409, (await Assert.ThrowsAsync<ApiException>(() => f.Admin.Post<LessonView>("teacher/lessons", request with { Id = Guid.NewGuid().ToString("N") }))).Status);
         Assert.Empty((await anonymous.Get<AdmissionDto>("admission")).Groups);

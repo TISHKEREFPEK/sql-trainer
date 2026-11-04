@@ -463,7 +463,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var data = await api.Get<TeacherOverview>("teacher/overview");
         if (disposed)
             return;
-        await lessonControl.Refresh(availableGroups: data.Groups);
+        await lessonControl.Refresh(availableGroups: data.Groups, availableTasks: data.Tasks);
         RenderOverview(data, updateEditorList);
     }
 

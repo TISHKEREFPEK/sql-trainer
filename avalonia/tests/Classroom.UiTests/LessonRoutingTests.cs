@@ -47,7 +47,12 @@ public sealed class LessonRoutingTests
             await ShowLogin(student,fixture.Student);
             student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.PasswordChar=='●'&&t.IsEffectivelyVisible).Text="synthetic-student-password";
             student.GetVisualDescendants().OfType<ComboBox>().Single(c=>c.Items.OfType<StudentChoice>().Any()).SelectedIndex=0;
-            Click(student,"Войти"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentScreen>().Any());
+            Click(student,"Войти"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentHomeControl>().Any());
+            await WaitFor(()=>student.GetVisualDescendants().OfType<StudentHomeControl>().Single().GetVisualDescendants().OfType<TextBlock>().Any(t=>t.Text=="Моё занятие"));
+            student.UpdateLayout();
+            var homeOutput=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??AppContext.BaseDirectory; Directory.CreateDirectory(homeOutput);
+            using(var frame=student.CaptureRenderedFrame()) frame!.Save(Path.Combine(homeOutput,"student-home-1320.png"));
+            Click(student,"SQL"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentScreen>().Any());
             Click(student,"Электроника"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
             Assert.DoesNotContain(student.GetVisualDescendants(),v=>v is StudentScreen);
             var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;

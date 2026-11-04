@@ -29,6 +29,7 @@ public sealed class MainWindow : Window
     IDisposable? screen;
     StudentScreen? student;
     ElectronicsScreen? electronics;
+    StudentHomeControl? studentHome;
     object? pageReturnContent;
     Action? pageCleanup;
     bool pageOpen;
@@ -155,7 +156,7 @@ public sealed class MainWindow : Window
         {
             await action();
         }
-        catch (ApiException e)when (e.Status == 401 && screen is not null)
+        catch (ApiException e)when (e.Status == 401 && (screen is not null || login is not null))
         {
             await Reauthenticate();
         }
@@ -274,6 +275,7 @@ public sealed class MainWindow : Window
         electronics = null;
         screen = null;
         student = null;
+        studentHome = null;
         Protect(false);
         actions.Children.Clear();
         var status = await api!.Get<StatusDto>("status");
@@ -412,11 +414,11 @@ public sealed class MainWindow : Window
             }
             else
             {
-                var lesson = await api.Get<StudentLessonDto>("student/lesson");
                 sqlSubjectButton = Ui.Button("SQL", () => Safe(() => SwitchStudentSubject("sql")));
                 electronicsSubjectButton = Ui.Button("Электроника", () => Safe(() => SwitchStudentSubject("electronics")));
                 actions.Children.Insert(0, sqlSubjectButton); actions.Children.Insert(1, electronicsSubjectButton);
-                await EnterLesson(new LessonDestination(lesson.Lesson?.AllowSql == true ? "sql" : "electronics"));
+                actions.Children.Insert(0, Ui.Button("Моё занятие", () => Safe(ShowStudentHome)));
+                await ShowStudentHome();
                 await RefreshLessonPermission(); lessonPoll.Start();
             }
 
@@ -450,7 +452,7 @@ public sealed class MainWindow : Window
         };
     }
 
-    internal async Task EnterLesson(LessonDestination? destination)
+    internal async Task EnterLesson(LessonDestination? destination, string? taskId = null)
     {
         if (destination?.StandId == "electronics")
         {
@@ -467,11 +469,12 @@ public sealed class MainWindow : Window
         student ??= new(this, api!);
         screen = student;
         body.Content = student;
-        if (first) await student!.Load();
+        if (first) await student!.Load(taskId);
+        else if (taskId is not null) await student.OpenTask(taskId);
         Protect(student.Restricted);
     }
 
-    async Task SwitchStudentSubject(string subject)
+    async Task SwitchStudentSubject(string subject, string? taskId = null)
     {
         if (api is null) return;
         var state = await api.Get<StudentLessonDto>("student/lesson");
@@ -479,8 +482,18 @@ public sealed class MainWindow : Window
         { Error(state.Message.Length > 0 ? state.Message : "Преподаватель не разрешил это направление."); return; }
         if (student is not null) await student.SaveDraft();
         electronics?.Suspend(); ClosePage(false);
-        await EnterLesson(new LessonDestination(subject));
+        await EnterLesson(new LessonDestination(subject), taskId);
         await RefreshLessonPermission();
+    }
+
+    async Task ShowStudentHome()
+    {
+        if (api is null) return;
+        if (student is not null) await student.SaveDraft();
+        electronics?.Suspend(); ClosePage(false); Protect(false);
+        studentHome ??= new(this, api, (subject, id) => SwitchStudentSubject(subject, id));
+        body.Content = studentHome;
+        await studentHome.Refresh();
     }
 
     async Task RefreshLessonPermission()
@@ -491,6 +504,10 @@ public sealed class MainWindow : Window
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
         var currentAllowed = screen is ElectronicsScreen ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
         var canWork = lesson.CanWork && currentAllowed;
+        if (body.Content is StudentHomeControl home)
+        {
+            body.IsEnabled = true; lessonBlock.IsVisible = false; await home.Refresh(); return;
+        }
         var wasEnabled = body.IsEnabled;
         body.IsEnabled = canWork;
         lessonBlock.IsVisible = !canWork;

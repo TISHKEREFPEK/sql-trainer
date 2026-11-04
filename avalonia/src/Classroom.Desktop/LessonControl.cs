@@ -21,6 +21,7 @@ public sealed class LessonControl : UserControl
     readonly Button start;
     readonly Button finish;
     readonly Button apply;
+    readonly LessonTaskPicker taskPicker;
     string draftId = Guid.NewGuid().ToString("N");
     LessonView? current;
     bool busy;
@@ -29,9 +30,12 @@ public sealed class LessonControl : UserControl
     public LessonControl(MainWindow owner, ClassroomApi api, Func<Task> connection)
     {
         this.owner = owner; this.api = api;
+        taskPicker = new(owner, api);
         start = Ui.Primary(Ui.Button("Начать занятие", () => Run(async () =>
         {
+            var creating = current is null;
             current ??= await api.Post<LessonView>("teacher/lessons", new CreateLessonRequest(draftId, Policy()));
+            if (creating || current.State == "preparing") await taskPicker.Save(current.Id);
             var action = current.State == "preparing" ? "start" : !current.Activated ? "restore" : current.State == "paused" ? "resume" : "pause";
             current = await api.Post<LessonView>($"teacher/lessons/{current.Id}/{action}");
         })));
@@ -52,6 +56,7 @@ public sealed class LessonControl : UserControl
             Ui.Card(Ui.Stack(status, participants, Ui.Row(start, finish, Ui.Button("Подключить учеников", connection)))),
             Ui.Card(Ui.Stack(Ui.Field("Группа", group), Ui.Row(sql, electronics), admission, allGroups, registration,
                 practice, apply)),
+            taskPicker,
             Ui.Card(Ui.Stack(Ui.Text("Предыдущие занятия", 20), history))));
     }
 
@@ -65,13 +70,14 @@ public sealed class LessonControl : UserControl
         try { await owner.Safe(action); await Refresh(true); }
         finally { busy = false; start.IsEnabled = true; finish.IsEnabled = apply.IsEnabled = current is not null; }
     }
-    public async Task Refresh(bool force = false, GroupDto[]? availableGroups = null)
+    public async Task Refresh(bool force = false, GroupDto[]? availableGroups = null, CatalogueItem[]? availableTasks = null)
     {
         if (busy && !force) return;
         var dashboard = await api.Get<LessonDashboard>("teacher/lessons");
         if (availableGroups is not null) knownGroups = availableGroups;
         var groups = knownGroups;
         var before = current?.Id; current = dashboard.Current;
+        await taskPicker.Refresh(current?.Id, availableTasks);
         if (before is not null && current is null) draftId = Guid.NewGuid().ToString("N");
         var selected = (group.SelectedItem as GroupChoice)?.Id;
         group.ItemsSource = new[] { new GroupChoice("", "Выберите группу") }.Concat(groups.Select(g => new GroupChoice(g.Id, g.Name))).ToArray();

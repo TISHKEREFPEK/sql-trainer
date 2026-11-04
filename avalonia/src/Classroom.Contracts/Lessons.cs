@@ -14,3 +14,8 @@ public record StudentLoginRequest(string GroupId, string StudentId, string Passw
 public record StudentRegistrationRequest(string Id, string FullName, string Password);
 public record StudentNameRequest(string FullName);
 public record StudentLessonDto(LessonView? Lesson, bool CanWork, string Message);
+public record LessonSqlSelectionRequest(string[] TaskIds);
+public record LessonSqlTaskInfo(string Id, string Title, string Module, string? Project, int Revision, long IssuedAt);
+public record LessonSqlSelection(LessonSqlTaskInfo[] Tasks);
+public record StudentLessonWork(string Id, string Title, string Module, string State, int? Variant, int? Revision, long? CompletedAt);
+public record StudentHomeDto(string Name, string Group, LessonView Lesson, StudentLessonWork[] Required);

@@ -305,6 +305,41 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("LessonSessions");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.LessonSqlTaskEntity", b =>
+                {
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TaskId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AlternativesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("IssuedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Withdrawn")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("LessonId", "TaskId");
+
+                    b.HasIndex("TaskId");
+
+                    b.ToTable("LessonSqlTasks");
+                });
+
             modelBuilder.Entity("Classroom.Storage.OperationEntity", b =>
                 {
                     b.Property<string>("StudentId")
@@ -525,6 +560,21 @@ namespace Classroom.Storage.Migrations
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()
                         .HasForeignKey("TeacherId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSqlTaskEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.TaskEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

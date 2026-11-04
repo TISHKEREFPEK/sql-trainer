@@ -141,6 +141,7 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
     public DbSet<LessonSessionEntity> LessonSessions => Set<LessonSessionEntity>();
     public DbSet<LessonParticipantEntity> LessonParticipants => Set<LessonParticipantEntity>();
+    public DbSet<LessonSqlTaskEntity> LessonSqlTasks => Set<LessonSqlTaskEntity>();
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
 
@@ -201,6 +202,9 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<LessonParticipantEntity>().HasKey(x => new { x.SessionId, x.StudentId });
         model.Entity<LessonParticipantEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<LessonParticipantEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonSqlTaskEntity>().HasKey(x => new { x.LessonId, x.TaskId });
+        model.Entity<LessonSqlTaskEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonSqlTaskEntity>().HasOne<TaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
         model.Entity<ElectronicsWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });

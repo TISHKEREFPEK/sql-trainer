@@ -202,12 +202,16 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
         }
     }
 
-    public async Task<AssignmentEntity> Assignment(ClassroomDb db, ProfileEntity student, string taskId)
+    public async Task<AssignmentEntity> Assignment(ClassroomDb db, ProfileEntity student, string taskId, string? lessonId = null, bool retainedSave = false)
     {
+        if (lessonId is not null) await LessonSqlTasks.RequireTask(db, student, lessonId, taskId, retainedSave);
         var saved = await db.Assignments.FindAsync(student.Id, taskId);
         if (saved is not null)
             return saved;
-        var row = await db.Tasks.FindAsync(taskId) ?? throw new HttpFault(404, "Задание не найдено.");
+        var issued = lessonId is null ? [] : await LessonSqlTasks.Issued(db, lessonId);
+        var fixedTask = issued.SingleOrDefault(t => t.TaskId == taskId);
+        var row = fixedTask is null ? await db.Tasks.FindAsync(taskId) ?? throw new HttpFault(404, "Задание не найдено.")
+            : new TaskEntity { Id = fixedTask.TaskId, Json = fixedTask.Json, Revision = fixedTask.Revision };
         if (row.Deleted)
             throw new HttpFault(404, "Задание удалено из каталога.");
         var task = Catalog.Read(row.Json);
@@ -218,7 +222,8 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             row
         }
 
-        : (await Tasks(db)).Where(t => Catalog.Read(t.Json).Project == task.Project).ToArray();
+        : fixedTask is null ? (await Tasks(db)).Where(t => Catalog.Read(t.Json).Project == task.Project).ToArray()
+        : issued.Where(t => Catalog.Read(t.Json).Project == task.Project).Select(t => new TaskEntity { Id = t.TaskId, Json = t.Json, Revision = t.Revision }).ToArray();
         int? pinned = null;
         var nextOrder = 0;
         if (task.Project is not null)
@@ -234,10 +239,14 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             if (await db.Assignments.FindAsync(student.Id, link.Id)is not null)
                 continue;
             var source = Catalog.Read(link.Json);
-            var alternatives = Variants.Create(source);
-            foreach (var edit in await db.Variants.Where(v => v.TaskId == link.Id).ToArrayAsync())
-                if (edit.Index >= 2 && edit.Index - 2 < alternatives.Length)
-                    alternatives[edit.Index - 2] = Catalog.Read(edit.Json);
+            TaskDefinition[] alternatives;
+            if (fixedTask is not null) alternatives = Wire.Read<string[]>(issued.Single(t => t.TaskId == link.Id).AlternativesJson).Select(Catalog.Read).ToArray();
+            else
+            {
+                alternatives = Variants.Create(source);
+                foreach (var edit in await db.Variants.Where(v => v.TaskId == link.Id).ToArrayAsync())
+                    if (edit.Index >= 2 && edit.Index - 2 < alternatives.Length) alternatives[edit.Index - 2] = Catalog.Read(edit.Json);
+            }
             var assigned = Variants.Assign(source, student.Slot, alternatives);
             if (pinned is { } index)
                 assigned = (index == 1 ? source : alternatives.ElementAtOrDefault(index - 2) ?? source)with
@@ -259,7 +268,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             await using var db = Db();
             var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(401, "Войдите в приложение.");
             await LessonRoutes.RequireMember(this, db, session);
-            var assignment = await Assignment(db, student, taskId);
+            var assignment = await Assignment(db, student, taskId, session.LessonId);
             var task = Catalog.Read(assignment.Json);
             var row = await db.Tasks.FindAsync(taskId);
             var times = Wire.Read<long[]>(assignment.HintsJson);
@@ -300,7 +309,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 await LessonRoutes.RequireWork(this, db, session, "sql");
                 if (student.LockedUntil > Now)
                     throw new HttpFault(423, "Работа приостановлена на 30 секунд.");
-                var assignment = await Assignment(db, student, taskId);
+                var assignment = await Assignment(db, student, taskId, session.LessonId);
                 task = Catalog.Read(assignment.Json);
                 if (task.Project is not null)
                 {

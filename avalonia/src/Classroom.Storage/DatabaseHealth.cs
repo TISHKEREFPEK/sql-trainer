@@ -75,6 +75,14 @@ public static class DatabaseHealth
                 member.GroupNameAtEntry.Length > 200)
                 throw new InvalidDataException("Некорректный участник занятия.");
         }
+        foreach (var issued in db.LessonSqlTasks.AsNoTracking())
+        {
+            var lesson = lessons.SingleOrDefault(s => s.Id == issued.LessonId);
+            Task(issued.TaskId, issued.Json);
+            foreach (var alternative in Wire.Read<string[]>(issued.AlternativesJson)) Task(issued.TaskId, alternative);
+            if (lesson is null || issued.IssuedAt < lesson.CreatedAt || issued.Position < 0 || issued.Revision < 1)
+                throw new InvalidDataException("Некорректная выдача задания на занятие.");
+        }
         foreach (var row in db.ElectronicsWorks.AsNoTracking())
         {
             var metadata = ElectronicsProjectFormat.Inspect(row.ProjectJson);

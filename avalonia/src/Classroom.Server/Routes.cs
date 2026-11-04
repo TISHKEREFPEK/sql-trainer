@@ -12,6 +12,7 @@ public static class Routes
     public static void Map(WebApplication app, ServerState state, string dataDir, WorkerRunner worker)
     {
         var api = app.MapGroup("/api/v1");
+        LessonRoutes.Map(api, state);
         ElectronicsRoutes.Map(api,state);
         api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
         {
@@ -52,6 +53,7 @@ public static class Routes
             var session = state.Authorize(ctx, "student");
             return await state.Read(async db =>
             {
+                await LessonRoutes.RequireMember(state, db, session);
                 var assigned = await db.Assignments.Where(a => a.StudentId == session.ProfileId).ToArrayAsync();
                 var projects = assigned.Select(a => Catalog.Read(a.Json).Project).Where(p => p is not null).ToHashSet();
                 var assignedIds = assigned.Select(a => a.TaskId).ToHashSet();
@@ -79,6 +81,7 @@ public static class Routes
                 throw new HttpFault(400, "SQL слишком длинный.");
             return await state.Write(async db =>
             {
+                await LessonRoutes.RequireMember(state, db, session, saving: true);
                 var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
                 row.Draft = input.Code;
                 row.LastActivityAt = ServerState.Now;
@@ -97,6 +100,7 @@ public static class Routes
                 throw new HttpFault(400, "Некорректный номер активности.");
             return await state.Write(async db =>
             {
+                var lesson = await LessonRoutes.RequireMember(state, db, session, saving: true);
                 var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
                 var receiptId = "activity:" + input.EventId;
                 var hash = id + ":" + input.Seconds;
@@ -116,7 +120,7 @@ public static class Routes
                 }
                 // Clamp by elapsed server time: concurrent clients/retries cannot inflate time.
                 var elapsed = row.LastHeartbeatAt is { } at ? Math.Clamp((ServerState.Now - at) / 1000, 0, 30) : Math.Min(2, input.Seconds);
-                if (Profile(db, session.ProfileId).LockedUntil <= ServerState.Now && row.CompletedAt is null)
+                if (state.ActivatedLessonId == lesson.Id && lesson.State == "running" && lesson.AllowSql && Profile(db, session.ProfileId).LockedUntil <= ServerState.Now && row.CompletedAt is null)
                     row.ActiveSeconds += (int)Math.Min(input.Seconds, elapsed);
                 row.LastHeartbeatAt = ServerState.Now;
                 row.LastActivityAt = ServerState.Now;
@@ -132,6 +136,7 @@ public static class Routes
             await state.Write(async db =>
             {
                 var student = Profile(db, session.ProfileId);
+                await LessonRoutes.RequireWork(state, db, session, "sql");
                 if (student.LockedUntil > ServerState.Now)
                     throw new HttpFault(423, "Работа приостановлена.");
                 var row = await state.Assignment(db, student, id);
@@ -340,6 +345,7 @@ public static class Routes
                 {
                     lesson.GroupId = null;
                     lesson.RegistrationOpen = false;
+                    if (!lesson.OpenToAllGroups) lesson.AdmissionOpen = false;
                 }
                 db.Groups.Remove(group);
                 return new
@@ -546,6 +552,7 @@ public static class Routes
                 state.Backups.Restore(name);
                 await state.Initialize();
                 state.Sessions.Clear();
+                state.ActivatedLessonId = null;
                 return new
                 {
                     ok = true,

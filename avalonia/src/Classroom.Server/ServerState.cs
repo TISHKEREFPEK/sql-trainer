@@ -11,7 +11,7 @@ public sealed class HttpFault(int status, string message) : Exception(message)
     public int Status => status;
 }
 
-public record Session(string ProfileId, string Role, long Expires);
+public record Session(string ProfileId, string Role, long Expires, string? LessonId = null);
 public sealed class ServerState(string databasePath, WorkerRunner worker)
 {
     public readonly SemaphoreSlim Gate = new(1, 1);
@@ -23,6 +23,8 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
     public static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public bool HasActiveChecks => !busy.IsEmpty;
     public bool Stopping { get; set; }
+    // Deliberately not restored from disk: after restart the teacher must restore the lesson explicitly.
+    public string? ActivatedLessonId { get; set; }
     LessonDestination lesson = new("sql");
     public LessonDestination Lesson => Volatile.Read(ref lesson);
     public LessonDestination SelectLesson(LessonDestination next)
@@ -111,16 +113,22 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             throw new HttpFault(400, "Проверьте данные входа.");
         if (input.Role == "teacher" && !local)
             throw new HttpFault(403, "Вход преподавателя доступен на его компьютере.");
-        return await Read<LoginDto>(async db =>
+        return await Write<LoginDto>(async db =>
         {
             var login = input.Role == "teacher" ? "teacher" : input.Login.Trim().ToLowerInvariant();
             var profile = await db.Profiles.SingleOrDefaultAsync(p => p.Login == login && p.Role == input.Role);
             if (profile is null || !Passwords.Verify(input.Password, profile.PasswordHash))
                 throw new HttpFault(401, "Неверный логин или пароль.");
-            var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-            Sessions[Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))] = new(profile.Id, profile.Role, Now + 8 * 3600000);
-            return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson), Lesson);
+            var lessonId = profile.Role == "student" ? await LessonRoutes.Join(this, db, profile) : null;
+            return IssueLogin(profile, lessonId);
         });
+    }
+
+    public LoginDto IssueLogin(ProfileEntity profile, string? lessonId)
+    {
+        var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+        Sessions[Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))] = new(profile.Id, profile.Role, Now + 8 * 3600000, lessonId);
+        return new(token, profile.Role, profile.Id, Wire.Read<ThemePreference>(profile.ThemeJson), Wire.Read<ThemePreset[]>(profile.PresetsJson), Lesson);
     }
 
     public async Task<TaskEntity[]> Tasks(ClassroomDb db)
@@ -250,6 +258,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
         {
             await using var db = Db();
             var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(401, "Войдите в приложение.");
+            await LessonRoutes.RequireMember(this, db, session);
             var assignment = await Assignment(db, student, taskId);
             var task = Catalog.Read(assignment.Json);
             var row = await db.Tasks.FindAsync(taskId);
@@ -288,6 +297,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 }
 
                 var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(401, "Войдите в приложение.");
+                await LessonRoutes.RequireWork(this, db, session, "sql");
                 if (student.LockedUntil > Now)
                     throw new HttpFault(423, "Работа приостановлена на 30 секунд.");
                 var assignment = await Assignment(db, student, taskId);

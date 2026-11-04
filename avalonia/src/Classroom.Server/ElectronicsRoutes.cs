@@ -25,6 +25,7 @@ public static class ElectronicsRoutes
             return await state.Write(async db=>
             {
                 var work=await db.ElectronicsWorks.SingleOrDefaultAsync(w=>w.StudentId==session.ProfileId&&w.ClientId==client);
+                await LessonRoutes.RequireMember(state, db, session, saving: true);
                 if(work is not null && (input.Sequence<work.Sequence || input.Sequence==work.Sequence&&hash!=work.ProjectHash)) throw new HttpFault(409,"На сервере есть другая версия этой копии. Локальная схема сохранена; не заменяйте её старой копией.");
                 if(work is null)
                 {

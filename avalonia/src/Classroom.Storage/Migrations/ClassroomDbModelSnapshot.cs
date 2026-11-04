@@ -249,6 +249,9 @@ namespace Classroom.Storage.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AdmissionOpen")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("AllowElectronics")
                         .HasColumnType("INTEGER");
 

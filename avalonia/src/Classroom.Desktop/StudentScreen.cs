@@ -561,6 +561,13 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             await owner.Reauthenticate();
         }
+        catch (ApiException e) when (e.Status == 423)
+        {
+            // The main window explains the class pause/end. Retain pending saves without a false network error.
+            try { await SaveDraft(); }
+            catch (Exception savingError) when (savingError is HttpRequestException or ApiException or TaskCanceledException)
+            { saved.Text = "Черновик остаётся в открытом окне; сохранение повторится после подключения."; }
+        }
         catch (Exception e) when (e is HttpRequestException or ApiException or TaskCanceledException)
         {
             owner.Error("Связь с преподавателем потеряна. Запуск SQL недоступен; черновик остаётся в открытом окне.");

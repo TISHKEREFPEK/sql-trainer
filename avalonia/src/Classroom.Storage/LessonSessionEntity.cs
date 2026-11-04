@@ -13,6 +13,7 @@ public sealed class LessonSessionEntity
     public long? EndedAt { get; set; }
     public bool AllowSql { get; set; } = true;
     public bool AllowElectronics { get; set; }
+    public bool AdmissionOpen { get; set; }
     public bool OpenToAllGroups { get; set; }
     public bool RegistrationOpen { get; set; }
     public bool FreePractice { get; set; }

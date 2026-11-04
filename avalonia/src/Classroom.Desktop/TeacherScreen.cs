@@ -60,12 +60,17 @@ public sealed class TeacherScreen : UserControl, IDisposable
     readonly StackPanel analytics = Ui.Stack();
     readonly ComboBox reportGroup = new();
     readonly LearningStatisticsView learning;
+    readonly LessonControl lessonControl;
+    readonly TabControl resultPages;
+    readonly Electronics.ElectronicsResultsView electronicsResults;
     public TeacherScreen(MainWindow owner, ClassroomApi api, HostManager host)
     {
         this.owner = owner;
         this.api = api;
         this.host = host;
         learning = new(owner, api);
+        lessonControl = new(owner, api, ShowConnectionCode);
+        electronicsResults = new(owner, api);
         students.SelectionChanged += (_, _) =>
         {
         };
@@ -81,13 +86,30 @@ public sealed class TeacherScreen : UserControl, IDisposable
             if (!loading)
                 RenderDocument();
         };
+        var results = new TabControl { ItemsSource = new[] {
+            new TabItem { Header = "Статистика SQL", Content = Ui.Card(learning) },
+            new TabItem { Header = "Журнал SQL", Content = Reports() },
+            new TabItem { Header = "Электроника", Content = electronicsResults }
+        }};
+        resultPages = results;
+        results.SelectionChanged += async (_, e) =>
+        {
+            if (e.Source != results) return;
+            await owner.Safe(async () => { if (results.SelectedIndex == 0) await learning.Refresh(); else if (results.SelectedIndex == 2) await electronicsResults.Load(); });
+        };
         tabs = new TabControl
         {
+            TabStripPlacement = Avalonia.Controls.Dock.Left,
             ItemsSource = new[]
             {
                 new TabItem
                 {
-                    Header = "Ученики и группы",
+                    Header = "Занятие",
+                    Content = lessonControl
+                },
+                new TabItem
+                {
+                    Header = "Группы и ученики",
                     Content = Accounts()
                 },
                 new TabItem
@@ -97,13 +119,8 @@ public sealed class TeacherScreen : UserControl, IDisposable
                 },
                 new TabItem
                 {
-                    Header = "Результаты",
-                    Content = Reports()
-                },
-                new TabItem
-                {
-                    Header = "Статистика",
-                    Content = Ui.Card(learning)
+                    Header = "Работы и результаты",
+                    Content = results
                 },
                 new TabItem
                 {
@@ -446,6 +463,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var data = await api.Get<TeacherOverview>("teacher/overview");
         if (disposed)
             return;
+        await lessonControl.Refresh(availableGroups: data.Groups);
         RenderOverview(data, updateEditorList);
     }
 
@@ -596,9 +614,12 @@ public sealed class TeacherScreen : UserControl, IDisposable
         version.SelectedIndex = 0;
         loading = false;
         RenderDocument();
-        tabs.SelectedIndex = reports ? 2 : 1;
+        tabs.SelectedIndex = reports ? 3 : 2;
         if (reports)
+        {
+            resultPages.SelectedIndex = 1;
             reportTabs.SelectedIndex = 3;
+        }
     }
 
     public void Dispose()
@@ -606,6 +627,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         disposed = true;
         generation++;
         poll.Stop();
+        electronicsResults.Dispose();
     }
 
     sealed record Choice(string Id, string Label)

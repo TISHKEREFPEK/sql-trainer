@@ -96,6 +96,13 @@ public sealed class ClassroomApi : IDisposable
         return result;
     }
 
+    public async Task<LoginDto> LoginStudent(StudentLoginRequest input)
+    {
+        var result = await Post<LoginDto>("student-login", input);
+        Token = result.Token;
+        return result;
+    }
+
     public async Task Logout()
     {
         try

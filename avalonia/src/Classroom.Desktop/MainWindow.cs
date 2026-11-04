@@ -58,6 +58,12 @@ public sealed class MainWindow : Window
     internal string? UnsavedDraft(string id) => unsavedDrafts.GetValueOrDefault(DraftKey(id));
     internal void ForgetDraft(string id) => unsavedDrafts.Remove(DraftKey(id));
     bool discardDraft;
+    DispatcherTimer? admissionPoll;
+    readonly DispatcherTimer lessonPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    bool pollingLesson;
+    Button? sqlSubjectButton, electronicsSubjectButton;
+    readonly TextBlock lessonMessage = Ui.Text("", 20);
+    readonly Border lessonBlock = new() { IsVisible = false, Padding = new Thickness(32), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     TrayIcon? tray;
     public MainWindow(bool teacher) : this(teacher, true)
     {
@@ -97,6 +103,9 @@ public sealed class MainWindow : Window
         var headerBorder=new Border{Child=header,BorderThickness=new Thickness(0,0,0,1)};Ui.BindBrush(headerBorder,Border.BackgroundProperty,"Surface");Ui.BindBrush(headerBorder,Border.BorderBrushProperty,"Line");root.Children.Add(headerBorder);
         Grid.SetRow(body, 1);
         root.Children.Add(body);
+        lessonBlock.Child = lessonMessage;
+        Ui.BindBrush(lessonBlock, Border.BackgroundProperty, "Surface");
+        Grid.SetRow(lessonBlock, 1); root.Children.Add(lessonBlock);
         var messageBorder = new Border
         {
             Child = message,
@@ -107,7 +116,14 @@ public sealed class MainWindow : Window
         Grid.SetRow(notification,1);
         root.Children.Add(notification);
         Content = root;
-        Closed += (_,_) => notification.Dismiss();
+        Closed += (_,_) => { notification.Dismiss(); admissionPoll?.Stop(); lessonPoll.Stop(); };
+        lessonPoll.Tick += async (_, _) =>
+        {
+            if (pollingLesson || teacher || api is null || login is null) return;
+            pollingLesson = true;
+            try { await Safe(RefreshLessonPermission); }
+            finally { pollingLesson = false; }
+        };
         if (initializeOnOpen)
             Opened += async (_, _) => await Safe(Initialize);
         Closing += OnClosing;
@@ -216,6 +232,7 @@ public sealed class MainWindow : Window
     internal void Preview(Control view) => body.Content = view;
     void ShowConnect()
     {
+        admissionPoll?.Stop(); lessonPoll.Stop();
         var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
         var path = Path.Combine(directory, "connection.json");
         state.Status = "";
@@ -248,8 +265,11 @@ public sealed class MainWindow : Window
 
     async Task ShowLogin()
     {
+        admissionPoll?.Stop(); lessonPoll.Stop();
+        body.IsEnabled = true; lessonBlock.IsVisible = false;
         ClosePage(false);
         screen?.Dispose();
+        if (!ReferenceEquals(screen, student)) student?.Dispose();
         electronics?.Dispose();
         electronics = null;
         screen = null;
@@ -258,18 +278,73 @@ public sealed class MainWindow : Window
         actions.Children.Clear();
         var status = await api!.Get<StatusDto>("status");
         var setup = teacher && status.NeedsSetup;
-        var name = Ui.Input();
+        var group = new ComboBox { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var names = new ComboBox { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
+        group.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<GroupDto>((item, _) => Ui.Text(item?.Name ?? ""));
+        names.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<StudentChoice>((item, _) => Ui.Text(item?.Name ?? ""));
+        var admissionMessage = Ui.Text("");
+        var registerName = Ui.Input(); var registerPassword = Ui.Input(); registerPassword.PasswordChar = '●';
+        AdmissionDto? admission = null;
+        var registrationId = Guid.NewGuid().ToString("N");
+        var registrationFields = Ui.Stack(Ui.Text("Регистрация в группе", 18), Ui.Field("ФИО", registerName), Ui.Field("Новый пароль", registerPassword), Ui.Button("Зарегистрироваться", () => Safe(async () =>
+        {
+            var created = await api!.Post<StudentChoice>("student-registration", new StudentRegistrationRequest(registrationId, registerName.Text ?? "", registerPassword.Text ?? ""));
+            registrationId = Guid.NewGuid().ToString("N"); registerPassword.Text = "";
+            group.SelectedItem = group.Items.OfType<GroupDto>().FirstOrDefault(g => g.Id == admission?.RegistrationGroup?.Id);
+            await UpdateNames(created.Id);
+            Message("Учётная запись создана. Выберите своё ФИО и войдите с вашим паролем.");
+        }))) ;
+        registrationFields.IsVisible = false;
+        bool directoryBusy = false;
+        async Task UpdateNames(string? select = null)
+        {
+            if (group.SelectedItem is not GroupDto selected || admission?.AdmissionOpen != true) { names.ItemsSource = Array.Empty<StudentChoice>(); return; }
+            var before = select ?? (names.SelectedItem as StudentChoice)?.Id;
+            var items = await api!.Get<StudentChoice[]>("admission/students?groupId=" + Uri.EscapeDataString(selected.Id));
+            if ((group.SelectedItem as GroupDto)?.Id != selected.Id) return;
+            names.ItemsSource = items;
+            names.SelectedItem = items.FirstOrDefault(n => n.Id == before);
+        }
+        async Task UpdateAdmission()
+        {
+            if (directoryBusy) return;
+            directoryBusy = true;
+            try
+            {
+                admission = await api!.Get<AdmissionDto>("admission"); admissionMessage.Text = admission.Message;
+                var selected = (group.SelectedItem as GroupDto)?.Id;
+                group.ItemsSource = admission.Groups;
+                group.SelectedItem = admission.Groups.FirstOrDefault(g => g.Id == selected) ?? admission.Groups.FirstOrDefault();
+                group.IsEnabled = names.IsEnabled = admission.AdmissionOpen;
+                registrationFields.IsVisible = admission.RegistrationOpen;
+                if (registrationFields.Children[0] is TextBlock label) label.Text = "Регистрация · " + admission.RegistrationGroup?.Name;
+                await UpdateNames();
+            }
+            finally { directoryBusy = false; }
+        }
+        group.SelectionChanged += async (_, _) => { if (!directoryBusy) await Safe(() => UpdateNames()); };
         var password = Ui.Input();
         password.PasswordChar = '●';
         var fields = Ui.Stack(Ui.Text(setup ? "Настройка преподавателя" : teacher ? "Вход преподавателя" : "Вход ученика", 24));
         if (!teacher)
-            fields.Children.Add(Ui.Field("Логин", name));
+        {
+            fields.Children.Add(admissionMessage);
+            fields.Children.Add(Ui.Field("Группа", group));
+            fields.Children.Add(Ui.Field("ФИО", names));
+        }
         fields.Children.Add(Ui.Field("Пароль", password));
         fields.Children.Add(Ui.Primary(Ui.Button(setup ? "Создать пароль" : "Войти", () => Safe(async () =>
         {
             if (setup)
                 await api.Post<JsonElement>("setup", new PasswordRequest(password.Text ?? ""));
-            login = await api.Login(new(teacher ? "teacher" : "student", name.Text ?? "", password.Text ?? ""));
+            if (teacher) login = await api.Login(new("teacher", "", password.Text ?? ""));
+            else
+            {
+                if (group.SelectedItem is not GroupDto selectedGroup || names.SelectedItem is not StudentChoice selectedStudent)
+                { Error("Выберите группу и своё ФИО."); return; }
+                login = await api.LoginStudent(new(selectedGroup.Id, selectedStudent.Id, password.Text ?? ""));
+            }
+            admissionPoll?.Stop();
             password.Text = "";
             notification.Dismiss();
             ThemeManager.Apply(login.Theme);
@@ -337,17 +412,33 @@ public sealed class MainWindow : Window
             }
             else
             {
-                await EnterLesson(login.Destination);
+                var lesson = await api.Get<StudentLessonDto>("student/lesson");
+                sqlSubjectButton = Ui.Button("SQL", () => Safe(() => SwitchStudentSubject("sql")));
+                electronicsSubjectButton = Ui.Button("Электроника", () => Safe(() => SwitchStudentSubject("electronics")));
+                actions.Children.Insert(0, sqlSubjectButton); actions.Children.Insert(1, electronicsSubjectButton);
+                await EnterLesson(new LessonDestination(lesson.Lesson?.AllowSql == true ? "sql" : "electronics"));
+                await RefreshLessonPermission(); lessonPoll.Start();
             }
 
             state.Status = "";
         }))));
         if (!teacher)
+        {
+            fields.Children.Add(registrationFields);
             fields.Children.Add(Ui.Button("Другой преподаватель", () =>
             {
                 ShowConnect();
                 return Task.CompletedTask;
             }));
+            await UpdateAdmission();
+            admissionPoll = new() { Interval = TimeSpan.FromSeconds(2) };
+            admissionPoll.Tick += async (_, _) =>
+            {
+                try { await UpdateAdmission(); }
+                catch (Exception e) when (e is ApiException or HttpRequestException or TaskCanceledException) { admissionMessage.Text = "Нет связи с преподавателем."; }
+            };
+            admissionPoll.Start();
+        }
         if (teacher)
             fields.Children.Add(Ui.Button("Завершить работу", () => Safe(Quit)));
         body.Content = new Border
@@ -363,18 +454,52 @@ public sealed class MainWindow : Window
     {
         if (destination?.StandId == "electronics")
         {
+            Protect(false);
             var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
             var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(api!.Connection.Fingerprint + ":" + login!.Id)));
-            electronics = new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"),api);
+            electronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"),api);
             screen = electronics;
             body.Content = electronics;
             return;
         }
         if (destination?.StandId is not (null or "sql")) throw new InvalidDataException("Этот стенд не поддерживается. Обновите приложение ученика.");
-        student = new(this, api!);
+        var first = student is null;
+        student ??= new(this, api!);
         screen = student;
         body.Content = student;
-        await student!.Load();
+        if (first) await student!.Load();
+        Protect(student.Restricted);
+    }
+
+    async Task SwitchStudentSubject(string subject)
+    {
+        if (api is null) return;
+        var state = await api.Get<StudentLessonDto>("student/lesson");
+        if (!state.CanWork || (subject == "sql" ? state.Lesson?.AllowSql != true : state.Lesson?.AllowElectronics != true))
+        { Error(state.Message.Length > 0 ? state.Message : "Преподаватель не разрешил это направление."); return; }
+        if (student is not null) await student.SaveDraft();
+        electronics?.Suspend(); ClosePage(false);
+        await EnterLesson(new LessonDestination(subject));
+        await RefreshLessonPermission();
+    }
+
+    async Task RefreshLessonPermission()
+    {
+        if (api is null || login is null || teacher) return;
+        var lesson = await api.Get<StudentLessonDto>("student/lesson");
+        if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
+        if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
+        var currentAllowed = screen is ElectronicsScreen ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
+        var canWork = lesson.CanWork && currentAllowed;
+        var wasEnabled = body.IsEnabled;
+        body.IsEnabled = canWork;
+        lessonBlock.IsVisible = !canWork;
+        lessonMessage.Text = lesson.Message.Length > 0 ? lesson.Message : "Преподаватель отключил это направление. Выберите другое вверху.";
+        if (!canWork && wasEnabled)
+        {
+            electronics?.Suspend();
+            if (student is not null) await student.SaveDraft();
+        }
     }
 
     void RefreshSurface()
@@ -388,6 +513,7 @@ public sealed class MainWindow : Window
 
     public void Protect(bool restricted)
     {
+        restricted = restricted && IsLessonVisible;
         if (OperatingSystem.IsWindows() && TryGetPlatformHandle()?.Handle is { } handle)
         {
             if (!NativeWindowProtection.TrySet(handle, restricted, out var error) && restricted)
@@ -405,7 +531,7 @@ public sealed class MainWindow : Window
 
     async void OnKey(object? sender, KeyEventArgs e)
     {
-        if (pageOpen) return;
+        if (!IsLessonVisible || !body.IsEnabled) return;
         if (student is not null && e.Key == Key.Enter && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
         {
             e.Handled = true;
@@ -431,7 +557,7 @@ public sealed class MainWindow : Window
 
     async void OnDrop(object? sender, DragEventArgs e)
     {
-        if (pageOpen) return;
+        if (!IsLessonVisible || !body.IsEnabled) return;
         if (student?.Restricted == true)
         {
             e.Handled = true;
@@ -443,7 +569,7 @@ public sealed class MainWindow : Window
 
     async void OnClipboard(object? sender, RoutedEventArgs e)
     {
-        if (pageOpen) return;
+        if (!IsLessonVisible || !body.IsEnabled) return;
         if (student?.Restricted != true)
             return;
         e.Handled = true;
@@ -523,6 +649,7 @@ public sealed class MainWindow : Window
         ClosePage(false);
         screen?.Dispose();
         electronics?.Dispose();
+        if (!ReferenceEquals(screen, student)) student?.Dispose();
         if (host is not null)
             await host.Stop(api);
         quitting = true;

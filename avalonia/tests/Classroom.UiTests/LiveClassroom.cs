@@ -55,10 +55,32 @@ internal sealed class LiveClassroom : IAsyncDisposable
         if (Admin is null) throw new TimeoutException("Synthetic server did not start.");
         await Admin.Post<JsonElement>("setup", new PasswordRequest("synthetic-teacher-password"));
         await Admin.Login(new("teacher", "", "synthetic-teacher-password"));
+        var lesson = await Admin.Post<LessonView>("teacher/lessons", new CreateLessonRequest(Guid.NewGuid().ToString("N"), new(null, OpenToAllGroups: true, FreePractice: true)));
+        await Admin.Post<LessonView>($"teacher/lessons/{lesson.Id}/start");
         var created = await Admin.Post<JsonElement>("teacher/students", new CreateStudentRequest("ui-test", "synthetic-student-password", null));
         StudentId = created.GetProperty("id").GetString()!;
         Student = new(Admin.Connection);
         await Student.Login(new("student", "ui-test", "synthetic-student-password"));
+    }
+
+    public async Task Restart()
+    {
+        var start = process!.StartInfo;
+        var connection = Admin.Connection;
+        await process.StandardInput.WriteLineAsync("stop"); process.StandardInput.Close();
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(65))) await process.WaitForExitAsync(timeout.Token);
+        process.Dispose(); Admin.Dispose();
+        process = Process.Start(start)!;
+        process.OutputDataReceived += (_, _) => { }; process.ErrorDataReceived += (_, _) => { };
+        process.BeginOutputReadLine(); process.BeginErrorReadLine();
+        Admin = new(connection);
+        for (var i = 0; i < 150; i++)
+        {
+            if (process.HasExited) throw new IOException("Synthetic server exited during restart.");
+            try { await Admin.Get<StatusDto>("status"); return; }
+            catch (HttpRequestException) { await Task.Delay(100); }
+        }
+        throw new TimeoutException("Synthetic server did not restart.");
     }
 
     public async ValueTask DisposeAsync()

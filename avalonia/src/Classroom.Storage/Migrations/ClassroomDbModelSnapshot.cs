@@ -769,6 +769,56 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("Snapshots");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.SqlExecutionEvidenceEntity", b =>
+                {
+                    b.Property<string>("AttemptId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BeforeHash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Check")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StudentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TaskJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AttemptId");
+
+                    b.HasIndex("StudentId", "BeforeHash");
+
+                    b.ToTable("SqlExecutionEvidence");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.SqlExecutionStateEntity", b =>
+                {
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Hash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Base64")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("StudentId", "Hash");
+
+                    b.ToTable("SqlExecutionStates");
+                });
+
             modelBuilder.Entity("Classroom.Storage.TaskEntity", b =>
                 {
                     b.Property<string>("Id")
@@ -1036,6 +1086,29 @@ namespace Classroom.Storage.Migrations
                 });
 
             modelBuilder.Entity("Classroom.Storage.SnapshotEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.SqlExecutionEvidenceEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.AttemptEntity", null)
+                        .WithOne()
+                        .HasForeignKey("Classroom.Storage.SqlExecutionEvidenceEntity", "AttemptId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.SqlExecutionStateEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId", "BeforeHash")
+                        .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("Classroom.Storage.SqlExecutionStateEntity", b =>
                 {
                     b.HasOne("Classroom.Storage.ProfileEntity", null)
                         .WithMany()

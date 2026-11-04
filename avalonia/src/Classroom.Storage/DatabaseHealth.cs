@@ -62,6 +62,28 @@ public static class DatabaseHealth
             if (attempt.WorkScope is not null && attempt.WorkScope != "course" && (attempt.LessonId is null || attempt.WorkScope != "lesson:" + attempt.LessonId))
                 throw new InvalidDataException("Некорректная привязка SQL-события к работе.");
         _ = db.Imports.AsNoTracking().ToArray();
+        foreach (var state in db.SqlExecutionStates.AsNoTracking())
+        {
+            var bytes = Convert.FromBase64String(state.Base64);
+            if (!profiles.Any(p => p.Id == state.StudentId && p.Role == "student") ||
+                state.Hash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)))
+                throw new InvalidDataException("Повреждён исходный снимок SQL-попытки.");
+            ElectronImport.ValidateSnapshot(state.Base64);
+        }
+        static bool ResultShape(SqlResult? value) => value is not null && value.Columns is not null && value.Values is not null &&
+            value.Values.All(row => row is not null && row.Length == value.Columns.Length);
+        foreach (var evidence in db.SqlExecutionEvidence.AsNoTracking())
+        {
+            var source = db.Attempts.AsNoTracking().SingleOrDefault(a => a.Id == evidence.AttemptId);
+            var task = Catalog.Read(evidence.TaskJson); Catalog.Validate(task);
+            var result = Wire.Read<ExecutionDto>(evidence.ResultJson);
+            if (source is null || source.StudentId != evidence.StudentId || source.TaskId != task.Id || source.Code is null || source.Code.Length > 12000 ||
+                source.Action != (evidence.Check ? "check" : "run") || evidence.Revision < 1 || !ResultShape(result.Output) || result.Tables is null ||
+                result.Tables.Any(t => t is null || string.IsNullOrWhiteSpace(t.Name) || !ResultShape(t.Data)) ||
+                result.Correct && (!evidence.Check || result.Error is not null) ||
+                source.Kind != (result.Error ?? (evidence.Check ? result.Correct ? "correct" : "different" : "executed")))
+                throw new InvalidDataException("Повреждены сведения об исходном состоянии SQL-попытки.");
+        }
         var lessons = db.LessonSessions.AsNoTracking().ToArray();
         foreach (var lesson in lessons)
         {

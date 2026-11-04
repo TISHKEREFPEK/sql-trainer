@@ -156,6 +156,8 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
     public DbSet<ElectronicsReviewEntity> ElectronicsReviews => Set<ElectronicsReviewEntity>();
+    public DbSet<SqlExecutionStateEntity> SqlExecutionStates => Set<SqlExecutionStateEntity>();
+    public DbSet<SqlExecutionEvidenceEntity> SqlExecutionEvidence => Set<SqlExecutionEvidenceEntity>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -246,5 +248,10 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<ElectronicsReviewEntity>().HasIndex(x => new { x.StudentId, x.ReportId, x.Sequence }).IsUnique();
         model.Entity<ElectronicsReviewEntity>().HasOne<ElectronicsReportEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.ReportId }).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsReviewEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.TeacherId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<SqlExecutionStateEntity>().HasKey(x => new { x.StudentId, x.Hash });
+        model.Entity<SqlExecutionStateEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlExecutionEvidenceEntity>().HasKey(x => x.AttemptId);
+        model.Entity<SqlExecutionEvidenceEntity>().HasOne<AttemptEntity>().WithOne().HasForeignKey<SqlExecutionEvidenceEntity>(x => x.AttemptId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlExecutionEvidenceEntity>().HasOne<SqlExecutionStateEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.BeforeHash }).OnDelete(DeleteBehavior.Cascade);
     }
 }

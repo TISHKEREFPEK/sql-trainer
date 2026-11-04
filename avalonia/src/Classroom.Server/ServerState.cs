@@ -313,6 +313,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
         try
         {
             TaskDefinition task;
+            int executingRevision;
             string? snapshot;
             string executingScope;
             await Gate.WaitAsync();
@@ -334,6 +335,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 var assignment = await Assignment(db, student, taskId, session.LessonId, workScope: input.WorkScope);
                 executingScope = Scope(assignment);
                 task = Catalog.Read(assignment.Json);
+                executingRevision = assignment.Revision;
                 if (task.Project is not null)
                 {
                     var chain = await LessonSqlWorkspaces.Chain(db, assignment, task.Project);
@@ -350,7 +352,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 Gate.Release();
             }
 
-            var reply = await worker.Run(new(task, snapshot, input.Code, input.Check));
+            var reply = await worker.Run(new(task, snapshot, input.Code, input.Check, CaptureState: input.Check || !string.IsNullOrWhiteSpace(input.Code)));
             await Gate.WaitAsync();
             try
             {
@@ -387,7 +389,21 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                 }
 
                 if (input.Check || !string.IsNullOrWhiteSpace(input.Code))
-                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), LessonId = session.LessonId, WorkScope = executingScope, StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now });
+                {
+                    var attempt = new AttemptEntity { Id = Guid.NewGuid().ToString("N"), LessonId = session.LessonId, WorkScope = executingScope, StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now };
+                    db.Attempts.Add(attempt);
+                    var before = reply.BeforeSnapshot ?? snapshot;
+                    string? beforeHash = null;
+                    if (before is not null)
+                    {
+                        var bytes = Convert.FromBase64String(before);
+                        beforeHash = Convert.ToHexString(SHA256.HashData(bytes));
+                        if (!await db.SqlExecutionStates.AnyAsync(s => s.StudentId == student.Id && s.Hash == beforeHash))
+                            db.SqlExecutionStates.Add(new() { StudentId = student.Id, Hash = beforeHash, Base64 = Convert.ToBase64String(bytes) });
+                    }
+                    db.SqlExecutionEvidence.Add(new() { AttemptId = attempt.Id, StudentId = student.Id, TaskJson = Catalog.Write(task), Revision = executingRevision,
+                        Check = input.Check, BeforeHash = beforeHash, ResultJson = Wire.Write(reply.Result) });
+                }
 
                 db.Operations.Add(new() { StudentId = session.ProfileId, Id = input.OperationId, RequestHash = requestHash, ResponseJson = Wire.Write(reply.Result), At = Now });
                 await db.SaveChangesAsync();

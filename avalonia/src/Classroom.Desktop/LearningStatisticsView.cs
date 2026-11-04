@@ -181,6 +181,11 @@ public sealed class LearningStatisticsView : UserControl
             if (e.Code is not null) panel.Children.Add(Code(e.Code));
             else if (e.Action is "check" or "run") panel.Children.Add(Ui.Text("SQL этой попытки не записывался", 12));
             if (e.Explanation is not null) panel.Children.Add(Ui.Text(e.Explanation));
+            if (e.Action is "check" or "run") panel.Children.Add(Ui.Button("Открыть попытку SQL", () => owner.Safe(async () =>
+            {
+                var source = await api.Get<SqlReviewAttempt>("teacher/sql-review/attempts/" + Uri.EscapeDataString(e.Id));
+                var view = new SqlAttemptReviewView(owner, api, source); owner.ShowPage("Проверка SQL", view, view.Dispose);
+            })));
             page.Children.Add(Ui.Card(panel));
         }
         if (history.Count == 0) page.Children.Add(Ui.Text("Записанных событий нет."));

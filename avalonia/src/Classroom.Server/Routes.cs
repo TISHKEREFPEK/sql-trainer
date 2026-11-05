@@ -19,6 +19,7 @@ public static class Routes
         ElectronicsReviews.Map(api, state);
         ReviewAccessRoutes.Map(api, state);
         SqlReviewRoutes.Map(api, state, worker);
+        SqlSyncRoutes.Map(api, state);
         api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
         {
             state.Authorize(ctx, "teacher");

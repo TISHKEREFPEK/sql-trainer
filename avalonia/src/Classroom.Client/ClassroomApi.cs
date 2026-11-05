@@ -17,6 +17,7 @@ public sealed class ClassroomApi : IDisposable
     public ConnectionSettings Connection { get; }
     public string? Token { get; private set; }
     public string? LessonId { get; private set; }
+    public string? ProfileId { get; private set; }
     string? reviewToken;
 
     public ClassroomApi(ConnectionSettings connection)
@@ -107,6 +108,7 @@ public sealed class ClassroomApi : IDisposable
     {
         var result = await Post<LoginDto>("login", input);
         Token = result.Token;
+        ProfileId = result.Id;
         LessonId = result.LessonId;
         return result;
     }
@@ -115,6 +117,7 @@ public sealed class ClassroomApi : IDisposable
     {
         var result = await Post<LoginDto>("student-login", input);
         Token = result.Token;
+        ProfileId = result.Id;
         LessonId = result.LessonId;
         return result;
     }
@@ -131,6 +134,7 @@ public sealed class ClassroomApi : IDisposable
         finally
         {
             Token = null;
+            ProfileId = null;
             LessonId = null;
         }
     }
@@ -139,10 +143,13 @@ public sealed class ClassroomApi : IDisposable
 }
 
 // Owns the pending SQL payload, so a retry always uses the same operation id and code.
-public sealed class PendingExecution(string taskId, string code, bool check, string? lessonId = null, string? workScope = null)
+public sealed class PendingExecution
 {
-    public string TaskId { get; } = taskId;
-    public ExecuteRequest Request { get; } = new(Guid.NewGuid().ToString(), code, check, lessonId, workScope);
+    public string TaskId { get; }
+    public ExecuteRequest Request { get; }
+    public PendingExecution(string taskId, string code, bool check, string? lessonId = null, string? workScope = null)
+        : this(taskId, new ExecuteRequest(Guid.NewGuid().ToString(), code, check, lessonId, workScope)) { }
+    public PendingExecution(string taskId, ExecuteRequest request) { TaskId = taskId; Request = request; }
 
     public Task<ExecutionDto> Send(ClassroomApi api) => api.Post<ExecutionDto>($"tasks/{Uri.EscapeDataString(TaskId)}/execute", Request);
 }

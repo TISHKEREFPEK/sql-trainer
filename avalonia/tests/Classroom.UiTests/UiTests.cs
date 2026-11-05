@@ -132,7 +132,8 @@ public sealed class UiTests
         editor.Text = "SELECT 7;";
         var rejected = await Assert.ThrowsAsync<ApiException>(staleView.CheckShortcut);
         Assert.Equal(423, rejected.Status);
-        Assert.Null(staleWindow.PendingFor("database"));
+        Assert.Null(staleWindow.SqlStore(fixture.Student).Pending(fixture.Student.LessonId!, task.WorkScope, "database"));
+        Assert.Single(staleWindow.SqlStore(fixture.Student).Find(fixture.Student.LessonId!, task.WorkScope, "database")!.RejectedExecutions!);
         await fixture.Admin.Post<System.Text.Json.JsonElement>($"teacher/students/{fixture.StudentId}/unlock");
         editor.Text = definition.Solution;
         await staleView.CheckShortcut();

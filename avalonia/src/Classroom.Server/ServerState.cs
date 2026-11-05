@@ -300,6 +300,8 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
         }
     }
 
+    internal static string ExecutionHash(string? lessonId, string taskId, ExecuteRequest input) => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Wire.Write(new { LessonId = lessonId, taskId, input.Code, input.Check, input.WorkScope }))));
+
     public async Task<ExecutionDto> Execute(Session session, string taskId, ExecuteRequest input)
     {
         LessonRoutes.CheckContext(session, input.LessonId);
@@ -307,7 +309,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             throw new HttpFault(503, "Преподаватель завершает работу сервера.");
         if (!Guid.TryParse(input.OperationId, out _) || input.Code.Length > 12000)
             throw new HttpFault(400, "Некорректная операция или слишком длинный SQL.");
-        var requestHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Wire.Write(new { session.LessonId, taskId, input.Code, input.Check, input.WorkScope }))));
+        var requestHash = ExecutionHash(session.LessonId, taskId, input);
         if (!busy.TryAdd(session.ProfileId, 0))
             throw new HttpFault(429, "Предыдущий запрос ещё выполняется. Повторите позже с тем же номером операции.");
         try

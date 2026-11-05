@@ -50,18 +50,23 @@ public sealed class MainWindow : Window
     bool quitting;
     string? protectionWarning;
     bool reconnecting;
-    readonly Dictionary<string, string> unsavedDrafts = new();
     internal string? LastTaskId { get; set; }
     internal bool IsLessonVisible => !pageOpen && body.Content is StudentScreen;
+    readonly Dictionary<string, SqlLocalStore> sqlStores = new();
+    readonly DispatcherTimer sqlDeliveryPoll = new() { Interval = TimeSpan.FromSeconds(2) };
+    bool deliveringSql;
+    internal SqlLocalStore SqlStore(ClassroomApi client)
+    {
+        var id = client.ProfileId ?? throw new InvalidDataException("Сначала войдите в ученический профиль.");
+        var key = client.Connection.Fingerprint + ":" + id;
+        if (!sqlStores.TryGetValue(key, out var store))
+        {
+            var root = studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+            store = new SqlLocalStore(root, client.Connection.Fingerprint, id); sqlStores.Add(key, store);
+        }
+        return store;
+    }
 
-    string DraftKey(string id, string? workScope = null) => $"{login?.Id}:{login?.LessonId}:{workScope ?? student?.CurrentWorkScope ?? "course"}:{id}";
-    readonly Dictionary<string, PendingExecution> pendingRequests = new();
-    internal PendingExecution? PendingFor(string id, string? workScope = null) => pendingRequests.GetValueOrDefault(DraftKey(id, workScope));
-    internal void RememberPending(PendingExecution request) => pendingRequests[DraftKey(request.TaskId, request.Request.WorkScope)] = request;
-    internal void ForgetPending(string id, string? workScope = null) => pendingRequests.Remove(DraftKey(id, workScope));
-    internal void RememberDraft(string id, string code, string? workScope = null) => unsavedDrafts[DraftKey(id, workScope)] = code;
-    internal string? UnsavedDraft(string id, string? workScope = null) => unsavedDrafts.GetValueOrDefault(DraftKey(id, workScope));
-    internal void ForgetDraft(string id, string? workScope = null) => unsavedDrafts.Remove(DraftKey(id, workScope));
     bool discardDraft;
     DispatcherTimer? admissionPoll;
     readonly DispatcherTimer lessonPoll = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -133,6 +138,17 @@ public sealed class MainWindow : Window
         if (initializeOnOpen)
             Opened += async (_, _) => await Safe(Initialize);
         Closing += OnClosing;
+        Closed += (_, _) => { sqlDeliveryPoll.Stop(); foreach (var store in sqlStores.Values) store.Dispose(); };
+        sqlDeliveryPoll.Tick += async (_, _) =>
+        {
+            if (deliveringSql || api?.ProfileId is null || login?.Role != "student") return;
+            deliveringSql = true;
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await SqlStore(api).Drain(api, limit.Token); }
+            catch (Exception e) when (e is HttpRequestException or OperationCanceledException or ApiException) { /* Keep the durable queue; lesson polling handles connectivity/login. */ }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { Error(e.Message); }
+            finally { deliveringSql = false; }
+        };
         AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
         AddHandler(DragDrop.DropEvent, OnDrop, RoutingStrategies.Tunnel);
         AddHandler(TextBox.CopyingToClipboardEvent, OnClipboard);
@@ -178,9 +194,12 @@ public sealed class MainWindow : Window
         reconnecting = true;
         try
         {
+            try { student?.SaveLocalDraft(); }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+            { Error("Повторный вход отложен: последние изменения не сохранены на ПК. " + e.Message); return; }
             login = null;
             await ShowLogin();
-            Error("Сессия завершилась. Войдите снова; несохранённый черновик остаётся в этом окне.");
+            Error("Сессия завершилась. Войдите снова; локально сохранённые работы останутся на ПК.");
         }
         catch (Exception e)when (e is HttpRequestException or TaskCanceledException)
         {
@@ -239,7 +258,7 @@ public sealed class MainWindow : Window
     internal void Preview(Control view) => body.Content = view;
     void ShowConnect()
     {
-        admissionPoll?.Stop(); lessonPoll.Stop();
+        admissionPoll?.Stop(); lessonPoll.Stop(); sqlDeliveryPoll.Stop();
         var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
         var path = Path.Combine(directory, "connection.json");
         state.Status = "";
@@ -426,6 +445,8 @@ public sealed class MainWindow : Window
                 actions.Children.Insert(0, sqlSubjectButton); actions.Children.Insert(1, electronicsSubjectButton);
                 actions.Children.Insert(0, Ui.Button("Моё занятие", () => Safe(ShowStudentHome)));
                 actions.Children.Add(Ui.Button("Проверка преподавателя", () => Safe(ShowTeacherReview)));
+                SqlStore(api);
+                sqlDeliveryPoll.Start();
                 await ShowStudentHome();
                 await RefreshLessonPermission(); lessonPoll.Start();
             }
@@ -688,11 +709,11 @@ public sealed class MainWindow : Window
         {
             try
             {
-                await student.SaveDraft();
+                student.SaveLocalDraft();
             }
-            catch (Exception ex)when (ex is HttpRequestException or ApiException or TaskCanceledException)
+            catch (Exception ex)when (ex is HttpRequestException or ApiException or TaskCanceledException or IOException or InvalidDataException or UnauthorizedAccessException)
             {
-                if (!await Confirm("Связь потеряна. Последние изменения черновика не сохранены. Закрыть приложение?"))
+                if (!await Confirm("Последние изменения не удалось сохранить: " + ex.Message + " Закрыть приложение?"))
                     return;
                 discardDraft = true;
             }

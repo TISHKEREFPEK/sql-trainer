@@ -14,11 +14,13 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop;
 
-public sealed class StudentScreen : UserControl, IDisposable
+public sealed partial class StudentScreen : UserControl, IDisposable
 {
     readonly MainWindow owner;
     readonly ClassroomApi api;
-    readonly string? lessonId;
+    SqlLocalStore local = null!;
+    bool previewOnly;
+    string? lessonId;
     string workScope = "course";
     bool retiredWork;
     internal string CurrentWorkScope => workScope;
@@ -68,20 +70,15 @@ public sealed class StudentScreen : UserControl, IDisposable
         Interval = TimeSpan.FromSeconds(2)
     };
     readonly SemaphoreSlim draftGate = new(1, 1);
-    readonly SemaphoreSlim eventGate = new(1, 1);
-    readonly Queue<(string TaskId, TaskEventRequest Event)> events = new();
     long lastInput = Environment.TickCount64;
-    readonly string activitySession = Guid.NewGuid().ToString("N");
-    long activitySequence;
-    (string TaskId, ActivityRequest Request)? pendingActivity;
     CatalogueDto? catalogue;
     StudentTask? current;
     PendingExecution? pending;
     int page;
     long generation;
-    long editVersion;
     bool loading, syncing, disposed, executing;
-    string? savedCode;
+    readonly Button resolveConflict;
+    readonly Button retrySave;
     CancellationTokenSource? debounce;
     public bool Restricted => current?.Restricted == true;
 
@@ -89,6 +86,7 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         this.owner = owner;
         this.api = api;
+        if (api.ProfileId is not null) local = owner.SqlStore(api);
         lessonId = api.LessonId;
         AddHandler(InputElement.KeyDownEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
         AddHandler(InputElement.PointerPressedEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
@@ -157,9 +155,8 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             if (loading || current is null)
                 return;
-            editVersion++;
-            owner.RememberDraft(current.Id, editor.Text, workScope);
-            saved.Text = "Изменения не сохранены";
+            try { local.Edit(lessonId!, workScope, current.Id, editor.Text, editor.CaretOffset); RefreshSaveStatus(); }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { saved.Text = "Не удалось сохранить на ПК: " + e.Message; }
             debounce?.Cancel();
             debounce = new();
             _ = SaveLater(debounce.Token);
@@ -203,7 +200,9 @@ public sealed class StudentScreen : UserControl, IDisposable
                 editor.Text = current.Starter;
             return Task.CompletedTask;
         });
-        var statePanel = Ui.Stack(saved, pause, reset);
+        resolveConflict = Ui.Button("Разрешить конфликт черновика", ShowDraftConflict); resolveConflict.IsVisible = false;
+        retrySave = Ui.Button("Повторить сохранение", () => owner.Safe(SaveDraft)); retrySave.IsVisible = false;
+        var statePanel = Ui.Stack(saved, resolveConflict, retrySave, pause, reset);
         statePanel.Margin=new Thickness(20,12);
         Grid.SetRow(statePanel, 4);
         work.Children.Add(statePanel);
@@ -327,7 +326,7 @@ public sealed class StudentScreen : UserControl, IDisposable
             return;
         DisplayTask(task);
         lastInput = Environment.TickCount64;
-        events.Enqueue((id, new(Guid.NewGuid().ToString("N"), "opened", lessonId, workScope)));
+        local.Action(lessonId!, workScope, id, "opened");
         await FlushEvents();
         if (executing || task.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             return;
@@ -346,7 +345,8 @@ public sealed class StudentScreen : UserControl, IDisposable
         restrictionFeedback.Text = "";
         restrictionFeedback.IsVisible = false;
         owner.LastTaskId = task.Id;
-        pending = owner.PendingFor(task.Id, workScope);
+        var stored = local.Observe(lessonId!, task);
+        pending = local.Pending(lessonId!, workScope, task.Id);
         heading.Text = task.Title + $" · Вариант {task.VariantIndex}";
         prompt.Text = task.Prompt;
         explanation.Children.Clear();
@@ -361,10 +361,10 @@ public sealed class StudentScreen : UserControl, IDisposable
         terms.SelectionChanged += (_, _) => definition.Text = task.Definitions.GetValueOrDefault(terms.SelectedItem as string ?? "", "");
         explanation.Children.Add(new Expander { Header = "Термины", Content = Ui.Stack(terms, definition) });
         loading = true;
-        editor.Text = owner.UnsavedDraft(task.Id, workScope) ?? (task.Draft.Length > 0 ? task.Draft : task.Starter);
+        editor.Text = stored.Code;
+        editor.CaretOffset = Math.Clamp(stored.Caret, 0, editor.Text.Length);
         loading = false;
-        savedCode = task.Draft;
-        saved.Text = owner.UnsavedDraft(task.Id, workScope) is not null ? "Изменения не сохранены" : task.Draft.Length > 0 ? "Черновик сохранён" : "";
+        RefreshSaveStatus();
         RenderHints();
         Policy();
         result.Children.Clear();
@@ -373,6 +373,11 @@ public sealed class StudentScreen : UserControl, IDisposable
 
     internal void Preview(CatalogueDto catalog, StudentTask task, ExecutionDto preview)
     {
+        if (local is null)
+        {
+            previewOnly = true; lessonId = Guid.NewGuid().ToString("N");
+            local = new SqlLocalStore(Path.Combine(Path.GetTempPath(), "classroom-sql-preview-" + Guid.NewGuid().ToString("N")), api.Connection.Fingerprint, "preview");
+        }
         catalogue = catalog;
         UpdateModules();
         module.SelectedItem = task.Module;
@@ -436,21 +441,23 @@ public sealed class StudentScreen : UserControl, IDisposable
         try
         {
             Policy();
+            var remembered = local.Pending(lessonId!, workScope, id);
             await SaveDraft();
             if (stamp != generation || disposed)
                 return;
             // A failed transport keeps pending; the next attempt retries exactly that operation.
-            var retry = owner.PendingFor(id, workScope) is not null;
-            pending ??= owner.PendingFor(id, workScope) ?? new PendingExecution(id, editor.Text, checking, lessonId, workScope);
+            if (local.Find(lessonId!, workScope, id)?.Conflict is not null) throw new InvalidDataException("Сначала разрешите конфликт черновика.");
+            var retry = remembered is not null || local.Pending(lessonId!, workScope, id) is not null;
+            pending = remembered ?? local.Pending(lessonId!, workScope, id) ?? new PendingExecution(id, editor.Text, checking, lessonId, workScope);
             if (pending.TaskId != id)
-                pending = owner.PendingFor(id, workScope) ?? new(id, editor.Text, checking, lessonId, workScope);
+                pending = local.Pending(lessonId!, workScope, id) ?? new(id, editor.Text, checking, lessonId, workScope);
             submitted = pending;
-            owner.RememberPending(pending);
+            local.Remember(pending);
             var submittedCheck = pending.Request.Check;
             if (retry)
                 owner.Message("Повторяется незавершённая операция с прежним SQL.");
             var response = await submitted.Send(api);
-            owner.ForgetPending(id, submitted.Request.WorkScope);
+            local.Acknowledge(submitted, response);
             if (ReferenceEquals(pending, submitted))
                 pending = null;
             if (stamp != generation || disposed)
@@ -494,9 +501,9 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             if (submitted is not null)
             {
-                owner.ForgetPending(id, submitted.Request.WorkScope);
-                if (ReferenceEquals(pending, submitted))
-                    pending = null;
+                local.Reject(submitted, e.Message);
+                if (ReferenceEquals(pending, submitted)) pending = null;
+                RefreshSaveStatus();
             }
             throw;
         }
@@ -519,10 +526,16 @@ public sealed class StudentScreen : UserControl, IDisposable
         catch (OperationCanceledException)
         {
         }
-        catch (Exception e) when (e is HttpRequestException or ApiException)
+        catch (Exception e) when (e is HttpRequestException or ApiException or IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            saved.Text = "Нет связи: черновик остаётся в открытом окне";
+            RefreshSaveStatus();
         }
+    }
+
+    public void SaveLocalDraft()
+    {
+        if (current is not null && local.Find(lessonId!, workScope, current.Id)?.Code != editor.Text)
+            local.Edit(lessonId!, workScope, current.Id, editor.Text, editor.CaretOffset);
     }
 
     public async Task SaveDraft()
@@ -530,19 +543,13 @@ public sealed class StudentScreen : UserControl, IDisposable
         await draftGate.WaitAsync();
         try
         {
-            if (current is null || editor.Text == savedCode)
-                return;
-            var id = current.Id;
-            var code = editor.Text;
-            var version = editVersion;
-            var scope = workScope;
-            await api.Put<JsonElement>($"tasks/{id}/draft", new DraftRequest(code, lessonId, scope));
-            if (current?.Id == id && editVersion == version && workScope == scope)
-            {
-                savedCode = code;
-                owner.ForgetDraft(id, scope);
-                saved.Text = "Черновик сохранён";
-            }
+            if (current is null) return;
+            SaveLocalDraft();
+            saved.Text = "Сохраняется…";
+            using var transfer = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            try { await local.Drain(api, transfer.Token); }
+            catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { }
+            RefreshSaveStatus();
         }
         finally
         {
@@ -552,11 +559,13 @@ public sealed class StudentScreen : UserControl, IDisposable
 
     async Task Synchronize()
     {
-        if (syncing || disposed || current is null || retiredWork)
+        if (syncing || disposed)
             return;
         syncing = true;
         try
         {
+            await local.Drain(api);
+            if (disposed || current is null || retiredWork) return;
             var id = current.Id;
             var update = await api.Get<StudentTask>($"tasks/{id}?workScope={Uri.EscapeDataString(workScope)}");
             if (current?.Id != id || disposed)
@@ -574,16 +583,10 @@ public sealed class StudentScreen : UserControl, IDisposable
             await SaveDraft();
             if (current?.Id != id || disposed)
                 return;
-            if (pendingActivity is { } retry)
-            {
-                await api.Post<JsonElement>($"tasks/{retry.TaskId}/activity", retry.Request);
-                pendingActivity = null;
-            }
             if (owner.IsActive && owner.IsLessonVisible && Environment.TickCount64 - lastInput < 120000 && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             {
-                pendingActivity = (id, new(2, activitySession, ++activitySequence, lessonId, workScope));
-                await api.Post<JsonElement>($"tasks/{id}/activity", pendingActivity.Value.Request);
-                pendingActivity = null;
+                local.Action(lessonId!, workScope, id, "activity", 2);
+                await local.Drain(api);
             }
         }
         catch (ApiException e) when (e.Status == 401)
@@ -599,15 +602,22 @@ public sealed class StudentScreen : UserControl, IDisposable
             // The main window explains the class pause/end. Retain pending saves without a false network error.
             try { await SaveDraft(); }
             catch (Exception savingError) when (savingError is HttpRequestException or ApiException or TaskCanceledException)
-            { saved.Text = "Черновик остаётся в открытом окне; сохранение повторится после подключения."; }
+            { RefreshSaveStatus(); }
         }
         catch (Exception e) when (e is HttpRequestException or ApiException or TaskCanceledException)
         {
-            owner.Error("Связь с преподавателем потеряна. Запуск SQL недоступен; черновик остаётся в открытом окне.");
+            RefreshSaveStatus();
+            owner.Error("Связь с преподавателем потеряна. Запуск SQL недоступен; локально сохранённый черновик будет передан после подключения.");
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            RefreshSaveStatus();
+            owner.Error("Не удалось записать локальное подтверждение. Очередь сохранена для повторной передачи. " + e.Message);
         }
         finally
         {
             syncing = false;
+            RefreshSaveStatus();
         }
     }
 
@@ -619,8 +629,9 @@ public sealed class StudentScreen : UserControl, IDisposable
             return;
         ShowRestrictionFeedback("Копирование, вырезание и вставка запрещены преподавателем.");
         var id = current.Id;
-        events.Enqueue((id, new(Guid.NewGuid().ToString("N"), action, lessonId, workScope)));
+        local.Action(lessonId!, workScope, id, action);
         await FlushEvents();
+        if (previewOnly) return;
         var update = await api.Get<StudentTask>($"tasks/{id}");
         if (current?.Id == id)
         {
@@ -634,24 +645,13 @@ public sealed class StudentScreen : UserControl, IDisposable
         if (Restricted)
         {
             ShowRestrictionFeedback("Снимки этого окна запрещены преподавателем.");
-            events.Enqueue((current!.Id, new(Guid.NewGuid().ToString("N"), "capture", lessonId, workScope)));
+            try { local.Action(lessonId!, workScope, current!.Id, "capture"); }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { saved.Text = "Не удалось сохранить событие на ПК: " + e.Message; return; }
             _ = owner.Safe(FlushEvents);
         }
     }
 
-    async Task FlushEvents()
-    {
-        await eventGate.WaitAsync();
-        try
-        {
-            while (events.TryPeek(out var item))
-            {
-                await api.Post<JsonElement>($"tasks/{item.TaskId}/events", item.Event);
-                events.Dequeue();
-            }
-        }
-        finally { eventGate.Release(); }
-    }
+    Task FlushEvents() => previewOnly ? Task.CompletedTask : local.Drain(api);
 
     void ShowRestrictionFeedback(string text)
     {
@@ -697,6 +697,7 @@ public sealed class StudentScreen : UserControl, IDisposable
         debounce?.Cancel();
         debounce?.Dispose();
         ThemeManager.Changed -= ApplyTheme;
+        if (previewOnly) local.Dispose();
     }
 
     sealed record TaskChoice(string Id, string Title)

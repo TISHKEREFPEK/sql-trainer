@@ -58,7 +58,7 @@ public sealed class SqlLocalStoreTests
             Assert.Equal(before, File.ReadAllText(file)); Assert.Equal(task.Starter, local.Find(f.Student.LessonId!, task.WorkScope, task.Id)!.Code);
         }
         File.WriteAllText(file, "{}");
-        Assert.Throws<InvalidDataException>(() => Store(root, f)); Assert.Equal("{}", File.ReadAllText(file));
+        Assert.Throws<SqlLocalRecoveryException>(() => Store(root, f)); Assert.Equal("{}", File.ReadAllText(file));
     }
     [AvaloniaTheory]
     [InlineData(900)]

@@ -177,6 +177,12 @@ public sealed class MainWindow : Window
         {
             await action();
         }
+        catch (SqlLocalRecoveryException e)
+        {
+            sqlDeliveryPoll.Stop(); lessonPoll.Stop();
+            actions.Children.Clear();
+            body.Content = new SqlRecoveryView(this, e.Candidate, async () => { login = null; await ShowLogin(); });
+        }
         catch (ApiException e)when (e.Status == 401 && (screen is not null || login is not null))
         {
             await Reauthenticate();

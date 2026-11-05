@@ -12,7 +12,7 @@ public sealed record SqlLocalWork(string LessonId, StudentTask Task, string Code
 
 // This store contains learning data only. It never serializes a ClassroomApi,
 // login/password/token, teacher seed, solution or unopened hint.
-public sealed class SqlLocalStore : IDisposable
+public sealed partial class SqlLocalStore : IDisposable
 {
     sealed record Envelope(int Version, string ProfileId, string Fingerprint, string Payload, string Hash);
     readonly string directory, profileId, fingerprint;
@@ -34,15 +34,10 @@ public sealed class SqlLocalStore : IDisposable
         {
             foreach (var file in Directory.EnumerateFiles(directory, "*.work.json"))
             {
-                if (new FileInfo(file).Length > 64 * 1024 * 1024) throw new InvalidDataException("Локальная SQL-работа слишком велика. Файл оставлен без изменений.");
-                var envelope = Wire.Read<Envelope>(File.ReadAllText(file));
-                if (envelope.Version != 1 || envelope.ProfileId != profileId || envelope.Fingerprint != fingerprint || SqlSyncHash.Text(envelope.Payload) != envelope.Hash)
-                    throw new InvalidDataException("Локальная SQL-работа повреждена или относится к другому профилю. Файл оставлен без изменений.");
-                var work = Wire.Read<SqlLocalWork>(envelope.Payload);
-                if (!Guid.TryParseExact(work.LessonId, "N", out _) || work.Task is null || work.Code is null || work.Code.Length > 12000 ||
-                    work.Task.WorkScope != "course" && work.Task.WorkScope != "lesson:" + work.LessonId ||
-                    Path.GetFileName(file) != Key(work.LessonId, work.Task.WorkScope, work.Task.Id) + ".work.json")
-                    throw new InvalidDataException("Некорректный контекст локального SQL. Файл оставлен без изменений.");
+                SqlLocalWork work;
+                try { work = ReadWork(file, file, profileId, fingerprint); }
+                catch (Exception e) when (e is InvalidDataException or System.Text.Json.JsonException)
+                { throw new SqlLocalRecoveryException(InspectRecovery(file, profileId, fingerprint, e.Message)); }
                 works.Add(Key(work.LessonId, work.Task.WorkScope, work.Task.Id), work);
             }
         }

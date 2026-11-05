@@ -47,22 +47,25 @@ public sealed class ElectronicsSync : IDisposable
         }
     }
     public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null,
-        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null)
+        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false)
     {
         this.api=api; this.path=path; this.status=status; this.receipt=receipt; this.journalDelivery=journalDelivery; this.journalPending=journalPending;
         try
         {
+            if(requireExisting && !File.Exists(path)) throw new InvalidDataException("Отсутствует исходная очередь схемы. История сохранена; требуется восстановление привязки.");
             if(File.Exists(path))
             {
+                if(File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("Очередь через файловую ссылку не поддерживается.");
                 if(new FileInfo(path).Length>64_000_000) throw new InvalidDataException("Слишком большая очередь.");
                 state=Wire.Read<Outbox>(File.ReadAllText(path));
+                if(state is null) throw new InvalidDataException("Некорректная очередь результатов.");
                 if(state.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходная очередь сохранена отдельно.");
-                if(!Guid.TryParseExact(state.ClientId,"N",out _)||state.Sequence<0||state.Reports.Count>100) throw new InvalidDataException("Некорректная очередь результатов.");
+                if(!Guid.TryParseExact(state.ClientId,"N",out _)||state.Sequence<0||state.Reports is null||state.Reports.Count>100||state.ProjectJson is null) throw new InvalidDataException("Некорректная очередь результатов.");
                 if(state.ProjectJson.Length>0) CircuitProject.Parse(state.ProjectJson);
-                foreach(var report in state.Reports) { CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт."); }
+                foreach(var report in state.Reports) { if(report is null || report.ProjectJson is null || report.Detail is null) throw new InvalidDataException("Некорректный отчёт."); CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт."); }
             }
         }
-        catch(Exception e) when(e is IOException or InvalidDataException or System.Text.Json.JsonException)
+        catch(Exception e) when(!requireExisting && (e is IOException or InvalidDataException or System.Text.Json.JsonException))
         {
             if(File.Exists(path)) File.Move(path,path+".corrupt-"+Guid.NewGuid().ToString("N"));
             state=new(); status("Повреждённая очередь сохранена отдельно. Работа будет отправлена новой копией.");
@@ -96,7 +99,7 @@ public sealed class ElectronicsSync : IDisposable
         state.Reports.Add(new(reportId??Guid.NewGuid().ToString("N"),kind,json,explanation,expectedAssignmentVersion)); Persist(); status("Результат сохранён локально и ожидает передачи.");
         }
     }
-    async Task<bool> FlushDraft()
+    async Task<bool> FlushDraft(CancellationToken cancellation)
     {
         ElectronicsReportRequest[] reports;long sequence;string json,client;string? assignmentId;
         lock(stateGate)
@@ -106,7 +109,7 @@ public sealed class ElectronicsSync : IDisposable
         }
         try
         {
-            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token,cancellation); timeout.CancelAfter(TimeSpan.FromSeconds(5));
             var ack=await api.Send<ElectronicsSyncReceipt>(HttpMethod.Put,"electronics/work",new ElectronicsSyncRequest(client,sequence,json,reports,assignmentId),timeout.Token);
             lock(stateGate)
             {
@@ -126,15 +129,15 @@ public sealed class ElectronicsSync : IDisposable
         }
         finally { busy=false; }
     }
-    public async Task<bool> Flush()
+    public async Task<bool> Flush(CancellationToken cancellation=default)
     {
-        var draft = await FlushDraft();
+        var draft = await FlushDraft(cancellation);
         if (disposed || journalDelivery is null) return draft;
         if (historyBusy) return false;
         historyBusy = true;
         try
         {
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); limit.CancelAfter(TimeSpan.FromSeconds(8));
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token,cancellation); limit.CancelAfter(TimeSpan.FromSeconds(8));
             var sent = await journalDelivery(limit.Token);
             if (!disposed && (draft || !lastFailure)) status(sent && draft ? "Схема, результаты и история сохранены у преподавателя." : "Часть данных передана; история продолжает отправляться.");
             return sent && draft;

@@ -12,10 +12,21 @@ public sealed class CompilerLeaseTests
         var root = Path.Combine(Path.GetTempPath(), "classroom-lease-write-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         using var lease = new CompilerLease(Path.Combine(root, "runtime"), Path.Combine(root, "scratch"), root);
         var file = Assert.Single(Directory.GetFiles(root, "*.json"));
-        var reader = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var write = Task.Run(() => { started.SetResult(); if (OperatingSystem.IsWindows()) lease.MarkProfile(); });
-        await started.Task; await Task.Delay(150); Assert.False(write.IsCompleted); reader.Dispose(); await write;
+        using var reader = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var started = new ManualResetEventSlim(); using var finished = new ManualResetEventSlim(); Exception? failure = null;
+        // This suite runs many live servers in parallel. An awaited timer on the
+        // shared pool can resume after all bounded retries have already elapsed.
+        // Keep the held-lock interval on this thread and the writer off that pool.
+        var writer = new Thread(() =>
+        {
+            started.Set(); try { if (OperatingSystem.IsWindows()) lease.MarkProfile(); }
+            catch (Exception e) { failure = e; }
+            finally { finished.Set(); }
+        }) { IsBackground = true };
+        writer.Start();
+        try { Assert.True(started.Wait(TimeSpan.FromSeconds(2))); Thread.Sleep(80); Assert.False(finished.IsSet); }
+        finally { reader.Dispose(); Assert.True(writer.Join(TimeSpan.FromSeconds(5))); }
+        Assert.Null(failure);
         var record = System.Text.Json.JsonSerializer.Deserialize<CompilerLease.Record>(File.ReadAllText(file))!;
         Assert.True(record.ProfileCreated); Assert.False(record.Closed);
         var scanning = Task.Run(() => { if (OperatingSystem.IsWindows()) for (var i = 0; i < 100; i++) CompilerLease.RecoverOrphans(root); });

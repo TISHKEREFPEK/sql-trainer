@@ -22,6 +22,7 @@ public sealed partial class ElectronicsHistoryStore : IDisposable
     public bool Reopened { get; }
     public ElectronicsJournal Journal { get { lock (gate) return journal; } }
     public string ProjectJson { get { lock (gate) return json; } }
+    public ElectronicsHistoryContext Context => context;
     static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     public ElectronicsHistoryStore(string directory, ElectronicsHistoryContext context, string? initialJson)
@@ -45,6 +46,22 @@ public sealed partial class ElectronicsHistoryStore : IDisposable
     static void Regular(string path)
     {
         if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new IOException("История схемы через файловую ссылку не поддерживается.");
+    }
+    // Discovery reads metadata only; the normal constructor subsequently validates
+    // every page and replay while holding the editor's exclusive directory lease.
+    internal static ElectronicsHistoryStore OpenExisting(string directory, string indexName, string profileId, string fingerprint)
+    {
+        Regular(directory);
+        if (Path.GetFileName(indexName) != indexName || !indexName.StartsWith("c-", StringComparison.Ordinal) || !indexName.EndsWith(".json", StringComparison.Ordinal))
+            throw new InvalidDataException("Некорректное имя индекса истории схемы.");
+        var source = Path.Combine(directory, indexName); Regular(source);
+        if (new FileInfo(source).Length > 64 * 1024 * 1024) throw new InvalidDataException("Слишком большой индекс истории схемы.");
+        var envelope = Wire.Read<Envelope>(File.ReadAllText(source));
+        if (envelope.Version != 1 || envelope.Payload is null || SqlSyncHash.Text(envelope.Payload) != envelope.Hash) throw new InvalidDataException("Повреждён индекс истории схемы.");
+        var index = Wire.Read<Index>(envelope.Payload);
+        if (index.Context is null || index.Context.ProfileId != profileId || index.Context.Fingerprint != fingerprint ||
+            indexName != "c-" + SqlSyncHash.Text(Wire.Write(index.Context)) + ".json") throw new InvalidDataException("История относится к другому ученику, серверу или контексту.");
+        return new(directory, index.Context, null);
     }
     static string HashFile(string path)
     { Regular(path); using var source = File.OpenRead(path); return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(source)); }

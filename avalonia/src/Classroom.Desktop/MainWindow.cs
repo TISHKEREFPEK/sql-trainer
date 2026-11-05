@@ -55,13 +55,29 @@ public sealed class MainWindow : Window
     readonly Dictionary<string, SqlLocalStore> sqlStores = new();
     readonly DispatcherTimer sqlDeliveryPoll = new() { Interval = TimeSpan.FromSeconds(2) };
     bool deliveringSql;
+    readonly DispatcherTimer electronicsDeliveryPoll = new() { Interval = TimeSpan.FromSeconds(2) };
+    ElectronicsBackgroundDelivery? electronicsDelivery;
+    readonly HashSet<string> electronicsDeliveryErrors = new();
+    string StudentDataDirectory => studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+    void StartElectronicsDelivery()
+    {
+        if (teacher || api?.ProfileId is null || login?.Role != "student") return;
+        electronicsDelivery ??= new ElectronicsBackgroundDelivery(StudentDataDirectory, api, path =>
+            assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Any(editor => editor is not null && string.Equals(editor.SavePath, path, StringComparison.OrdinalIgnoreCase)));
+        electronicsDeliveryPoll.Start();
+    }
+    async Task StopElectronicsDelivery()
+    {
+        electronicsDeliveryPoll.Stop(); var previous = electronicsDelivery; electronicsDelivery = null;
+        if (previous is not null) await previous.DisposeAsync(); electronicsDeliveryErrors.Clear();
+    }
     internal SqlLocalStore SqlStore(ClassroomApi client)
     {
         var id = client.ProfileId ?? throw new InvalidDataException("Сначала войдите в ученический профиль.");
         var key = client.Connection.Fingerprint + ":" + id;
         if (!sqlStores.TryGetValue(key, out var store))
         {
-            var root = studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+            var root = StudentDataDirectory;
             store = new SqlLocalStore(root, client.Connection.Fingerprint, id); sqlStores.Add(key, store);
         }
         return store;
@@ -138,7 +154,13 @@ public sealed class MainWindow : Window
         if (initializeOnOpen)
             Opened += async (_, _) => await Safe(Initialize);
         Closing += OnClosing;
-        Closed += (_, _) => { sqlDeliveryPoll.Stop(); foreach (var store in sqlStores.Values) store.Dispose(); };
+        Closed += async (_, _) => { sqlDeliveryPoll.Stop(); await StopElectronicsDelivery(); foreach (var store in sqlStores.Values) store.Dispose(); };
+        electronicsDeliveryPoll.Tick += async (_, _) =>
+        {
+            var current = electronicsDelivery; if (current is null) return;
+            var result = await current.DrainOnce(); if (!ReferenceEquals(current, electronicsDelivery)) return;
+            if (result.Error is { } message && electronicsDeliveryErrors.Add(message)) Error(message);
+        };
         sqlDeliveryPoll.Tick += async (_, _) =>
         {
             if (deliveringSql || api?.ProfileId is null || login?.Role != "student") return;
@@ -265,7 +287,7 @@ public sealed class MainWindow : Window
     void ShowConnect()
     {
         admissionPoll?.Stop(); lessonPoll.Stop(); sqlDeliveryPoll.Stop();
-        var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+        var directory = StudentDataDirectory;
         var path = Path.Combine(directory, "connection.json");
         state.Status = "";
         var code = Ui.Input();
@@ -297,6 +319,7 @@ public sealed class MainWindow : Window
 
     async Task ShowLogin()
     {
+        await StopElectronicsDelivery();
         admissionPoll?.Stop(); lessonPoll.Stop();
         ClosePage(false);
         body.IsEnabled = true; lessonBlock.IsVisible = false;
@@ -388,6 +411,7 @@ public sealed class MainWindow : Window
                 if (student is not null)
                     await student.SaveDraft();
                 if (electronics is not null) await electronics.Synchronize();
+                await StopElectronicsDelivery();
                 await api.Logout();
                 login = null;
                 await ShowLogin();
@@ -453,6 +477,7 @@ public sealed class MainWindow : Window
                 actions.Children.Add(Ui.Button("Проверка преподавателя", () => Safe(ShowTeacherReview)));
                 SqlStore(api);
                 sqlDeliveryPoll.Start();
+                StartElectronicsDelivery();
                 await ShowStudentHome();
                 await RefreshLessonPermission(); lessonPoll.Start();
             }
@@ -491,28 +516,33 @@ public sealed class MainWindow : Window
     {
         if (destination?.StandId == "electronics")
         {
-            Protect(false);
-            var directory = studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
-            var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(api!.Connection.Fingerprint + ":" + login!.Id)));
-            if (taskId is not null)
+            await StopElectronicsDelivery();
+            try
             {
-                var work = await api.Get<ElectronicsAssignmentDto>("electronics/tasks/" + Uri.EscapeDataString(taskId));
-                if (!assignedElectronics.TryGetValue(work.Id, out var editor))
+                Protect(false);
+                var directory = StudentDataDirectory;
+                var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(api!.Connection.Fingerprint + ":" + login!.Id)));
+                if (taskId is not null)
                 {
-                    editor = new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + "-" + work.Id + ".json"), api, assignment: work);
-                    assignedElectronics.Add(work.Id, editor);
+                    var work = await api.Get<ElectronicsAssignmentDto>("electronics/tasks/" + Uri.EscapeDataString(taskId));
+                    if (!assignedElectronics.TryGetValue(work.Id, out var editor))
+                    {
+                        editor = new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + "-" + work.Id + ".json"), api, assignment: work);
+                        assignedElectronics.Add(work.Id, editor);
+                    }
+                    else editor.UpdateAssignment(work);
+                    electronics = editor;
                 }
-                else editor.UpdateAssignment(work);
-                electronics = editor;
+                else
+                {
+                    practiceElectronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"), api);
+                    electronics = practiceElectronics;
+                }
+                screen = electronics;
+                body.Content = electronics;
+                return;
             }
-            else
-            {
-                practiceElectronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"), api);
-                electronics = practiceElectronics;
-            }
-            screen = electronics;
-            body.Content = electronics;
-            return;
+            finally { StartElectronicsDelivery(); }
         }
         if (destination?.StandId is not (null or "sql")) throw new InvalidDataException("Этот стенд не поддерживается. Обновите приложение ученика.");
         var first = student is null;
@@ -735,6 +765,7 @@ public sealed class MainWindow : Window
         if (student is not null && !discardDraft)
             await student.SaveDraft();
         if (electronics is not null) await electronics.Synchronize();
+        await StopElectronicsDelivery();
         ClosePage(false);
         screen?.Dispose();
         foreach (var editor in assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();

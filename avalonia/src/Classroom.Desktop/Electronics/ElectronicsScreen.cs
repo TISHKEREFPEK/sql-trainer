@@ -27,6 +27,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     ElectronicsAssignmentDto? assignment;
     readonly Button? submitButton;
     public string? AssignmentId => assignment?.Id;
+    internal string SavePath => savePath;
     public bool AssignmentAvailable => assignment?.Available ?? true;
     readonly ElectronicsResultsView? resultsView;
     readonly TextBlock syncStatus = Ui.Text("",12);

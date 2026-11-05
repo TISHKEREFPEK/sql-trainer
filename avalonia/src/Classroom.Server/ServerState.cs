@@ -404,7 +404,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
                             db.SqlExecutionStates.Add(new() { StudentId = student.Id, Hash = beforeHash, Base64 = Convert.ToBase64String(bytes) });
                     }
                     db.SqlExecutionEvidence.Add(new() { AttemptId = attempt.Id, StudentId = student.Id, TaskJson = Catalog.Write(task), Revision = executingRevision,
-                        Check = input.Check, BeforeHash = beforeHash, ResultJson = Wire.Write(reply.Result) });
+                        Check = input.Check, BeforeHash = beforeHash, ResultJson = Wire.Write(reply.Result), OperationId = input.OperationId });
                 }
 
                 db.Operations.Add(new() { StudentId = session.ProfileId, Id = input.OperationId, RequestHash = requestHash, ResponseJson = Wire.Write(reply.Result), At = Now });

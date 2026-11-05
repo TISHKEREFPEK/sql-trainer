@@ -101,6 +101,12 @@ public static class DatabaseHealth
                 result.Correct && (!evidence.Check || result.Error is not null) ||
                 source.Kind != (result.Error ?? (evidence.Check ? result.Correct ? "correct" : "different" : "executed")))
                 throw new InvalidDataException("Повреждены сведения об исходном состоянии SQL-попытки.");
+            if (evidence.OperationId is { } operationId)
+            {
+                var operation = db.Operations.AsNoTracking().SingleOrDefault(o => o.StudentId == evidence.StudentId && o.Id == operationId);
+                if (!Guid.TryParse(operationId, out _) || operation is null || operation.ResponseJson != evidence.ResultJson)
+                    throw new InvalidDataException("SQL-попытка не соответствует квитанции операции.");
+            }
         }
         var lessons = db.LessonSessions.AsNoTracking().ToArray();
         foreach (var lesson in lessons)

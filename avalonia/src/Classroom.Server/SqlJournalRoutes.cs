@@ -51,7 +51,7 @@ public static class SqlJournalRoutes
                     if (change.Sequence <= row.Sequence)
                     {
                         var accepted = await db.SqlJournalChanges.FindAsync(session.ProfileId, row.Id, change.Sequence);
-                        if (accepted is null || accepted.ChangeJson != Wire.Write(change)) return new SqlJournalAck(row.Id, "fork", row.Sequence, SqlSyncHash.Text(row.TipCode));
+                        if (accepted is null || Wire.Read<SqlTextChange>(accepted.ChangeJson) != change) return new SqlJournalAck(row.Id, "fork", row.Sequence, SqlSyncHash.Text(row.TipCode));
                         continue;
                     }
                     if (change.Sequence != sequence + 1) throw new HttpFault(409, "Сначала передайте предыдущие шаги истории.");
@@ -104,6 +104,25 @@ public static class SqlJournalRoutes
                 var changes = await db.SqlJournalChanges.AsNoTracking().Where(c => c.StudentId == studentId && c.StreamId == streamId && c.Sequence > first && c.Sequence <= sequence).OrderBy(c => c.Sequence).ToArrayAsync();
                 foreach (var change in changes) code = new SqlTextJournal(1, row.Id, row.StartedAt, code, [Wire.Read<SqlTextChange>(change.ChangeJson) with { Sequence = 1 }]).Replay();
                 return new SqlJournalText(row.Id, sequence, code);
+            });
+        });
+        api.MapGet("/teacher/sql-journal/{studentId}/{streamId}/changes/{sequence:long}/execution", (HttpContext ctx, string studentId, string streamId, long sequence) =>
+        {
+            state.Authorize(ctx, "teacher");
+            return state.Read(async db =>
+            {
+                var stream = await db.SqlJournalStreams.FindAsync(studentId, streamId) ?? throw new HttpFault(404, "История не найдена.");
+                var step = await db.SqlJournalChanges.FindAsync(studentId, streamId, sequence) ?? throw new HttpFault(404, "Шаг истории не найден.");
+                var change = Wire.Read<SqlTextChange>(step.ChangeJson);
+                var reference = change.Reference;
+                if (reference?.OperationId is not { } operationId) throw new HttpFault(404, "У шага нет ссылки на запуск.");
+                var evidence = await db.SqlExecutionEvidence.SingleOrDefaultAsync(e => e.StudentId == studentId && e.OperationId == operationId);
+                if (evidence is null) return new SqlJournalExecutionLink("unconfirmed");
+                var attempt = await db.Attempts.FindAsync(evidence.AttemptId);
+                if (attempt is null || attempt.StudentId != studentId || attempt.TaskId != stream.TaskId || attempt.LessonId != stream.LessonId ||
+                    attempt.WorkScope != stream.WorkScope || SqlSyncHash.Text(attempt.Code ?? "") != reference.CodeHash || evidence.Check != change.Kind.StartsWith("check", StringComparison.Ordinal))
+                    return new SqlJournalExecutionLink("mismatch");
+                return new SqlJournalExecutionLink("available", evidence.AttemptId);
             });
         });
     }

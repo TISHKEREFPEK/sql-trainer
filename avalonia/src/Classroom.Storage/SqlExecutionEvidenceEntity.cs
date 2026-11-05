@@ -16,4 +16,5 @@ public sealed class SqlExecutionEvidenceEntity
     public bool Check { get; set; }
     public string? BeforeHash { get; set; }
     public string ResultJson { get; set; } = "";
+    public string? OperationId { get; set; }
 }

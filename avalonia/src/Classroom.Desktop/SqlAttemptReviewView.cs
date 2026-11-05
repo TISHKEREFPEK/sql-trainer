@@ -21,7 +21,7 @@ public sealed class SqlAttemptReviewView : UserControl, IDisposable
     CancellationTokenSource? execution;
     bool disposed;
 
-    public SqlAttemptReviewView(MainWindow owner, ClassroomApi api, SqlReviewAttempt source)
+    public SqlAttemptReviewView(MainWindow owner, ClassroomApi api, SqlReviewAttempt source, bool showOriginalResult = false)
     {
         this.owner = owner; this.api = api; this.source = source;
         editor.Text = source.Code ?? ""; editor.MinHeight = 150;
@@ -45,6 +45,7 @@ public sealed class SqlAttemptReviewView : UserControl, IDisposable
             Ui.Text($"{Ui.Time(source.At)}" + (source.Variant is { } variant ? $" · вариант {variant}, редакция {source.Revision}" : ""), 12), prompt, Ui.Text(availability, 12));
         results.ItemsSource = new[] { new TabItem { Header = "Проверочный запуск", Content = output },
             new TabItem { Header = "Исходный результат", Content = source.OriginalResult is { } original ? Result(original, source.Action == "check" ? original.Correct ? "Первоначальная проверка: верно." : "Первоначальная проверка: не зачтено." : "Первоначальный запуск без проверки ответа.") : Ui.Text("Вывод этой старой попытки не сохранялся.") } };
+        results.SelectedIndex = showOriginalResult ? 1 : 0;
         var split = new Grid { RowDefinitions = new("*,5,*") };
         split.Children.Add(editor); var grip = new GridSplitter { ResizeDirection = GridResizeDirection.Rows, HorizontalAlignment = HorizontalAlignment.Stretch }; Grid.SetRow(grip, 1); split.Children.Add(grip);
         Grid.SetRow(results, 2); split.Children.Add(results);

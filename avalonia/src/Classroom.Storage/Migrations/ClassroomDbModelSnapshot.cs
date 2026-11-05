@@ -780,6 +780,9 @@ namespace Classroom.Storage.Migrations
                     b.Property<bool>("Check")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("OperationId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ResultJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -798,6 +801,9 @@ namespace Classroom.Storage.Migrations
                     b.HasKey("AttemptId");
 
                     b.HasIndex("StudentId", "BeforeHash");
+
+                    b.HasIndex("StudentId", "OperationId")
+                        .IsUnique();
 
                     b.ToTable("SqlExecutionEvidence");
                 });

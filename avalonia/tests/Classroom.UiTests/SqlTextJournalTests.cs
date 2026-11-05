@@ -34,21 +34,23 @@ public sealed class SqlTextJournalTests
         await using var f = await LiveClassroom.Start(); var root = Path.Combine(Path.GetTempPath(), "classroom-sql-journal-" + Guid.NewGuid().ToString("N"));
         var window = new MainWindow(false, false, root); using var view = new StudentScreen(window, f.Student);
         window.Preview(view); window.Show(); await view.Load("database"); window.UpdateLayout();
-        var editor = view.GetVisualDescendants().OfType<TextEditor>().Single(); var states = new List<string> { editor.Text };
+        var editor = view.GetVisualDescendants().OfType<TextEditor>().Single(); var states = new List<(int Step, string Code)>();
+        void Capture() => states.Add((window.SqlStore(f.Student).Find(f.Student.LessonId!, "course", "database")!.Journal!.Changes.Length, editor.Text));
+        Capture();
         try
         {
             editor.Document.UndoStack.ClearAll();
-            editor.Document.Insert(editor.Document.TextLength, "\n-- первый шаг 😀"); states.Add(editor.Text);
-            editor.Document.Insert(editor.Document.TextLength, "\n-- второй шаг"); states.Add(editor.Text);
-            editor.Document.UndoStack.Undo(); states.Add(editor.Text);
-            editor.Document.UndoStack.Redo(); states.Add(editor.Text);
+            editor.Document.Insert(editor.Document.TextLength, "\n-- первый шаг 😀"); Capture();
+            editor.Document.Insert(editor.Document.TextLength, "\n-- второй шаг"); Capture();
+            ApplicationCommands.Undo.Execute(null, editor.TextArea); Capture();
+            ApplicationCommands.Redo.Execute(null, editor.TextArea); Capture();
             var work = window.SqlStore(f.Student).Find(f.Student.LessonId!, "course", "database")!;
-            Assert.NotNull(work.Journal); Assert.Equal(states.Count - 1, work.Journal.Changes.Length);
-            for (var i = 0; i < states.Count; i++) Assert.Equal(states[i], work.Journal.Replay(i));
+            Assert.NotNull(work.Journal); Assert.Equal(new[] { "edit", "edit", "undo", "redo" }, work.Journal.Changes.TakeLast(4).Select(c => c.Kind));
+            foreach (var state in states) Assert.Equal(state.Code, work.Journal.Replay(state.Step));
         }
         finally { view.Dispose(); window.Close(); }
         using var reopened = new SqlLocalStore(root, f.Student.Connection.Fingerprint, f.StudentId);
         var history = reopened.Find(f.Student.LessonId!, "course", "database")!.Journal!;
-        for (var i = 0; i < states.Count; i++) Assert.Equal(states[i], history.Replay(i));
+        foreach (var state in states) Assert.Equal(state.Code, history.Replay(state.Step));
     }
 }

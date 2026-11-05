@@ -89,16 +89,23 @@ public sealed partial class SqlLocalStore : IDisposable
             Save(next); return next;
         }
     }
-    public void Edit(string lesson, string scope, string task, string code, int caret)
+    public void Edit(string lesson, string scope, string task, string code, int caret, string kind = "edit")
     {
         if (code.Length > 12000) throw new InvalidDataException("SQL слишком длинный: до 12000 символов. Новое изменение не записано на диск.");
         lock (gate)
         {
             var work = Find(lesson, scope, task) ?? throw new InvalidDataException("Не найден локальный контекст SQL.");
             Save(work with { Code = code, Caret = Math.Clamp(caret, 0, code.Length), Dirty = true, Error = null,
-                Journal = SqlTextJournal.Record(work.Journal, work.Code, code, "student", "edit", Now) });
+                Journal = SqlTextJournal.Record(work.Journal, work.Code, code, "student", kind, Now) });
         }
     }
+    static SqlLocalWork Marked(SqlLocalWork work, string kind, SqlJournalReference? reference = null) => work with {
+        Journal = SqlTextJournal.Record(work.Journal, work.Code, work.Code, "student", kind, Now, true, reference) };
+    public void Mark(string lesson, string scope, string task, string kind, SqlJournalReference? reference = null)
+    {
+        lock (gate) { Save(Marked(Find(lesson, scope, task) ?? throw new InvalidDataException("Не найден локальный контекст события."), kind, reference)); }
+    }
+    static SqlJournalReference Reference(ExecuteRequest request) => new(request.OperationId, SqlSyncHash.Text(request.Code));
     public PendingExecution? Pending(string lesson, string scope, string task)
     { var request = Find(lesson, scope, task)?.Execution; return request is null ? null : new(task, request); }
     public void Remember(PendingExecution execution)
@@ -106,7 +113,8 @@ public sealed partial class SqlLocalStore : IDisposable
         lock (gate)
         {
             var request = execution.Request; var work = Find(request.LessonId!, request.WorkScope!, execution.TaskId) ?? throw new InvalidDataException("Не найден локальный контекст запроса.");
-            Save(work with { Execution = request });
+            var repeated = work.Journal?.Changes.Any(c => c.Reference?.OperationId == request.OperationId) == true;
+            Save(Marked(work with { Execution = request }, (request.Check ? "check" : "run") + (repeated ? "-retry" : ""), Reference(request)));
         }
     }
     public void Acknowledge(PendingExecution execution, ExecutionDto result)
@@ -114,7 +122,7 @@ public sealed partial class SqlLocalStore : IDisposable
         lock (gate)
         {
             var request = execution.Request; var work = Find(request.LessonId!, request.WorkScope!, execution.TaskId)!;
-            if (work.Execution?.OperationId == request.OperationId) Save(work with { Execution = null, LastExecution = result });
+            if (work.Execution?.OperationId == request.OperationId) Save(Marked(work with { Execution = null, LastExecution = result }, request.Check ? "check-result" : "run-result", Reference(request)));
         }
     }
     public void Action(string lesson, string scope, string task, string action, int seconds = 0)
@@ -122,7 +130,8 @@ public sealed partial class SqlLocalStore : IDisposable
         lock (gate)
         {
             var work = Find(lesson, scope, task) ?? throw new InvalidDataException("Не найден локальный контекст действия.");
-            Save(work with { Actions = (work.Actions ?? []).Append(new(Guid.NewGuid().ToString("N"), task, lesson, scope, action, Now, seconds)).ToArray() });
+            var next = work with { Actions = (work.Actions ?? []).Append(new(Guid.NewGuid().ToString("N"), task, lesson, scope, action, Now, seconds)).ToArray() };
+            Save(action == "activity" ? next : Marked(next, action == "opened" ? "work-open" : "restricted-" + action));
         }
     }
     public void Reject(PendingExecution execution, string error)
@@ -131,7 +140,8 @@ public sealed partial class SqlLocalStore : IDisposable
         {
             var request = execution.Request; var work = Find(request.LessonId!, request.WorkScope!, execution.TaskId)!;
             if (work.Execution?.OperationId == request.OperationId)
-                Save(work with { Execution = null, RejectedExecutions = (work.RejectedExecutions ?? []).Append(new(Now, request, error)).ToArray() });
+                Save(Marked(work with { Execution = null, RejectedExecutions = (work.RejectedExecutions ?? []).Append(new(Now, request, error)).ToArray() },
+                    request.Check ? "check-rejected" : "run-rejected", Reference(request)));
         }
     }
     public void Resolve(string lesson, string scope, string task, bool keepLocal)

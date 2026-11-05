@@ -1,7 +1,21 @@
 namespace Classroom.Contracts;
 
+public sealed record SqlJournalReference(string? OperationId = null, string? CodeHash = null, int? HintIndex = null)
+{
+    public void Validate(string kind)
+    {
+        if (OperationId is not null)
+        {
+            if (!Guid.TryParse(OperationId, out _) || CodeHash?.Length != 64 || !CodeHash.All(Uri.IsHexDigit) || HintIndex is not null ||
+                kind is not ("run" or "check" or "run-retry" or "check-retry" or "run-result" or "check-result" or "run-rejected" or "check-rejected"))
+                throw new InvalidDataException("Некорректная ссылка SQL-истории на запуск.");
+        }
+        else if (CodeHash is not null || HintIndex is null or < 0 or > 10000 || kind is not ("hint-request" or "hint-opened"))
+            throw new InvalidDataException("Некорректная ссылка SQL-истории на подсказку.");
+    }
+}
 public sealed record SqlTextChange(string Id, long Sequence, long At, string Actor, string Kind,
-    string BeforeHash, string AfterHash, int Offset, int Removed, string Inserted, string? Checkpoint = null);
+    string BeforeHash, string AfterHash, int Offset, int Removed, string Inserted, string? Checkpoint = null, SqlJournalReference? Reference = null);
 
 public sealed record SqlTextJournal(int Version, string StreamId, long StartedAt, string BaseCode, SqlTextChange[] Changes)
 {
@@ -12,13 +26,14 @@ public sealed record SqlTextJournal(int Version, string StreamId, long StartedAt
     }
     public static SqlTextJournal Start(string code, long at)
     { ValidateText(code); return new(1, Guid.NewGuid().ToString("N"), at, code, []); }
-    public static SqlTextJournal Record(SqlTextJournal? journal, string before, string after, string actor, string kind, long at, bool force = false)
+    public static SqlTextJournal Record(SqlTextJournal? journal, string before, string after, string actor, string kind, long at, bool force = false, SqlJournalReference? reference = null)
     {
         journal ??= Start(before, at);
         ValidateText(before); ValidateText(after);
         if (journal.Version != 1 || (journal.Changes.Length == 0 ? SqlSyncHash.Text(journal.BaseCode) : journal.Changes[^1].AfterHash) != SqlSyncHash.Text(before))
             throw new InvalidDataException("Исходный текст не совпадает с последним шагом SQL-истории.");
-        if (before == after && !force) return journal;
+        reference?.Validate(kind);
+        if (before == after && !force && reference is null) return journal;
         if (after.Length > 12000) throw new InvalidDataException("SQL слишком длинный для истории.");
         var prefix = 0;
         while (prefix < before.Length && prefix < after.Length && before[prefix] == after[prefix]) prefix++;
@@ -31,7 +46,7 @@ public sealed record SqlTextJournal(int Version, string StreamId, long StartedAt
         var sequence = journal.Changes.LongLength + 1;
         var change = new SqlTextChange(Guid.NewGuid().ToString("N"), sequence, at, actor, kind,
             SqlSyncHash.Text(before), SqlSyncHash.Text(after), prefix, before.Length - prefix - suffix,
-            after.Substring(prefix, after.Length - prefix - suffix), sequence % 64 == 0 ? after : null);
+            after.Substring(prefix, after.Length - prefix - suffix), sequence % 64 == 0 ? after : null, reference);
         return journal with { Changes = journal.Changes.Append(change).ToArray() };
     }
     public string Replay(int? through = null)
@@ -50,6 +65,7 @@ public sealed record SqlTextJournal(int Version, string StreamId, long StartedAt
                 change.BeforeHash != SqlSyncHash.Text(code) || change.Offset < 0 || change.Offset > code.Length || change.Removed < 0 ||
                 change.Removed > code.Length - change.Offset || change.Inserted is null)
                 throw new InvalidDataException("Нарушен порядок или исходное состояние SQL-истории.");
+            change.Reference?.Validate(change.Kind);
             code = code.Remove(change.Offset, change.Removed).Insert(change.Offset, change.Inserted);
             ValidateText(code);
             if (code.Length > 12000 || SqlSyncHash.Text(code) != change.AfterHash || change.Checkpoint is { } checkpoint && checkpoint != code)

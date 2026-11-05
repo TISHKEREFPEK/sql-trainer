@@ -7,3 +7,4 @@ public record SqlJournalStreamInfo(string Id, string LessonId, string WorkScope,
 public record SqlJournalEvent(SqlTextChange Change, long ReceivedAt, string Actor);
 public record SqlJournalEvents(SqlJournalEvent[] Events, bool HasMore, long NextSequence);
 public record SqlJournalText(string StreamId, long Sequence, string Code);
+public record SqlJournalExecutionLink(string Availability, string? AttemptId = null);

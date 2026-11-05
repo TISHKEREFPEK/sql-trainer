@@ -138,9 +138,11 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         {
             if (current is null)
                 return;
-            var id = current.Id;
-            var update = await api.Post<StudentTask>($"tasks/{id}/hint", new HintRequest(current.OpenedHints.Length, lessonId, workScope));
-            if (current?.Id == id)
+            var id = current.Id; var lesson = lessonId!; var scope = workScope; var index = current.OpenedHints.Length;
+            local.Mark(lesson, scope, id, "hint-request", new(HintIndex: index));
+            var update = await api.Post<StudentTask>($"tasks/{id}/hint", new HintRequest(index, lesson, scope));
+            if (update.OpenedHints.Length > index) local.Mark(lesson, scope, id, "hint-opened", new(HintIndex: index));
+            if (current?.Id == id && workScope == scope)
             {
                 current = update;
                 RenderHints();
@@ -155,7 +157,7 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         {
             if (loading || current is null)
                 return;
-            try { local.Edit(lessonId!, workScope, current.Id, editor.Text, editor.CaretOffset); RefreshSaveStatus(); }
+            try { local.Edit(lessonId!, workScope, current.Id, editor.Text, editor.CaretOffset, editKind); RefreshSaveStatus(); }
             catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { saved.Text = "Не удалось сохранить на ПК: " + e.Message; }
             debounce?.Cancel();
             debounce = new();
@@ -197,7 +199,7 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         var reset = Ui.Button("Сбросить запрос", () =>
         {
             if (current is not null)
-                editor.Text = current.Starter;
+                TextCommand("reset", () => editor.Text = current.Starter);
             return Task.CompletedTask;
         });
         resolveConflict = Ui.Button("Разрешить конфликт черновика", ShowDraftConflict); resolveConflict.IsVisible = false;
@@ -233,6 +235,7 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         };
         poll.Tick += async (_, _) => await Synchronize();
         ThemeManager.Changed += ApplyTheme;
+        ConfigureHistory();
         ApplyTheme();
     }
 
@@ -324,6 +327,7 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         var task = await api.Get<StudentTask>($"tasks/{id}");
         if (disposed || stamp != generation)
             return;
+        if (current is not null && historyVisible) RecordHistory("work-leave");
         DisplayTask(task);
         lastInput = Environment.TickCount64;
         local.Action(lessonId!, workScope, id, "opened");
@@ -576,6 +580,8 @@ public sealed partial class StudentScreen : UserControl, IDisposable
                 owner.Message("Преподаватель изменил выдачу. Прежний черновик сохранён; откройте работу в «Моё занятие».");
                 return;
             }
+            for (var hint = current.OpenedHints.Length; hint < update.OpenedHints.Length; hint++)
+                RecordHistory("hint-opened", new(HintIndex: hint));
             current = update;
             Policy();
             RenderHints();
@@ -685,12 +691,15 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         var scroll = Ui.Scroll(list);
         Grid.SetRow(scroll, 1);
         layout.Children.Add(scroll);
-        owner.ShowPage("Справочник SQL", layout);
+        RecordHistory("dictionary-open");
+        owner.ShowPage("Справочник SQL", layout, () => RecordHistory("dictionary-close"));
     }
 
     public void Dispose()
     {
         if (disposed) return;
+        if (historyVisible) RecordHistory("work-close");
+        ReleaseHistory();
         disposed = true;
         generation++;
         poll.Stop();

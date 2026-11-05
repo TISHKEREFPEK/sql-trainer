@@ -260,6 +260,7 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<SqlExecutionStateEntity>().HasKey(x => new { x.StudentId, x.Hash });
         model.Entity<SqlExecutionStateEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<SqlExecutionEvidenceEntity>().HasKey(x => x.AttemptId);
+        model.Entity<SqlExecutionEvidenceEntity>().HasIndex(x => new { x.StudentId, x.OperationId }).IsUnique();
         model.Entity<SqlExecutionEvidenceEntity>().HasOne<AttemptEntity>().WithOne().HasForeignKey<SqlExecutionEvidenceEntity>(x => x.AttemptId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<SqlExecutionEvidenceEntity>().HasOne<SqlExecutionStateEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.BeforeHash }).OnDelete(DeleteBehavior.Cascade);
     }

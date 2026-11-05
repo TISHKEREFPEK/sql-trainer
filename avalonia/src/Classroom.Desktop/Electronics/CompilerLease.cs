@@ -16,16 +16,29 @@ public sealed class CompilerLease : IDisposable
     bool disposed;
     public string ProfileName => Prefix + record.Id;
     static string Root => Path.GetFullPath(Environment.GetEnvironmentVariable("CLASSROOM_COMPILER_LEASES") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "compiler-leases"));
-    public CompilerLease(string runtime, string scratch)
+    public CompilerLease(string runtime, string scratch, string? journalRoot = null)
     {
-        RecoverOrphans();
+        var root = Path.GetFullPath(journalRoot ?? Root);
+        RecoverOrphans(root);
         using var self = Process.GetCurrentProcess();
         record = new(Guid.NewGuid().ToString("N"), self.Id, self.StartTime.ToUniversalTime().Ticks, Path.GetFullPath(runtime), Path.GetFullPath(scratch), false, []);
-        Directory.CreateDirectory(Root); file = Path.Combine(Root, record.Id + ".json"); Save();
+        Directory.CreateDirectory(root); file = Path.Combine(root, record.Id + ".json"); Save();
     }
     void Save()
     {
-        File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(record)); File.Move(file + ".tmp", file, true);
+        var temporary = file + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            { JsonSerializer.Serialize(output, record); output.Flush(true); }
+            for (var attempt = 0; ; attempt++)
+            {
+                try { File.Move(temporary, file, true); break; }
+                catch (Exception e) when ((e is IOException or UnauthorizedAccessException) && (e.HResult & 0xffff) is 5 or 32 or 33 && attempt < 8)
+                { Thread.Sleep(25 * (attempt + 1)); }
+            }
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
     public void MarkProfile() { record = record with { ProfileCreated = true }; Save(); }
     public void AddDrive(string device, string target) { record.Drives.Add(new(device, target)); Save(); }
@@ -51,7 +64,11 @@ public sealed class CompilerLease : IDisposable
             try
             {
                 if (File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint) || new FileInfo(file).Length > 16000) continue;
-                var value = JsonSerializer.Deserialize<Record>(File.ReadAllText(file));
+                // An orphan scan must not deny atomic replacement of a live lease.
+                // The open handle sees a complete old/new file, never a partial write.
+                Record? value;
+                using (var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    value = JsonSerializer.Deserialize<Record>(input);
                 if (value is null || !Valid(value, file) || !value.Closed && Alive(value)) continue;
                 if (Cleanup(value, recovering: true)) File.Delete(file);
             }

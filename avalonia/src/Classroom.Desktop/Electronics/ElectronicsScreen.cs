@@ -23,6 +23,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     readonly CircuitViewport viewport;
     readonly TextBlock zoomText=Ui.Text("100%",12);
     readonly ElectronicsSync? sync;
+    readonly ElectronicsHistoryStore? history;
     ElectronicsAssignmentDto? assignment;
     readonly Button? submitButton;
     public string? AssignmentId => assignment?.Id;
@@ -72,8 +73,23 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         try { if (File.Exists(path)) project = CircuitProject.Parse(File.ReadAllText(path)); }
         catch (Exception e) when (e is IOException or System.Text.Json.JsonException or InvalidDataException)
         {
-            savePath = path + ".recovered-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + ".json";
+            if (classroom is null || teacher) savePath = path + ".recovered-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + ".json";
             loadError = "Не удалось прочитать сохранённую схему. Исходный файл оставлен без изменений; новая работа сохраняется отдельно. " + e.Message;
+        }
+        if (classroom?.ProfileId is { } profile && !teacher)
+        {
+            history = new ElectronicsHistoryStore(path + ".history", new(profile, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id), loadError is null ? project.Serialize() : null);
+            try
+            {
+                var restored = CircuitProject.Parse(history.ProjectJson);
+                if (history.Reopened && (loadError is not null || restored.Serialize() != project.Serialize()))
+                {
+                    if (File.Exists(path)) File.Copy(path, path + ".history-source-" + Guid.NewGuid().ToString("N"), false);
+                    loadError = "Открыта последняя проверенная версия из локальной истории. Несовпадающий исходный файл сохранён отдельной копией.";
+                }
+                project = restored;
+            }
+            catch { history.Dispose(); throw; }
         }
         monitor.IsReadOnly = true;
         partCategory.ItemsSource = PartCatalog.Categories; partCategory.SelectedIndex = 0;
@@ -109,7 +125,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var wireMenu=new MenuItem{Header="Цвет провода",ItemsSource=new[]{"Зелёный","Красный","Чёрный","Синий"}.Select((label,index)=>Menu(label,()=>{wireColor.SelectedIndex=index;return Task.CompletedTask;})).ToArray()};
         var fileMenu=new ContextMenu{ItemsSource=new object[]{Menu("Новая схема",()=>Replace(new CircuitProject())),Menu("Открыть…",Import),Menu("Сохранить JSON…",()=>Export(false)),Menu("Экспорт SVG…",()=>Export(true)),new Separator(),exampleMenu,wireMenu,new Separator(),Menu("Проверить код",()=>Compile(false))}};
         var fileButton=Ui.Button("Файл",()=>Task.CompletedTask);fileButton.ContextMenu=fileMenu;fileButton.Click+=(_,_)=>fileMenu.Open(fileButton);
-        var toolbar=Ui.Row(fileButton,Ui.Button("Отменить",()=>Perform(()=>History(undo,redo))),Ui.Button("Повторить",()=>Perform(()=>History(redo,undo))));toolbar.Spacing=4;
+        var toolbar=Ui.Row(fileButton,Ui.Button("Отменить",()=>Perform(()=>History(undo,redo,"undo"))),Ui.Button("Повторить",()=>Perform(()=>History(redo,undo,"redo"))));toolbar.Spacing=4;
         foreach(var button in toolbar.Children.OfType<Button>()){button.Padding=new Thickness(10,7);button.MinHeight=32;button.FontSize=12;}
         var toolbarCard=Ui.Card(toolbar);toolbarCard.Padding=new Thickness(5);toolbarCard.Margin=new Thickness(12);toolbarCard.HorizontalAlignment=HorizontalAlignment.Left;toolbarCard.VerticalAlignment=VerticalAlignment.Top;sceneLayer.Children.Add(toolbarCard);
         var mainActions=Ui.Row();
@@ -138,8 +154,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         foreach(var button in zoomControls.Children.OfType<Button>()){button.Padding=new Thickness(10,7);button.MinHeight=32;button.FontSize=12;}
         var zoomCard=Ui.Card(zoomControls);zoomCard.Padding=new Thickness(5);zoomCard.Margin=new Thickness(12);zoomCard.HorizontalAlignment=HorizontalAlignment.Right;zoomCard.VerticalAlignment=VerticalAlignment.Bottom;sceneLayer.Children.Add(zoomCard);
         ToolTip.SetTip(viewport,"Колесо — масштаб. Средняя или правая кнопка мыши — перемещение. Пробел + перетаскивание — перемещение.");
-        name.TextChanged += (_, _) => { if (loading) return; project.Name = name.Text ?? ""; QueueSave(); };
-        editor.TextChanged += (_, _) => { if (loading) return; if (running) Stop(); project.Code = editor.Text; QueueSave(); };
+        name.TextChanged += (_, _) => { if (loading) return; project.Name = name.Text ?? ""; _ = Perform(() => { RecordHistory("rename"); QueueSave(); }); };
+        editor.TextChanged += (_, _) => { if (loading) return; if (running) Stop(); project.Code = editor.Text; _ = Perform(() => { RecordHistory(codeHistoryKind); QueueSave(); }); };
         autosave.Tick += (_, _) => { autosave.Stop(); _ = Perform(Save); };
         timer.Tick += async (_, _) => await Tick();
         var root = new Grid { RowDefinitions = new("Auto,*,Auto"), Margin = new Thickness(16,14,16,10), RowSpacing = 8 };
@@ -170,6 +186,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             if(results) { Stop(); Save(); }
         };
         Content = root;
+        ConfigureHistory();
         Ui.BindBrush(editor,TextEditor.BackgroundProperty,"Editor");Ui.BindBrush(editor,TextEditor.ForegroundProperty,"EditorInk");editor.Padding=new Thickness(16,20);ThemeManager.Changed+=ApplyEditorTheme;ApplyEditorTheme();
         Refresh();
         var initialFit = true;
@@ -189,6 +206,12 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
 
     void OnReceipt(ElectronicsSyncReceipt receipt)
     {
+        if (history is not null) foreach (var id in receipt.ReportIds)
+        {
+            var reference = history.Journal.Changes.LastOrDefault(c => c.ReportId == id);
+            if (reference?.ReportHash is { } hash && reference.Kind != "report-received")
+                _ = Perform(() => RecordHistory("report-received", true, reportId: id, reportHash: hash));
+        }
         if (assignment is null || receipt.CanSubmit is null || receipt.AssignmentVersion < assignment.StateVersion) return;
         assignment = assignment with { State = receipt.AssignmentState ?? assignment.State, CanSubmit = receipt.CanSubmit.Value, StateVersion = receipt.AssignmentVersion ?? assignment.StateVersion };
         UpdateSubmit();
@@ -226,23 +249,24 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         Stop(); undo.Add(project.Serialize()); if (undo.Count > 50) undo.RemoveAt(0); redo.Clear();
     }
-    void History(List<string> from, List<string> to)
+    void History(List<string> from, List<string> to, string kind)
     {
         if (from.Count == 0) return;
-        Stop(); to.Add(project.Serialize()); project = CircuitProject.Parse(from[^1]); from.RemoveAt(from.Count - 1); selected = null; selectedWire = null; startPin = null; Refresh(); Save();
+        Stop(); to.Add(project.Serialize()); project = CircuitProject.Parse(from[^1]); from.RemoveAt(from.Count - 1); selected = null; selectedWire = null; startPin = null; Refresh(); Save(kind, true);
     }
     void QueueSave() { autosave.Stop(); autosave.Start(); }
-    void Save()
+    void Save() => Save("scheme-edit");
+    void Save(string kind, bool force = false, string? gestureId = null)
     {
         project.Validate(); Directory.CreateDirectory(Path.GetDirectoryName(savePath)!);
-        File.WriteAllText(savePath + ".tmp", project.Serialize()); File.Move(savePath + ".tmp", savePath, true);
+        var json = project.Serialize(); history?.Record(json, kind, force, gestureId); ElectronicsHistoryStore.Mirror(savePath, json);
         try { sync?.QueueDraft(project.Serialize()); }
         catch (Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException) { syncStatus.Text="Локальная схема сохранена. Не удалось сохранить очередь передачи."; owner.Error(e.Message); }
     }
     bool Report(string kind,string json,string detail="")
     {
         if(sync is null) return false;
-        try { sync.Record(kind,json,detail,kind == "submitted" ? assignment?.StateVersion : null); return true; }
+        try { var id=Guid.NewGuid().ToString("N"); RecordHistory("report-"+kind,true,reportId:id,reportHash:SqlSyncHash.Text(json)); sync.Record(kind,json,detail,kind == "submitted" ? assignment?.StateVersion : null,id); return true; }
         catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error(e.Message); return false; }
     }
     public async Task<bool> Synchronize() { Save(); return sync is null || await sync.Drain(); }
@@ -258,7 +282,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var guide = CircuitCodeGuide.Build(project);
         if (guide.Sketch is null || !await owner.Confirm("Заменить текущий код начальным шаблоном по соединениям? Изменение можно отменить.")) return;
         if (disposed) return;
-        await Perform(() => { Checkpoint(); project.Code = guide.Sketch; Refresh(); Save(); });
+        await Perform(() => { Checkpoint(); project.Code = guide.Sketch; Refresh(); Save("code-template"); });
     }
     void RenderLibrary()
     {
@@ -299,12 +323,12 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null);
         var trial = CircuitProject.Parse(project.Serialize()); trial.Parts.Add(part); trial.Validate();
         project.Parts.Add(part);
-        selected = id; selectedWire = null; Refresh(); Save();
+        selected = id; selectedWire = null; Refresh(); Save("part-add");
     }
     async Task Replace(CircuitProject next)
     {
         if (project.Parts.Count > 0 && !await owner.Confirm("Заменить открытую схему? Её можно предварительно сохранить в JSON.")) return;
-        await Perform(() => { Checkpoint(); project = next; selected = null; selectedWire = null; startPin = null; Refresh(); Save(); });
+        await Perform(() => { Checkpoint(); project = next; selected = null; selectedWire = null; startPin = null; Refresh(); Save("project-replace",true); });
     }
     async Task Import()
     {
@@ -396,7 +420,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                     if (i < 0) return;
                     project.Parts[i] = p.Kind == PartKind.Pot3 ? project.Parts[i] with { Setting = slider.Value }
                         : project.Parts[i] with { Value = p.Kind == PartKind.AnalogSensor ? slider.Value * 5 : Math.Max(1, slider.Value * 100000) };
-                    result = CircuitSolver.Solve(project, outputs); Draw(); QueueSave();
+                    RecordHistory("control-change"); result = CircuitSolver.Solve(project, outputs); Draw(); QueueSave();
                 });
             };
         }
@@ -472,27 +496,29 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             group.Children.Add(board);
             var title = new TextBlock { Text = PartLibrary.Name(p), FontSize = 12 * zoom, MaxWidth = Math.Max(80, size.Width) * zoom, TextTrimming = TextTrimming.CharacterEllipsis };
             Canvas.SetTop(title, -22 * zoom); group.Children.Add(title); title.IsHitTestVisible = false;
-            Point origin = default; CircuitPart drag = p; bool moving = false, changed = false;
+            Point origin = default; CircuitPart drag = p; bool moving = false, changed = false; string? moveGesture = null;
             board.PointerPressed += (_, e) =>
             {
                 if (!e.GetCurrentPoint(board).Properties.IsLeftButtonPressed) return;
                 canvas.Focus();selected = p.Id; selectedWire = null; Inspect();workGrid.UpdateLayout(); DrawSelection();
                 if (e.ClickCount == 2 && p.Kind == PartKind.Switch) { Toggle(p.Id); e.Handled = true; return; }
-                origin = e.GetPosition(canvas); drag = project.Parts.Single(x => x.Id == p.Id); moving = true; e.Pointer.Capture(board); e.Handled = true;
+                origin = e.GetPosition(canvas); drag = project.Parts.Single(x => x.Id == p.Id); moving = true; moveGesture = Guid.NewGuid().ToString("N"); e.Pointer.Capture(board); e.Handled = true;
             };
             board.PointerMoved += (_, e) =>
             {
                 if (!moving) return;
                 var point = e.GetPosition(canvas); var i = project.Parts.FindIndex(x => x.Id == p.Id);
                 if (!changed && Math.Abs(point.X - origin.X) + Math.Abs(point.Y - origin.Y) < 3) return;
-                if (!changed) { Checkpoint(); changed = true; }
+                if (!changed) { _ = Perform(() => RecordHistory("move-start", true, moveGesture)); Checkpoint(); changed = true; }
                 project.Parts[i] = drag with { X = PartArtwork.Coordinate(drag.X + (point.X - origin.X) / zoom), Y = PartArtwork.Coordinate(drag.Y + (point.Y - origin.Y) / zoom) };
+                _ = Perform(() => RecordHistory("move", gestureId: moveGesture));
                 Canvas.SetLeft(group, project.Parts[i].X * zoom); Canvas.SetTop(group, project.Parts[i].Y * zoom);
                 foreach (var line in canvas.Children.OfType<Polyline>().ToArray()) canvas.Children.Remove(line);
                 DrawWires();
                 DrawSelection();
             };
-            board.PointerReleased += (_, e) => { if (!moving) return; moving = false; e.Pointer.Capture(null); Draw(); Inspect(); QueueSave(); };
+            board.PointerReleased += (_, e) => { if (!moving) return; moving = false; e.Pointer.Capture(null); Draw(); Inspect(); if(changed) _ = Perform(()=>Save("move-end",true,moveGesture)); };
+            board.PointerCaptureLost += (_, _) => { if (!moving) return; moving=false; if(changed) _ = Perform(()=>Save("move-capture-lost",true,moveGesture)); };
             if (result?.Parts.TryGetValue(p.Id, out var reading) == true)
             {
                 var indication = p.Kind == PartKind.Servo ? reading.Indicator is { } angle ? $" · {angle:F0}°" : " · нет PWM" : p.Kind == PartKind.Motor ? $" · {reading.Indicator:F0}%" : "";
@@ -578,7 +604,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         await PerformAsync(async () =>
         {
-            Stop(); Save(); compilation = new(); var generation = runId; running = true;
+            Stop(); Save(); RecordHistory(run?"run-request":"compile-request",true); compilation = new(); var generation = runId; running = true;
             var snapshot = project.Serialize(); var failureKind = run ? "run-error" : "compile-error";
             status.Text = "Компиляция Arduino Uno…";
             try
@@ -630,7 +656,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     public void Suspend() { Stop(); Save(); }
     void Stop()
     {
-        if (running) status.Text = "Симуляция остановлена.";
+        if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
         runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose(); outputs = null;
     }
     string Svg()
@@ -659,8 +685,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     void ApplyEditorTheme()=>editor.SyntaxHighlighting=CodeAppearance.CppForTheme();
     public void Dispose()
     {
-        if (disposed) return; disposed = true; Stop(); autosave.Stop();
+        if (disposed) return; Stop(); autosave.Stop();
         try { Save(); } catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error("Не удалось сохранить схему: " + e.Message); }
-        ThemeManager.Changed-=ApplyEditorTheme;sync?.Dispose(); resultsView?.Dispose();
+        ReleaseHistory(); disposed = true; history?.Dispose(); ThemeManager.Changed-=ApplyEditorTheme;sync?.Dispose(); resultsView?.Dispose();
     }
 }

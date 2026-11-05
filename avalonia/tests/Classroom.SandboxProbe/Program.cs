@@ -16,6 +16,17 @@ if (args.Length == 2 && args[0] == "sql-store")
     return 5;
 }
 
+if (args.Length == 2 && args[0] == "electronics-history")
+{
+    var input = Wire.Read<ElectronicsHistoryInput>(File.ReadAllText(args[1]));
+    using var store = new ElectronicsHistoryStore(input.Root, input.Context, input.InitialJson);
+    store.Record(input.EditedJson, "code-edit");
+    store.Record(input.EditedJson, "report-submitted", true, reportId: input.ReportId, reportHash: SqlSyncHash.Text(input.EditedJson));
+    await File.WriteAllTextAsync(args[1] + ".ready", "ready");
+    await Task.Delay(Timeout.InfiniteTimeSpan);
+    return 6;
+}
+
 if (!OperatingSystem.IsWindows() || args.Length != 2) return 2;
 var runtime = Path.GetFullPath(args[0]); var scratch = Path.GetFullPath(args[1]);
 WindowsSandboxProcess.GrantRuntimeRead(runtime);
@@ -33,3 +44,4 @@ Environment.Exit(73);
 return 0;
 
 sealed record SqlStoreInput(string Root, string Fingerprint, string ProfileId, string LessonId, StudentTask Task, ExecuteRequest Request);
+sealed record ElectronicsHistoryInput(string Root, ElectronicsHistoryContext Context, string InitialJson, string EditedJson, string ReportId);

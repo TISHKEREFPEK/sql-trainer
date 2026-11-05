@@ -77,16 +77,17 @@ public sealed class ElectronicsSync : IDisposable
         Persist(); if(Pending) status("Ожидает передачи преподавателю…");
         }
     }
-    public void Record(string kind,string json,string detail="",int? expectedAssignmentVersion=null)
+    public void Record(string kind,string json,string detail="",int? expectedAssignmentVersion=null,string? reportId=null)
     {
         lock(stateGate)
         {
         if(disposed) return;
         if(!ElectronicsProjectFormat.ReportKinds.Contains(kind)) throw new InvalidDataException("Неизвестный вид результата.");
+        if(reportId is not null && !Guid.TryParseExact(reportId,"N",out _)) throw new InvalidDataException("Некорректный номер результата.");
         if(state.AssignmentId is not null && kind=="submitted" && state.Reports.Any(r=>r.Kind=="submitted")) return;
         if(state.Reports.Count>=100 || state.Reports.Sum(r=>r.ProjectJson.Length)+(long)json.Length>16_000_000) throw new InvalidDataException("Очередь результатов заполнена. Подключитесь к преподавателю и повторите отправку; локальная схема сохранена.");
         var explanation = detail.Length>16000 ? detail[..15900]+"\n[Сообщение сокращено. Полный текст сохранён в приложении ученика.]" : detail;
-        state.Reports.Add(new(Guid.NewGuid().ToString("N"),kind,json,explanation,expectedAssignmentVersion)); Persist(); status("Результат сохранён локально и ожидает передачи.");
+        state.Reports.Add(new(reportId??Guid.NewGuid().ToString("N"),kind,json,explanation,expectedAssignmentVersion)); Persist(); status("Результат сохранён локально и ожидает передачи.");
         }
     }
     public async Task<bool> Flush()

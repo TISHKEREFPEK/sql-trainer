@@ -29,6 +29,13 @@ public sealed class ElectronicsResultsTests
         await WaitFor(async()=>{await studentView.Synchronize();var row=(await f.Admin.Get<ElectronicsOverview>("teacher/electronics")).Students.Single();return row.Submitted==1&&row.Compiled==1&&row.Errors==1;});
         var detail=await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}");Assert.Contains(detail.Reports,r=>r.Kind=="started");Assert.Contains(detail.Reports,r=>r.Kind=="compile-error");
         var error=detail.Reports.Single(r=>r.Kind=="compile-error");Assert.Contains("invalid_student_symbol",(await f.Admin.Get<ElectronicsSnapshot>($"teacher/electronics/{f.StudentId}/report/{error.Id}")).Detail);
+        foreach(var report in detail.Reports)
+        {
+            var reportSnapshot=await f.Admin.Get<ElectronicsSnapshot>($"teacher/electronics/{f.StudentId}/report/{report.Id}");
+            var marker=studentView.LocalHistory!.Changes.Single(c=>c.ReportId==report.Id && c.Kind=="report-"+report.Kind);
+            Assert.Equal(SqlSyncHash.Text(reportSnapshot.ProjectJson),marker.ReportHash);
+            Assert.Contains(studentView.LocalHistory.Changes,c=>c.ReportId==report.Id && c.Kind=="report-received");
+        }
         var own=CircuitExamples.Servo();own.Name="Собственная схема преподавателя";var teacherFile=Path.Combine(dir,"teacher.json");File.WriteAllText(teacherFile,own.Serialize());
         var teacher=new MainWindow(true,false){Width=1320,Height=900};using var teacherView=new ElectronicsScreen(teacher,teacherFile,f.Admin,teacher:true);teacher.Preview(teacherView);teacher.Show();teacher.UpdateLayout();
         var teacherTabs=teacherView.GetVisualDescendants().OfType<TabControl>().Single(t=>t.Name=="ElectronicsWorkspaceTabs");teacherTabs.SelectedIndex=1;

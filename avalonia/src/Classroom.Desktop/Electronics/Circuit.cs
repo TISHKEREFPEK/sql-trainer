@@ -21,7 +21,7 @@ public sealed record CircuitProject
         WriteIndented = true, Converters = { new JsonStringEnumConverter() },
         RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true
     };
-    public string Serialize() => JsonSerializer.Serialize(this, Json);
+    public string Serialize() { Validate(); return JsonSerializer.Serialize(this, Json); }
     public static CircuitProject Parse(string text)
     {
         if (text.Length > 2_000_000) throw new InvalidDataException("Схема слишком большая (не более 2 МБ).");
@@ -30,6 +30,13 @@ public sealed record CircuitProject
     }
     public void Validate()
     {
+        try
+        {
+            var encoding = new System.Text.UTF8Encoding(false, true);
+            foreach (var text in new[] { Code, Name }.Concat(Favorites).Concat(Parts.SelectMany(p => (p.CustomPins ?? []).Append(p.Id).Append(p.ModelId ?? "")))
+                         .Concat(Wires.SelectMany(w => new[] { w.Id, w.From.Part, w.From.Pin, w.To.Part, w.To.Pin, w.Color }))) _ = encoding.GetByteCount(text);
+        }
+        catch (System.Text.EncoderFallbackException e) { throw new InvalidDataException("В тексте есть неполный символ. Завершите ввод или отмените изменение; новая схема не сохранена.", e); }
         if (Version != 1) throw new InvalidDataException("Версия схемы не поддерживается. Исходный файл сохранён без изменений.");
         if (Parts.Count > 80 || Wires.Count > 200 || Code.Length > 100_000 || Name.Length > 120 || Favorites.Count > 256 || Favorites.Any(f => f.Length > 100))
             throw new InvalidDataException("Превышен размер проекта: 80 компонентов, 200 проводов, 100 000 символов кода.");

@@ -33,6 +33,10 @@ public sealed partial class SqlLocalStore
         else if (work.JournalIndex is not null) throw new InvalidDataException("Сегменты истории не соответствуют формату работы.");
         if (envelope.Version == 1 && work.Journal is not null || work.Journal is not null && work.Journal.Replay() != work.Code)
             throw new InvalidDataException("SQL-история не соответствует локальному тексту.");
+        if (work.JournalDelivery is { } delivery && (work.Journal is null || !Guid.TryParseExact(delivery.StreamId, "N", out _) ||
+            delivery.Acknowledged < 0 || delivery.Acknowledged > work.Journal.Changes.LongLength ||
+            delivery.ForkedFrom is { } parent && (!Guid.TryParseExact(parent, "N", out _) || parent == delivery.StreamId)))
+            throw new InvalidDataException("Некорректная квитанция SQL-истории.");
         return work;
     }
     static SqlRecoveryCandidate InspectRecovery(string file, string profile, string fingerprint, string problem)

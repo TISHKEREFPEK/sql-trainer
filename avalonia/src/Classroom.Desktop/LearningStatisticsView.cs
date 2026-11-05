@@ -174,6 +174,11 @@ public sealed class LearningStatisticsView : UserControl
         page.Children.Add(Ui.Text("Принятый ответ", 20));
         page.Children.Add(Code(d.AcceptedCode ?? (r.CompletedAt is null ? "Ещё не решено" : "Ответ не записывался в прежней версии")));
         page.Children.Add(new Expander { Header = "Текущий сохранённый черновик", Content = Code(d.Draft.Length == 0 ? "Черновик пуст" : d.Draft) });
+        page.Children.Add(Ui.Button("Пошаговая история SQL", () => owner.Safe(async () =>
+        {
+            var view = new SqlJournalView(owner, api, r.StudentId, r.TaskId, r.Title);
+            owner.ShowPage("История SQL", view, view.Dispose); await view.Load();
+        })));
         page.Children.Add(Ui.Text("История действий · последние сверху", 20));
         foreach (var e in history)
         {

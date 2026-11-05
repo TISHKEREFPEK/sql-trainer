@@ -25,6 +25,24 @@ public static class DatabaseHealth
                 throw new InvalidDataException("Нарушены связи между записями.");
         }
         var profiles = db.Profiles.AsNoTracking().ToArray();
+        foreach (var stream in db.SqlJournalStreams.AsNoTracking())
+        {
+            if (!profiles.Any(p => p.Id == stream.StudentId && p.Role == "student") || !Guid.TryParseExact(stream.Id, "N", out _) ||
+                stream.Sequence is < 0 or > 10000000 || stream.ReceivedAt <= 0 || stream.StartedAt > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds() || stream.WorkScope != "course" && stream.WorkScope != "lesson:" + stream.LessonId)
+                throw new InvalidDataException("Некорректный контекст SQL-журнала.");
+            if (stream.ForkedFrom is { } parent && (parent == stream.Id || !db.SqlJournalStreams.Any(s => s.StudentId == stream.StudentId && s.Id == parent && s.LessonId == stream.LessonId && s.TaskId == stream.TaskId && s.WorkScope == stream.WorkScope)))
+                throw new InvalidDataException("Потеряна исходная ветвь SQL-истории.");
+            var code = new SqlTextJournal(1, stream.Id, stream.StartedAt, stream.BaseCode, []).Replay(); long sequence = 0;
+            foreach (var step in db.SqlJournalChanges.AsNoTracking().Where(c => c.StudentId == stream.StudentId && c.StreamId == stream.Id).OrderBy(c => c.Sequence))
+            {
+                var change = Wire.Read<SqlTextChange>(step.ChangeJson);
+                if (step.Sequence != ++sequence || change.Sequence != sequence || step.EventId != change.Id || step.Actor != "student" || step.ReceivedAt <= 0 || change.At > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds())
+                    throw new InvalidDataException("Нарушена последовательность SQL-истории.");
+                code = new SqlTextJournal(1, stream.Id, stream.StartedAt, code, [change with { Sequence = 1 }]).Replay();
+                if (step.Checkpoint != (sequence % 64 == 0 ? code : null)) throw new InvalidDataException("Неверная контрольная копия SQL-истории.");
+            }
+            if (sequence != stream.Sequence || code != stream.TipCode) throw new InvalidDataException("Неверное последнее состояние SQL-истории.");
+        }
         if (profiles.Any(p => string.IsNullOrWhiteSpace(p.Id) || string.IsNullOrWhiteSpace(p.Login) || p.Role is not ("teacher" or "student") || !Passwords.ValidHash(p.PasswordHash)) || profiles.Select(p => p.Login).Distinct(StringComparer.OrdinalIgnoreCase).Count() != profiles.Length)
             throw new InvalidDataException("Некорректные профили в резервной копии.");
         foreach (var p in profiles)

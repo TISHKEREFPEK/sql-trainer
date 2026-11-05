@@ -8,7 +8,8 @@ public sealed record SqlRejectedExecution(long At, ExecuteRequest Request, strin
 public sealed record SqlLocalWork(string LessonId, StudentTask Task, string Code, string BaseHash, bool Dirty = false,
     SqlDraftSync? PendingDraft = null, SqlDraftReceipt? Conflict = null, ExecuteRequest? Execution = null,
     SqlActionSync[]? Actions = null, SqlConflictArchive[]? Resolutions = null, string? Error = null, int Caret = 0,
-    ExecutionDto? LastExecution = null, SqlRejectedExecution[]? RejectedExecutions = null, SqlTextJournal? Journal = null, SqlJournalIndex? JournalIndex = null);
+    ExecutionDto? LastExecution = null, SqlRejectedExecution[]? RejectedExecutions = null, SqlTextJournal? Journal = null, SqlJournalIndex? JournalIndex = null,
+    SqlJournalDeliveryState? JournalDelivery = null);
 
 // This store contains learning data only. It never serializes a ClassroomApi,
 // login/password/token, teacher seed, solution or unopened hint.
@@ -172,6 +173,7 @@ public sealed partial class SqlLocalStore : IDisposable
                         Bound(api); var receipt = await api.Post<SqlExecutionReceipt>("sql-sync/receipt", new SqlExecutionReceiptRequest(item.Task.Id, pending), cancellation);
                         if (receipt.Found && receipt.Result is not null) { lock (gate) { if (disposed) return; Acknowledge(new(item.Task.Id, pending), receipt.Result); } }
                     }
+                    await DeliverJournal(api, item, cancellation);
                     SqlDraftSync? draft;
                     lock (gate)
                     {

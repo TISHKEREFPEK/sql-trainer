@@ -143,6 +143,8 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<SnapshotEntity> Snapshots => Set<SnapshotEntity>();
     public DbSet<AttemptEntity> Attempts => Set<AttemptEntity>();
     public DbSet<OperationEntity> Operations => Set<OperationEntity>();
+    public DbSet<SqlJournalStreamEntity> SqlJournalStreams => Set<SqlJournalStreamEntity>();
+    public DbSet<SqlJournalChangeEntity> SqlJournalChanges => Set<SqlJournalChangeEntity>();
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
     public DbSet<LessonSessionEntity> LessonSessions => Set<LessonSessionEntity>();
     public DbSet<LessonParticipantEntity> LessonParticipants => Set<LessonParticipantEntity>();
@@ -188,6 +190,13 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     protected override void OnModelCreating(ModelBuilder model) => Configure(model);
     public static void Configure(ModelBuilder model)
     {
+        model.Entity<SqlJournalStreamEntity>().HasKey(x => new { x.StudentId, x.Id });
+        model.Entity<SqlJournalStreamEntity>().HasIndex(x => new { x.StudentId, x.LessonId, x.TaskId, x.ReceivedAt });
+        model.Entity<SqlJournalStreamEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlJournalStreamEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<SqlJournalChangeEntity>().HasKey(x => new { x.StudentId, x.StreamId, x.Sequence });
+        model.Entity<SqlJournalChangeEntity>().HasIndex(x => new { x.StudentId, x.StreamId, x.EventId }).IsUnique();
+        model.Entity<SqlJournalChangeEntity>().HasOne<SqlJournalStreamEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.StreamId }).OnDelete(DeleteBehavior.Cascade);
         model.Entity<GroupEntity>().HasKey(x => x.Id);
         model.Entity<ProfileEntity>().HasKey(x => x.Id);
         model.Entity<ProfileEntity>().HasIndex(x => x.Login).IsUnique();

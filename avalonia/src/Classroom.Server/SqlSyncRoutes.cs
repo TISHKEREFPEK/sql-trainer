@@ -8,7 +8,7 @@ public static class SqlSyncRoutes
 {
     // Delivery may target an ended lesson, but only an existing work of its participant.
     // This never creates an assignment or permits a delayed SQL execution.
-    static async Task<ISqlWork> Existing(ClassroomDb db, Session session, string lessonId, string scope, string taskId)
+    internal static async Task<ISqlWork> Existing(ClassroomDb db, Session session, string lessonId, string scope, string taskId)
     {
         if (!Guid.TryParseExact(lessonId, "N", out _) || string.IsNullOrWhiteSpace(taskId) || taskId.Length > 200 || scope is null)
             throw new HttpFault(400, "Некорректный контекст сохранённой работы.");

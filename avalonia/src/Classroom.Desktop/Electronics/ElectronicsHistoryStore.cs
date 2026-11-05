@@ -5,11 +5,11 @@ namespace Classroom.Desktop.Electronics;
 public sealed record ElectronicsHistoryContext(string ProfileId, string Fingerprint, string LessonId, string? AssignmentId);
 
 // Learning data only: no API instance, passwords, tokens or teacher solutions.
-public sealed class ElectronicsHistoryStore : IDisposable
+public sealed partial class ElectronicsHistoryStore : IDisposable
 {
     sealed record PageRef(long First, string Hash);
     sealed record Page(int Version, ElectronicsHistoryContext Context, string StreamId, ElectronicsChange[] Changes);
-    sealed record Index(int Version, ElectronicsHistoryContext Context, string StreamId, long StartedAt, string BaseJson, PageRef[] Pages, ElectronicsChange[] Tail);
+    sealed record Index(int Version, ElectronicsHistoryContext Context, string StreamId, long StartedAt, string BaseJson, PageRef[] Pages, ElectronicsChange[] Tail, ElectronicsJournalDeliveryState? Delivery = null);
     sealed record Envelope(int Version, string Payload, string Hash);
     readonly string directory, file;
     readonly ElectronicsHistoryContext context;
@@ -38,7 +38,7 @@ public sealed class ElectronicsHistoryStore : IDisposable
             Reopened = File.Exists(file);
             journal = Reopened ? Read(file) : ElectronicsJournal.Start(initialJson ?? throw new InvalidDataException("Сохранённая схема повреждена, проверенной истории для этой работы нет. Исходник оставлен без замены."), Now);
             json = journal.Replay();
-            if (!Reopened) Persist(journal);
+            if (!Reopened) Persist(journal, cursor);
         }
         catch { lease.Dispose(); throw; }
     }
@@ -74,6 +74,9 @@ public sealed class ElectronicsHistoryStore : IDisposable
                 changes.AddRange(page.Changes);
             }
             changes.AddRange(index.Tail);
+            if (index.Delivery is { } delivery && (!Guid.TryParseExact(delivery.StreamId, "N", out _) || !Guid.TryParseExact(delivery.ClientId, "N", out _) || delivery.Acknowledged < 0 || delivery.Acknowledged > changes.Count ||
+                delivery.ForkedFrom is { } parent && (!Guid.TryParseExact(parent, "N", out _) || parent == delivery.StreamId))) throw new InvalidDataException("Неверная квитанция электронной истории.");
+            cursor = index.Delivery;
             return new(1, index.StreamId, index.StartedAt, index.BaseJson, changes.ToArray());
         }
         catch (Exception e) when (e is IOException or System.Text.Json.JsonException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
@@ -102,7 +105,7 @@ public sealed class ElectronicsHistoryStore : IDisposable
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
-    void Persist(ElectronicsJournal next)
+    void Persist(ElectronicsJournal next, ElectronicsJournalDeliveryState? deliveryState)
     {
         var pages = new List<PageRef>(); var complete = next.Changes.Length / 64;
         for (var i = 0; i < complete; i++)
@@ -119,7 +122,7 @@ public sealed class ElectronicsHistoryStore : IDisposable
             else if (!File.Exists(PageFile(hash))) throw new InvalidDataException("Пропал сегмент истории схемы. Новое изменение не записано.");
             pages.Add(new(start + 1, hash));
         }
-        var payload = Wire.Write(new Index(1, context, next.StreamId, next.StartedAt, next.BaseJson, pages.ToArray(), next.Changes.Skip(complete * 64).ToArray()));
+        var payload = Wire.Write(new Index(1, context, next.StreamId, next.StartedAt, next.BaseJson, pages.ToArray(), next.Changes.Skip(complete * 64).ToArray(), deliveryState));
         var envelope = Wire.Write(new Envelope(1, payload, SqlSyncHash.Text(payload)));
         if (System.Text.Encoding.UTF8.GetByteCount(envelope) > 64 * 1024 * 1024) throw new IOException("Индекс истории схемы заполнен. Новое изменение не записано; сохраните работу отдельно.");
         Atomic(file, envelope, true);
@@ -131,7 +134,7 @@ public sealed class ElectronicsHistoryStore : IDisposable
             ObjectDisposedException.ThrowIf(disposed, this);
             var next = ElectronicsJournal.Record(journal, json, nextJson, kind, Now, force: force, gestureId: gestureId, reportId: reportId, reportHash: reportHash);
             if (ReferenceEquals(next, journal)) return;
-            Persist(next); journal = next; json = nextJson;
+            Persist(next, cursor); journal = next; json = nextJson;
         }
     }
     internal static void Mirror(string file, string json)

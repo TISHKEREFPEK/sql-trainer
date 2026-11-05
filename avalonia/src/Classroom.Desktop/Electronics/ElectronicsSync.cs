@@ -18,12 +18,17 @@ public sealed class ElectronicsSync : IDisposable
     readonly string path;
     readonly Action<string> status;
     readonly Action<ElectronicsSyncReceipt>? receipt;
+    readonly Func<CancellationToken, Task<bool>>? journalDelivery;
+    readonly Func<bool>? journalPending;
+    bool historyBusy;
     readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(2)};
     readonly CancellationTokenSource lifetime=new();
     readonly object stateGate=new();
     Outbox state=new();
     volatile bool busy,disposed,lastFailure;
-    public bool Pending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
+    bool DraftPending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
+    public bool Pending => DraftPending || journalPending?.Invoke() == true;
+    public string ClientId {get{lock(stateGate)return state.ClientId;}}
     public bool PendingSubmission {get{lock(stateGate)return state.Reports.Any(r=>r.Kind=="submitted");}}
     public bool HasStaleSubmission(int currentVersion)
     {
@@ -41,9 +46,10 @@ public sealed class ElectronicsSync : IDisposable
             state.Reports.RemoveAll(r => stale.Any(s => s.Id == r.Id)); Persist();
         }
     }
-    public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null)
+    public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null,
+        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null)
     {
-        this.api=api; this.path=path; this.status=status; this.receipt=receipt;
+        this.api=api; this.path=path; this.status=status; this.receipt=receipt; this.journalDelivery=journalDelivery; this.journalPending=journalPending;
         try
         {
             if(File.Exists(path))
@@ -90,12 +96,12 @@ public sealed class ElectronicsSync : IDisposable
         state.Reports.Add(new(reportId??Guid.NewGuid().ToString("N"),kind,json,explanation,expectedAssignmentVersion)); Persist(); status("Результат сохранён локально и ожидает передачи.");
         }
     }
-    public async Task<bool> Flush()
+    async Task<bool> FlushDraft()
     {
         ElectronicsReportRequest[] reports;long sequence;string json,client;string? assignmentId;
         lock(stateGate)
         {
-            if(disposed||busy||!Pending||state.ProjectJson.Length==0) return !Pending;
+            if(disposed||busy||!DraftPending||state.ProjectJson.Length==0) return !DraftPending;
             busy=true;reports=state.Reports.Take(10).ToArray();sequence=state.Sequence;json=state.ProjectJson;client=state.ClientId;assignmentId=state.AssignmentId;
         }
         try
@@ -109,7 +115,7 @@ public sealed class ElectronicsSync : IDisposable
             if(state.Sequence==sequence && state.ProjectJson==json) state.Dirty=false;
             var ids=ack.ReportIds.ToHashSet(); state.Reports.RemoveAll(r=>ids.Contains(r.Id)); Persist();
             receipt?.Invoke(ack);
-            status(Pending?"Часть результатов передана; очередь отправляется…":"Схема и результаты сохранены у преподавателя."); return !Pending;
+            status(DraftPending?"Часть результатов передана; очередь отправляется…":journalPending?.Invoke()==true?"Снимок и результаты переданы; история ожидает отправки.":"Схема и результаты сохранены у преподавателя."); return !DraftPending;
             }
         }
         catch(Exception e) when(e is HttpRequestException or OperationCanceledException or ApiException or IOException or InvalidDataException or UnauthorizedAccessException)
@@ -119,6 +125,26 @@ public sealed class ElectronicsSync : IDisposable
             return false;
         }
         finally { busy=false; }
+    }
+    public async Task<bool> Flush()
+    {
+        var draft = await FlushDraft();
+        if (disposed || journalDelivery is null) return draft;
+        if (historyBusy) return false;
+        historyBusy = true;
+        try
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); limit.CancelAfter(TimeSpan.FromSeconds(8));
+            var sent = await journalDelivery(limit.Token);
+            if (!disposed && (draft || !lastFailure)) status(sent && draft ? "Схема, результаты и история сохранены у преподавателя." : "Часть данных передана; история продолжает отправляться.");
+            return sent && draft;
+        }
+        catch (Exception e) when (e is ApiException or HttpRequestException or OperationCanceledException or IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            if (!disposed && (draft || !lastFailure)) status(e is ApiException or InvalidDataException or IOException ? "История сохранена на ПК: " + e.Message : "История сохранена на ПК и ожидает связи с преподавателем.");
+            return false;
+        }
+        finally { historyBusy = false; }
     }
     public async Task<bool> Drain()
     {

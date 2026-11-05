@@ -25,6 +25,31 @@ public static class DatabaseHealth
                 throw new InvalidDataException("Нарушены связи между записями.");
         }
         var profiles = db.Profiles.AsNoTracking().ToArray();
+        var electronicsStreams = db.ElectronicsJournalStreams.AsNoTracking().ToArray();
+        foreach (var stream in electronicsStreams)
+        {
+            if (!profiles.Any(p => p.Id == stream.StudentId && p.Role == "student") || !Guid.TryParseExact(stream.Id, "N", out _) || stream.Sequence is < 0 or > 10000000 || stream.ReceivedAt <= 0 || stream.ReceivedAt > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds() ||
+                !db.LessonParticipants.Any(p => p.SessionId == stream.LessonId && p.StudentId == stream.StudentId)) throw new InvalidDataException("Некорректный контекст истории электроники.");
+            var work = db.ElectronicsWorks.AsNoTracking().SingleOrDefault(w => w.StudentId == stream.StudentId && w.ClientId == stream.ClientId);
+            if (work is null || work.AssignmentId != stream.AssignmentId) throw new InvalidDataException("История потеряла исходную копию схемы.");
+            if (stream.AssignmentId is { } assigned && !db.ElectronicsAssignments.Any(a => a.Id == assigned && a.StudentId == stream.StudentId && a.LessonId == stream.LessonId)) throw new InvalidDataException("История относится к другому электронному заданию.");
+            var seen = new HashSet<string> { stream.Id }; var parent = stream.ForkedFrom;
+            while (parent is not null)
+            {
+                var origin = electronicsStreams.SingleOrDefault(s => s.StudentId == stream.StudentId && s.Id == parent);
+                if (origin is null || !seen.Add(parent) || origin.ClientId != stream.ClientId || origin.AssignmentId != stream.AssignmentId || origin.LessonId != stream.LessonId) throw new InvalidDataException("Неверная ветвь истории электроники.");
+                parent = origin.ForkedFrom;
+            }
+            var json = new ElectronicsJournal(1, stream.Id, stream.StartedAt, stream.BaseJson, []).Replay(); long sequence = 0;
+            foreach (var step in db.ElectronicsJournalChanges.AsNoTracking().Where(c => c.StudentId == stream.StudentId && c.StreamId == stream.Id).OrderBy(c => c.Sequence))
+            {
+                var change = Wire.Read<ElectronicsChange>(step.ChangeJson);
+                if (step.Sequence != ++sequence || change.Sequence != sequence || step.EventId != change.Id || step.Actor != "student" || step.ReceivedAt <= 0 || step.ReceivedAt > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()) throw new InvalidDataException("Нарушена последовательность истории электроники.");
+                json = new ElectronicsJournal(1, stream.Id, stream.StartedAt, json, [change with { Sequence = 1 }]).Replay();
+                if (step.Checkpoint != (sequence % 64 == 0 ? json : null)) throw new InvalidDataException("Неверная контрольная схема.");
+            }
+            if (sequence != stream.Sequence || json != stream.TipJson) throw new InvalidDataException("Не совпадает последнее состояние электронной истории.");
+        }
         foreach (var stream in db.SqlJournalStreams.AsNoTracking())
         {
             if (!profiles.Any(p => p.Id == stream.StudentId && p.Role == "student") || !Guid.TryParseExact(stream.Id, "N", out _) ||

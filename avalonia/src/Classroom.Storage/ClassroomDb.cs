@@ -156,6 +156,8 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<LessonElectronicsTaskEntity> LessonElectronicsTasks => Set<LessonElectronicsTaskEntity>();
     public DbSet<ElectronicsAssignmentEntity> ElectronicsAssignments => Set<ElectronicsAssignmentEntity>();
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
+    public DbSet<ElectronicsJournalStreamEntity> ElectronicsJournalStreams => Set<ElectronicsJournalStreamEntity>();
+    public DbSet<ElectronicsJournalChangeEntity> ElectronicsJournalChanges => Set<ElectronicsJournalChangeEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
     public DbSet<ElectronicsReviewEntity> ElectronicsReviews => Set<ElectronicsReviewEntity>();
     public DbSet<SqlExecutionStateEntity> SqlExecutionStates => Set<SqlExecutionStateEntity>();
@@ -237,6 +239,13 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<LessonSqlSnapshotEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<AttemptEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
+        model.Entity<ElectronicsJournalStreamEntity>().HasKey(x => new { x.StudentId, x.Id });
+        model.Entity<ElectronicsJournalStreamEntity>().HasIndex(x => new { x.StudentId, x.LessonId, x.ReceivedAt });
+        model.Entity<ElectronicsJournalStreamEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsJournalStreamEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<ElectronicsJournalChangeEntity>().HasKey(x => new { x.StudentId, x.StreamId, x.Sequence });
+        model.Entity<ElectronicsJournalChangeEntity>().HasIndex(x => new { x.StudentId, x.StreamId, x.EventId }).IsUnique();
+        model.Entity<ElectronicsJournalChangeEntity>().HasOne<ElectronicsJournalStreamEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.StreamId }).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsTaskEntity>().HasKey(x => x.Id);
         model.Entity<ElectronicsTaskRevisionEntity>().HasKey(x => new { x.TaskId, x.Revision });
         model.Entity<ElectronicsTaskRevisionEntity>().HasOne<ElectronicsTaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Cascade);

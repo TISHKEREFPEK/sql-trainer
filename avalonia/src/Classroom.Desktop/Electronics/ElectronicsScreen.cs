@@ -142,6 +142,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             Save(); if (!Report("submitted",project.Serialize())) return;
             if (this.assignment is not null) submitButton!.IsEnabled = false;
             if (await Synchronize()) owner.Message("Работа отправлена преподавателю.");
+            else if (sync?.PendingSubmission == false) owner.Message("Работа отправлена преподавателю. История ещё передаётся.");
             else owner.Error("Работа сохранена локально, но передача пока не завершена. "+syncStatus.Text);
             }), CanSend);
             submitButton.IsEnabled = assignment?.CanSubmit ?? true;
@@ -199,7 +200,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         status.Text = loadError ?? "";
         if (classroom is not null && !teacher)
         {
-            sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,assignmentId:assignment?.Id,receipt:OnReceipt);
+            sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,assignmentId:assignment?.Id,receipt:OnReceipt,
+                journalDelivery:history is null ? null : token=>history.Deliver(classroom,sync!.ClientId,token),journalPending:history is null ? null : ()=>history.Pending);
             Save();
         }
     }

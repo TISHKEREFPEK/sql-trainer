@@ -36,6 +36,9 @@ public sealed class ElectronicsResultsTests
             Assert.Equal(SqlSyncHash.Text(reportSnapshot.ProjectJson),marker.ReportHash);
             Assert.Contains(studentView.LocalHistory.Changes,c=>c.ReportId==report.Id && c.Kind=="report-received");
         }
+        var delivered=Assert.Single(await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}"));
+        var localHistory=studentView.LocalHistory!; Assert.InRange(delivered.Sequence,1,localHistory.Changes.Length);
+        Assert.Equal(localHistory.Replay((int)delivered.Sequence),(await f.Admin.Get<ElectronicsJournalState>($"teacher/electronics-journal/{f.StudentId}/{delivered.Id}/state?sequence={delivered.Sequence}")).ProjectJson);
         var own=CircuitExamples.Servo();own.Name="Собственная схема преподавателя";var teacherFile=Path.Combine(dir,"teacher.json");File.WriteAllText(teacherFile,own.Serialize());
         var teacher=new MainWindow(true,false){Width=1320,Height=900};using var teacherView=new ElectronicsScreen(teacher,teacherFile,f.Admin,teacher:true);teacher.Preview(teacherView);teacher.Show();teacher.UpdateLayout();
         var teacherTabs=teacherView.GetVisualDescendants().OfType<TabControl>().Single(t=>t.Name=="ElectronicsWorkspaceTabs");teacherTabs.SelectedIndex=1;

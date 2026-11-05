@@ -167,6 +167,95 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("ElectronicsAssignments");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.ElectronicsJournalChangeEntity", b =>
+                {
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StreamId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChangeJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Checkpoint")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ReceivedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("StudentId", "StreamId", "Sequence");
+
+                    b.HasIndex("StudentId", "StreamId", "EventId")
+                        .IsUnique();
+
+                    b.ToTable("ElectronicsJournalChanges");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsJournalStreamEntity", b =>
+                {
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssignmentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BaseJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ForkedFrom")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LessonId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ReceivedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TipJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("StudentId", "Id");
+
+                    b.HasIndex("LessonId");
+
+                    b.HasIndex("StudentId", "LessonId", "ReceivedAt");
+
+                    b.ToTable("ElectronicsJournalStreams");
+                });
+
             modelBuilder.Entity("Classroom.Storage.ElectronicsReportEntity", b =>
                 {
                     b.Property<string>("StudentId")
@@ -1020,6 +1109,30 @@ namespace Classroom.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("LessonId", "TaskId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsJournalChangeEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.ElectronicsJournalStreamEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId", "StreamId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.ElectronicsJournalStreamEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

@@ -8,7 +8,7 @@ public sealed record SqlRejectedExecution(long At, ExecuteRequest Request, strin
 public sealed record SqlLocalWork(string LessonId, StudentTask Task, string Code, string BaseHash, bool Dirty = false,
     SqlDraftSync? PendingDraft = null, SqlDraftReceipt? Conflict = null, ExecuteRequest? Execution = null,
     SqlActionSync[]? Actions = null, SqlConflictArchive[]? Resolutions = null, string? Error = null, int Caret = 0,
-    ExecutionDto? LastExecution = null, SqlRejectedExecution[]? RejectedExecutions = null);
+    ExecutionDto? LastExecution = null, SqlRejectedExecution[]? RejectedExecutions = null, SqlTextJournal? Journal = null);
 
 // This store contains learning data only. It never serializes a ClassroomApi,
 // login/password/token, teacher seed, solution or unopened hint.
@@ -47,7 +47,7 @@ public sealed partial class SqlLocalStore : IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         var key = Key(work.LessonId, work.Task.WorkScope, work.Task.Id);
-        var payload = Wire.Write(work); var json = Wire.Write(new Envelope(1, profileId, fingerprint, payload, SqlSyncHash.Text(payload)));
+        var payload = Wire.Write(work); var json = Wire.Write(new Envelope(work.Journal is null ? 1 : 2, profileId, fingerprint, payload, SqlSyncHash.Text(payload)));
         if (System.Text.Encoding.UTF8.GetByteCount(json) > 64 * 1024 * 1024) throw new IOException("Локальная очередь SQL заполнена. Новое изменение не записано на диск; восстановите связь или сохраните код отдельно.");
         var file = Path.Combine(directory, key + ".work.json"); var temporary = file + ".tmp-" + Guid.NewGuid().ToString("N");
         try
@@ -83,6 +83,7 @@ public sealed partial class SqlLocalStore : IDisposable
             var next = previous is null ? new SqlLocalWork(lesson, task, task.Draft.Length > 0 ? task.Draft : task.Starter, SqlSyncHash.Text(task.Draft))
                 : previous.Dirty || previous.PendingDraft is not null || previous.Conflict is not null ? previous with { Task = task }
                 : previous with { Task = task, Code = task.Draft.Length > 0 ? task.Draft : task.Starter, BaseHash = SqlSyncHash.Text(task.Draft) };
+            next = next with { Journal = SqlTextJournal.Record(previous?.Journal, previous?.Code ?? next.Code, next.Code, "server", "observe", Now) };
             Save(next); return next;
         }
     }
@@ -92,7 +93,8 @@ public sealed partial class SqlLocalStore : IDisposable
         lock (gate)
         {
             var work = Find(lesson, scope, task) ?? throw new InvalidDataException("Не найден локальный контекст SQL.");
-            Save(work with { Code = code, Caret = Math.Clamp(caret, 0, code.Length), Dirty = true, Error = null });
+            Save(work with { Code = code, Caret = Math.Clamp(caret, 0, code.Length), Dirty = true, Error = null,
+                Journal = SqlTextJournal.Record(work.Journal, work.Code, code, "student", "edit", Now) });
         }
     }
     public PendingExecution? Pending(string lesson, string scope, string task)
@@ -135,8 +137,10 @@ public sealed partial class SqlLocalStore : IDisposable
         lock (gate)
         {
             var work = Find(lesson, scope, task)!; var conflict = work.Conflict ?? throw new InvalidDataException("Конфликт уже разрешён.");
-            Save(work with { BaseHash = conflict.ServerHash, Code = keepLocal ? work.Code : conflict.ServerCode,
+            var chosen = keepLocal ? work.Code : conflict.ServerCode;
+            Save(work with { BaseHash = conflict.ServerHash, Code = chosen,
                 Dirty = true, PendingDraft = null, Conflict = null, Error = null,
+                Journal = SqlTextJournal.Record(work.Journal, work.Code, chosen, "student", keepLocal ? "conflict-local" : "conflict-server", Now, true),
                 Resolutions = (work.Resolutions ?? []).Append(new(Now, work.Code, conflict.ServerCode, keepLocal ? "local" : "server")).ToArray() });
         }
     }

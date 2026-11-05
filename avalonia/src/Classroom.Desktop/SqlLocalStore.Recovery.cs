@@ -22,13 +22,15 @@ public sealed partial class SqlLocalStore
         Regular(file);
         if (new FileInfo(file).Length > 64 * 1024 * 1024) throw new InvalidDataException("Локальная SQL-работа слишком велика. Файл оставлен без изменений.");
         var envelope = Wire.Read<Envelope>(System.IO.File.ReadAllText(file));
-        if (envelope.Version != 1 || envelope.ProfileId != profile || envelope.Fingerprint != fingerprint || envelope.Payload is null || SqlSyncHash.Text(envelope.Payload) != envelope.Hash)
+        if (envelope.Version is not (1 or 2) || envelope.ProfileId != profile || envelope.Fingerprint != fingerprint || envelope.Payload is null || SqlSyncHash.Text(envelope.Payload) != envelope.Hash)
             throw new InvalidDataException("Не удалось подтвердить формат, владельца или целостность локальной работы.");
         var work = Wire.Read<SqlLocalWork>(envelope.Payload);
         if (!Guid.TryParseExact(work.LessonId, "N", out _) || work.Task?.Id is null || work.Code is null || work.Code.Length > 12000 ||
             work.Task.WorkScope != "course" && work.Task.WorkScope != "lesson:" + work.LessonId ||
             Path.GetFileName(original) != Key(work.LessonId, work.Task.WorkScope, work.Task.Id) + ".work.json")
             throw new InvalidDataException("Некорректный контекст локального SQL. Файл оставлен без изменений.");
+        if (envelope.Version == 1 && work.Journal is not null || work.Journal is not null && work.Journal.Replay() != work.Code)
+            throw new InvalidDataException("SQL-история не соответствует локальному тексту.");
         return work;
     }
     static SqlRecoveryCandidate InspectRecovery(string file, string profile, string fingerprint, string problem)
@@ -58,6 +60,7 @@ public sealed partial class SqlLocalStore
         if (candidate.Backup is null || candidate.BackupHash is null || FileHash(file) != candidate.SourceHash || FileHash(backup) != candidate.BackupHash)
             throw new IOException("Файлы изменились после просмотра. Повторно откройте восстановление.");
         var recovered = ReadWork(backup, file, candidate.ProfileId, candidate.Fingerprint) with { Dirty = true, PendingDraft = null };
+        recovered = recovered with { Journal = SqlTextJournal.Record(recovered.Journal, recovered.Code, recovered.Code, "recovery", "backup-restore", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), true) };
         var archive = file + ".damaged-" + Guid.NewGuid().ToString("N");
         var temporary = file + ".restore-" + Guid.NewGuid().ToString("N");
         try
@@ -65,7 +68,7 @@ public sealed partial class SqlLocalStore
             using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 var payload = Wire.Write(recovered);
-                target.Write(System.Text.Encoding.UTF8.GetBytes(Wire.Write(new Envelope(1, candidate.ProfileId, candidate.Fingerprint, payload, SqlSyncHash.Text(payload)))));
+                target.Write(System.Text.Encoding.UTF8.GetBytes(Wire.Write(new Envelope(2, candidate.ProfileId, candidate.Fingerprint, payload, SqlSyncHash.Text(payload)))));
                 target.Flush(true);
             }
             if (FileHash(backup) != candidate.BackupHash) throw new IOException("Резервная копия изменилась во время чтения.");

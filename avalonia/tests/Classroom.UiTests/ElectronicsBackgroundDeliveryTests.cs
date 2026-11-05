@@ -1,6 +1,8 @@
 using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
+using AvaloniaEdit;
 using Classroom.Client;
 using Classroom.Contracts;
 using Classroom.Desktop;
@@ -32,7 +34,7 @@ public sealed class ElectronicsBackgroundDeliveryTests
     {
         for (var i = 0; i < 40; i++)
         {
-            await queue.DrainOnce(); var saved = await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}");
+            Assert.Null((await queue.DrainOnce()).Error); var saved = await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}");
             if (saved.Length == streams && saved.Sum(s => s.Sequence) == events) return;
         }
         var actual = await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}");
@@ -136,10 +138,13 @@ public sealed class ElectronicsBackgroundDeliveryTests
         await f.Student.Login(new("student", "ui-test", "synthetic-student-password")); Assert.False((await oldSession.DrainOnce()).Complete);
         Assert.Single(await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}"));
     }
-    [AvaloniaFact]
-    public async Task WindowTimerDeliversWithoutOpeningAnElectronicsEditor()
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WindowTimerDeliversWithoutOpeningAnElectronicsEditor(bool legacy)
     {
-        await using var f = await LiveClassroom.Start(); var root = Root(); var path = ProjectPath(root, f.Student); SaveClosed(path, f.Student, f.Student.LessonId!);
+        await using var f = await LiveClassroom.Start(); var root = Root(); var path = ProjectPath(root, f.Student);
+        if (legacy) ElectronicsLegacyDeliveryTests.SaveLegacy(path, f.Student); else SaveClosed(path, f.Student, f.Student.LessonId!);
         var login = await f.Student.Login(new("student", "ui-test", "synthetic-student-password")); var window = new MainWindow(false, false, root);
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         typeof(MainWindow).GetField("api", flags)!.SetValue(window, f.Student); typeof(MainWindow).GetField("login", flags)!.SetValue(window, login);
@@ -149,12 +154,21 @@ public sealed class ElectronicsBackgroundDeliveryTests
         typeof(MainWindow).GetMethod("StartElectronicsDelivery", flags)!.Invoke(window, null);
         try
         {
-            for (var i = 0; i < 80 && (await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}")).Length == 0; i++) await Task.Delay(100);
-            Assert.Single(await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}"));
+            for (var i = 0; i < 80 && (await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}")).Works.Length == 0; i++) await Task.Delay(100);
+            Assert.Single((await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}")).Works);
+            if (legacy) Assert.Empty(await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}"));
+            else
+            {
+                for (var i = 0; i < 80 && (await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}")).Length == 0; i++) await Task.Delay(100);
+                Assert.Single(await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}"));
+            }
             Assert.Empty(window.GetType().GetField("assignedElectronics", flags)!.GetValue(window) as System.Collections.IDictionary ?? throw new InvalidOperationException());
             Assert.Null(typeof(MainWindow).GetField("electronics", flags)!.GetValue(window));
+            var expectedCode = CircuitProject.Parse(File.ReadAllText(path)).Code;
             await window.EnterLesson(new("electronics"));
-            Assert.IsType<ElectronicsScreen>(typeof(MainWindow).GetField("electronics", flags)!.GetValue(window));
+            window.UpdateLayout();
+            var circuit = Assert.IsType<ElectronicsScreen>(typeof(MainWindow).GetField("electronics", flags)!.GetValue(window));
+            Assert.Equal(expectedCode, circuit.GetVisualDescendants().OfType<TextEditor>().Single().Text);
         }
         finally { await (Task)typeof(MainWindow).GetMethod("Quit", flags)!.Invoke(window, null)!; }
     }

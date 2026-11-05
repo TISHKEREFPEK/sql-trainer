@@ -1,17 +1,18 @@
 using Classroom.Client;
 using Classroom.Contracts;
 using Avalonia.Threading;
+using System.Text.Json.Serialization;
 namespace Classroom.Desktop.Electronics;
 
 public sealed class ElectronicsSync : IDisposable
 {
     public sealed class Outbox
     {
-        public string ClientId { get; set; }=Guid.NewGuid().ToString("N");
-        public long Sequence { get; set; }
-        public string ProjectJson { get; set; }="";
+        [JsonRequired] public string ClientId { get; set; }=Guid.NewGuid().ToString("N");
+        [JsonRequired] public long Sequence { get; set; }
+        [JsonRequired] public string ProjectJson { get; set; }="";
         public bool Dirty { get; set; }
-        public List<ElectronicsReportRequest> Reports { get; set; }=[];
+        [JsonRequired] public List<ElectronicsReportRequest> Reports { get; set; }=[];
         public string? AssignmentId { get; set; }
     }
     readonly ClassroomApi api;
@@ -26,6 +27,7 @@ public sealed class ElectronicsSync : IDisposable
     readonly object stateGate=new();
     Outbox state=new();
     volatile bool busy,disposed,lastFailure;
+    internal string? DeliveryError {get;private set;}
     bool DraftPending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
     public bool Pending => DraftPending || journalPending?.Invoke() == true;
     public string ClientId {get{lock(stateGate)return state.ClientId;}}
@@ -61,6 +63,7 @@ public sealed class ElectronicsSync : IDisposable
                 if(state is null) throw new InvalidDataException("Некорректная очередь результатов.");
                 if(state.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходная очередь сохранена отдельно.");
                 if(!Guid.TryParseExact(state.ClientId,"N",out _)||state.Sequence<0||state.Reports is null||state.Reports.Count>100||state.ProjectJson is null) throw new InvalidDataException("Некорректная очередь результатов.");
+                if(requireExisting && (state.Sequence<1||state.ProjectJson.Length==0)) throw new InvalidDataException("В исходной очереди нет сохранённого снимка схемы. Требуется восстановление; исходники сохранены.");
                 if(state.ProjectJson.Length>0) CircuitProject.Parse(state.ProjectJson);
                 foreach(var report in state.Reports) { if(report is null || report.ProjectJson is null || report.Detail is null) throw new InvalidDataException("Некорректный отчёт."); CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт."); }
             }
@@ -124,13 +127,17 @@ public sealed class ElectronicsSync : IDisposable
         catch(Exception e) when(e is HttpRequestException or OperationCanceledException or ApiException or IOException or InvalidDataException or UnauthorizedAccessException)
         {
             lastFailure=true;
-            if(!disposed) status(e is ApiException a && a.Status is 400 or 409 ? a.Message : e is ApiException auth && auth.Status==401 ? "Войдите снова для передачи результатов. Локальная схема сохранена." : "Нет связи: работа и результаты сохранены локально, отправка повторится.");
+            DeliveryError=e is ApiException a ? a.Status==401 ? "Войдите снова для передачи результатов. Локальная схема сохранена." : a.Message
+                : e is IOException or InvalidDataException or UnauthorizedAccessException ? "Не удалось сохранить подтверждение передачи на ПК: " + e.Message
+                : "Нет связи: работа и результаты сохранены локально, отправка повторится.";
+            if(!disposed) status(DeliveryError);
             return false;
         }
         finally { busy=false; }
     }
     public async Task<bool> Flush(CancellationToken cancellation=default)
     {
+        DeliveryError=null;
         var draft = await FlushDraft(cancellation);
         if (disposed || journalDelivery is null) return draft;
         if (historyBusy) return false;
@@ -144,7 +151,8 @@ public sealed class ElectronicsSync : IDisposable
         }
         catch (Exception e) when (e is ApiException or HttpRequestException or OperationCanceledException or IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            if (!disposed && (draft || !lastFailure)) status(e is ApiException or InvalidDataException or IOException ? "История сохранена на ПК: " + e.Message : "История сохранена на ПК и ожидает связи с преподавателем.");
+            if (draft || !lastFailure) DeliveryError=e is ApiException or InvalidDataException or IOException ? "История сохранена на ПК: " + e.Message : "История сохранена на ПК и ожидает связи с преподавателем.";
+            if (!disposed && DeliveryError is { } message) status(message);
             return false;
         }
         finally { historyBusy = false; }
@@ -166,7 +174,9 @@ public sealed class ElectronicsSync : IDisposable
     }
     void Persist()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path+".tmp",Wire.Write(state)); File.Move(path+".tmp",path,true);
+        var json=Wire.Write(state);
+        if(System.Text.Encoding.UTF8.GetByteCount(json)>64_000_000) throw new IOException("Очередь результатов заполнена. Исходные файлы сохранены; восстановите связь с преподавателем.");
+        ElectronicsHistoryStore.Mirror(path,json);
     }
     public void Dispose() { if(disposed)return; disposed=true; timer.Stop(); lifetime.Cancel(); lifetime.Dispose(); }
 }

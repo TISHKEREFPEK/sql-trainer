@@ -36,17 +36,18 @@ internal sealed class ElectronicsBackgroundDelivery : IAsyncDisposable
     {
         if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("Фоновая отправка через файловую ссылку не поддерживается. Исходники сохранены.");
     }
-    bool Owned(string path)
+    bool OwnedProject(string path, out string? assignment)
     {
-        var name = Path.GetFileName(path);
-        if (name == identity + ".json.history") return true;
-        return name.StartsWith(identity + "-", StringComparison.Ordinal) && name.EndsWith(".json.history", StringComparison.Ordinal) &&
-            Guid.TryParseExact(name[(identity.Length + 1)..^13], "N", out _);
+        assignment = null; var name = Path.GetFileName(path);
+        if (name == identity + ".json") return true;
+        if (!name.StartsWith(identity + "-", StringComparison.Ordinal) || !name.EndsWith(".json", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(name[(identity.Length + 1)..^5], "N", out var id)) return false;
+        assignment = id.ToString("N"); return true;
     }
-    static string Signature(string index, string outbox)
+    static string Signature(string? index, string outbox)
     {
-        var a = new FileInfo(index); var b = new FileInfo(outbox);
-        return $"{a.Length}:{a.LastWriteTimeUtc.Ticks}:{b.Length}:{b.LastWriteTimeUtc.Ticks}";
+        var a = index is null ? null : new FileInfo(index); var b = new FileInfo(outbox);
+        return $"{a?.Length}:{a?.LastWriteTimeUtc.Ticks}:{b.Length}:{b.LastWriteTimeUtc.Ticks}";
     }
     public Task<ElectronicsBackgroundResult> DrainOnce()
     {
@@ -65,35 +66,53 @@ internal sealed class ElectronicsBackgroundDelivery : IAsyncDisposable
             Regular(Path.GetDirectoryName(directory)!); Regular(directory);
             // Only direct, deterministically named files of the authenticated pupil.
             // No recursion through imported projects, backups or other profiles.
-            var candidates = new List<(string Directory, string Index, string Project)>();
-            foreach (var folder in Directory.EnumerateDirectories(directory, identity + "*.json.history").Order(StringComparer.Ordinal))
+            var candidates = new List<(string Directory, string? Index, string Project, string? Assignment, string? Error)>();
+            var projects = Directory.EnumerateDirectories(directory, identity + "*.json.history").Select(p => p[..^8])
+                .Concat(Directory.EnumerateFiles(directory, identity + "*.json.sync.json").Select(p => p[..^10])).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal);
+            foreach (var project in projects)
             {
-                if (!Owned(folder)) continue; Regular(folder);
-                var project = folder[..^8]; if (isOpen(project)) continue;
-                foreach (var index in Directory.EnumerateFiles(folder, "c-*.json").Order(StringComparer.Ordinal)) candidates.Add((folder, index, project));
+                if (!OwnedProject(project, out var assignment) || isOpen(project)) continue;
+                var folder = project + ".history";
+                try
+                {
+                    if (Directory.Exists(folder))
+                    {
+                        Regular(folder); var indexes = Directory.EnumerateFiles(folder, "c-*.json").Order(StringComparer.Ordinal).ToArray();
+                        if (indexes.Length > 0) { foreach (var index in indexes) candidates.Add((folder, index, project, assignment, null)); continue; }
+                        // Never turn an incomplete history (pages/backup/temp) into a
+                        // purported legacy copy. Keep every fragment for recovery.
+                        if (Directory.EnumerateFileSystemEntries(folder).Any(p => Path.GetFileName(p) != "open.lock"))
+                            throw new InvalidDataException("Найдены файлы истории без исходного индекса. Требуется восстановить историю; исходники сохранены.");
+                    }
+                    candidates.Add((folder, null, project, assignment, null));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+                { candidates.Add((folder, null, project, assignment, e.Message)); }
             }
             if (candidates.Count == 0) return new(true);
             for (var checkedCount = 0; checkedCount < candidates.Count; checkedCount++)
             {
                 var item = candidates[position++ % candidates.Count]; if (position == int.MaxValue) position = 0;
-                var outbox = item.Project + ".sync.json"; Bound();
-                if (completed.TryGetValue(item.Index, out var previous) && Environment.TickCount64 - previous.At < 60000 &&
+                var outbox = item.Project + ".sync.json"; var key = item.Index ?? outbox; Bound();
+                if (item.Error is null && completed.TryGetValue(key, out var previous) && Environment.TickCount64 - previous.At < 60000 &&
                     File.Exists(outbox) && previous.Signature == Signature(item.Index, outbox)) continue;
                 try
                 {
-                    using var history = ElectronicsHistoryStore.OpenExisting(item.Directory, Path.GetFileName(item.Index), profileId, fingerprint);
-                    var expectedProject = identity + (history.Context.AssignmentId is { } assigned ? "-" + assigned : "") + ".json";
-                    if (Path.GetFileName(item.Project) != expectedProject) throw new InvalidDataException("История и имя персональной копии не совпадают. Исходники сохранены.");
-                    string? message = null; ElectronicsSync? sync = null;
-                    using (sync = new ElectronicsSync(api, outbox, text => message = text, startTimer: false, assignmentId: history.Context.AssignmentId,
-                        journalDelivery: token => { Bound(); return history.Deliver(api, sync!.ClientId, token); }, journalPending: () => history.Pending, requireExisting: true))
+                    if (item.Error is { } error) throw new InvalidDataException(error);
+                    using var history = item.Index is null ? null : ElectronicsHistoryStore.OpenExisting(item.Directory, Path.GetFileName(item.Index), profileId, fingerprint);
+                    if (history is not null && history.Context.AssignmentId != item.Assignment) throw new InvalidDataException("История и имя персональной копии не совпадают. Исходники сохранены.");
+                    if (history is null) { Directory.CreateDirectory(item.Directory); Regular(item.Directory); }
+                    using var legacyLease = history is null ? new FileStream(Path.Combine(item.Directory, "open.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None) : null;
+                    ElectronicsSync? sync = null;
+                    using (sync = new ElectronicsSync(api, outbox, _ => { }, startTimer: false, assignmentId: item.Assignment,
+                        journalDelivery: history is null ? null : token => { Bound(); return history.Deliver(api, sync!.ClientId, token); }, journalPending: history is null ? null : () => history.Pending, requireExisting: true))
                     {
-                        if (history.DeliveryState is { } binding && binding.ClientId != sync.ClientId)
+                        if (history?.DeliveryState is { } binding && binding.ClientId != sync.ClientId)
                             throw new InvalidDataException("Очередь копии изменилась. История сохранена; требуется восстановить её исходную привязку.");
                         Bound(); using var limit = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); limit.CancelAfter(TimeSpan.FromSeconds(10));
                         var done = await sync.Flush(limit.Token); Bound();
-                        if (done) completed[item.Index] = (Signature(item.Index, outbox), Environment.TickCount64);
-                        return new(done, done ? null : message);
+                        if (done) completed[key] = (Signature(item.Index, outbox), Environment.TickCount64);
+                        return new(done, done ? null : sync.DeliveryError);
                     }
                 }
                 // An editor in another window has the directory lease. Retry later.

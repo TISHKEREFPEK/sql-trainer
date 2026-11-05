@@ -6,6 +6,24 @@ namespace Classroom.UiTests;
 public sealed class ElectronicsSyncTests
 {
     [Fact]
+    public async Task FailedWindowsQueueWriteBlocksNetworkUntilTheSameIdsAreDurable()
+    {
+        if(!OperatingSystem.IsWindows()) return;
+        await using var f=await LiveClassroom.Start(); var root=Path.Combine(Path.GetTempPath(),"classroom-durable-outbox-"+Guid.NewGuid().ToString("N")); var path=Path.Combine(root,"queue.json");
+        var project=CircuitProject.Blink(); var original=project.Serialize(); var report=Guid.NewGuid().ToString("N");
+        using var sync=new ElectronicsSync(f.Student,path,_=>{},startTimer:false); sync.QueueDraft(original); sync.Record("submitted",original,reportId:report); var client=sync.ClientId;
+        project.Code="// правка при отказе записи"; var latest=project.Serialize();
+        using(var locked=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read))
+        {
+            var failure=Assert.ThrowsAny<Exception>(()=>sync.QueueDraft(latest)); Assert.Contains(failure.HResult&0xffff,new[]{5,32,33});
+            Assert.False(await sync.Flush()); Assert.True(sync.Pending);
+            Assert.Empty((await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}")).Works);
+        }
+        Assert.True(await sync.Flush()); Assert.Equal(client,ElectronicsSync.ReadOutbox(path,null).ClientId);
+        var teacher=await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}"); Assert.Equal(client,Assert.Single(teacher.Works).ClientId); Assert.Equal(report,Assert.Single(teacher.Reports).Id);
+        Assert.Equal(latest,(await f.Admin.Get<ElectronicsSnapshot>($"teacher/electronics/{f.StudentId}/work/{client}")).ProjectJson);
+    }
+    [Fact]
     public async Task OfflineOutboxSurvivesRestartAndReportsKeepOriginalSnapshots()
     {
         await using var f=await LiveClassroom.Start();
@@ -28,6 +46,8 @@ public sealed class ElectronicsSyncTests
             Assert.Equal(newest,(await f.Admin.Get<ElectronicsSnapshot>($"teacher/electronics/{f.StudentId}/work/{info.Works[0].ClientId}")).ProjectJson);
         }
         File.WriteAllText(path,"broken");
-        using(var recovered=new ElectronicsSync(f.Student,path,_=>{},false)){recovered.QueueDraft(changed); Assert.Single(Directory.GetFiles(dir,"*.corrupt-*")); Assert.True(File.Exists(path));}
+        Assert.Throws<System.Text.Json.JsonException>(()=>new ElectronicsSync(f.Student,path,_=>{},false));
+        Assert.Equal("broken",File.ReadAllText(path)); Assert.Empty(Directory.GetFiles(dir,"*.corrupt-*"));
+        Assert.Single((await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}")).Works);
     }
 }

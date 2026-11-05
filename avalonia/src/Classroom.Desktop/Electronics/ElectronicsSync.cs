@@ -27,9 +27,11 @@ public sealed class ElectronicsSync : IDisposable
     readonly object stateGate=new();
     Outbox state=new();
     volatile bool busy,disposed,lastFailure;
+    bool durable;
     internal string? DeliveryError {get;private set;}
     bool DraftPending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
-    public bool Pending => DraftPending || journalPending?.Invoke() == true;
+    bool StoragePending {get{lock(stateGate)return !durable;}}
+    public bool Pending => StoragePending || DraftPending || journalPending?.Invoke() == true;
     public string ClientId {get{lock(stateGate)return state.ClientId;}}
     public bool PendingSubmission {get{lock(stateGate)return state.Reports.Any(r=>r.Kind=="submitted");}}
     public bool HasStaleSubmission(int currentVersion)
@@ -49,35 +51,35 @@ public sealed class ElectronicsSync : IDisposable
         }
     }
     public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null,
-        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false)
+        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false,string? expectedClientId=null)
     {
         this.api=api; this.path=path; this.status=status; this.receipt=receipt; this.journalDelivery=journalDelivery; this.journalPending=journalPending;
-        try
-        {
-            if(requireExisting && !File.Exists(path)) throw new InvalidDataException("Отсутствует исходная очередь схемы. История сохранена; требуется восстановление привязки.");
-            if(File.Exists(path))
-            {
-                if(File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("Очередь через файловую ссылку не поддерживается.");
-                if(new FileInfo(path).Length>64_000_000) throw new InvalidDataException("Слишком большая очередь.");
-                state=Wire.Read<Outbox>(File.ReadAllText(path));
-                if(state is null) throw new InvalidDataException("Некорректная очередь результатов.");
-                if(state.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходная очередь сохранена отдельно.");
-                if(!Guid.TryParseExact(state.ClientId,"N",out _)||state.Sequence<0||state.Reports is null||state.Reports.Count>100||state.ProjectJson is null) throw new InvalidDataException("Некорректная очередь результатов.");
-                if(requireExisting && (state.Sequence<1||state.ProjectJson.Length==0)) throw new InvalidDataException("В исходной очереди нет сохранённого снимка схемы. Требуется восстановление; исходники сохранены.");
-                if(state.ProjectJson.Length>0) CircuitProject.Parse(state.ProjectJson);
-                foreach(var report in state.Reports) { if(report is null || report.ProjectJson is null || report.Detail is null) throw new InvalidDataException("Некорректный отчёт."); CircuitProject.Parse(report.ProjectJson); if(!Guid.TryParseExact(report.Id,"N",out _)||!ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт."); }
-            }
-        }
-        catch(Exception e) when(!requireExisting && (e is IOException or InvalidDataException or System.Text.Json.JsonException))
-        {
-            if(File.Exists(path)) File.Move(path,path+".corrupt-"+Guid.NewGuid().ToString("N"));
-            state=new(); status("Повреждённая очередь сохранена отдельно. Работа будет отправлена новой копией.");
-        }
+        if(File.Exists(path)) { state=ReadOutbox(path,assignmentId,expectedClientId); durable=true; }
+        else if(requireExisting || expectedClientId is not null) throw new InvalidDataException("Отсутствует исходная очередь схемы. История сохранена; требуется восстановление привязки.");
         state.AssignmentId=assignmentId;
         // Re-send the local draft once after login, including after server restore.
         state.Dirty=true;
         timer.Tick+=async(_,_)=>await Flush();
-        if(startTimer) timer.Start();
+        if(startTimer) Start();
+    }
+    internal void Start() { ObjectDisposedException.ThrowIf(disposed,this); timer.Start(); }
+    internal static Outbox ReadOutbox(string path,string? assignmentId,string? expectedClientId=null)
+    {
+        if(File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("Очередь через файловую ссылку не поддерживается.");
+        if(new FileInfo(path).Length>64_000_000) throw new InvalidDataException("Слишком большая очередь.");
+        var value=Wire.Read<Outbox>(File.ReadAllText(path));
+        if(value.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходный файл сохранён.");
+        if(!Guid.TryParseExact(value.ClientId,"N",out _)||value.Sequence<1||value.Reports is null||value.Reports.Count>100||string.IsNullOrEmpty(value.ProjectJson)) throw new InvalidDataException("Некорректная очередь результатов.");
+        if(expectedClientId is not null && value.ClientId!=expectedClientId) throw new InvalidDataException("Очередь не соответствует исходной ClientId-привязке истории.");
+        CircuitProject.Parse(value.ProjectJson);
+        var ids=new HashSet<string>();
+        foreach(var report in value.Reports)
+        {
+            if(report is null || report.ProjectJson is null || report.Detail is null || !Guid.TryParseExact(report.Id,"N",out _) || !ids.Add(report.Id) ||
+                !ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт.");
+            CircuitProject.Parse(report.ProjectJson);
+        }
+        return value;
     }
     public void QueueDraft(string json)
     {
@@ -107,6 +109,12 @@ public sealed class ElectronicsSync : IDisposable
         ElectronicsReportRequest[] reports;long sequence;string json,client;string? assignmentId;
         lock(stateGate)
         {
+            if(!durable && !disposed && !busy && state.ProjectJson.Length>0)
+            {
+                try { Persist(); }
+                catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException)
+                { lastFailure=true; DeliveryError="Очередь передачи не записана на ПК: " + e.Message; status(DeliveryError); return false; }
+            }
             if(disposed||busy||!DraftPending||state.ProjectJson.Length==0) return !DraftPending;
             busy=true;reports=state.Reports.Take(10).ToArray();sequence=state.Sequence;json=state.ProjectJson;client=state.ClientId;assignmentId=state.AssignmentId;
         }
@@ -139,6 +147,7 @@ public sealed class ElectronicsSync : IDisposable
     {
         DeliveryError=null;
         var draft = await FlushDraft(cancellation);
+        lock(stateGate) { if(!durable) return false; }
         if (disposed || journalDelivery is null) return draft;
         if (historyBusy) return false;
         historyBusy = true;
@@ -174,9 +183,11 @@ public sealed class ElectronicsSync : IDisposable
     }
     void Persist()
     {
+        durable=false;
         var json=Wire.Write(state);
         if(System.Text.Encoding.UTF8.GetByteCount(json)>64_000_000) throw new IOException("Очередь результатов заполнена. Исходные файлы сохранены; восстановите связь с преподавателем.");
         ElectronicsHistoryStore.Mirror(path,json);
+        durable=true;
     }
     public void Dispose() { if(disposed)return; disposed=true; timer.Stop(); lifetime.Cancel(); lifetime.Dispose(); }
 }

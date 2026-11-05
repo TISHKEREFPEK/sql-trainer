@@ -63,6 +63,31 @@ public sealed partial class ElectronicsHistoryStore : IDisposable
             indexName != "c-" + SqlSyncHash.Text(Wire.Write(index.Context)) + ".json") throw new InvalidDataException("История относится к другому ученику, серверу или контексту.");
         return new(directory, index.Context, null);
     }
+    // Caller holds open.lock. Binding validation needs the checksummed headers;
+    // project pages remain untouched and are replayed by the normal editor.
+    internal static (string? ClientId, string Hash) InspectBindings(string directory, ElectronicsHistoryContext context)
+    {
+        var clients = new HashSet<string>(); var hashes = new List<string>();
+        foreach (var source in Directory.EnumerateFiles(directory, "c-*.json").Order(StringComparer.Ordinal))
+        {
+            Regular(source); if (new FileInfo(source).Length > 64 * 1024 * 1024) throw new InvalidDataException("Слишком большой индекс истории.");
+            var text = File.ReadAllText(source); var envelope = Wire.Read<Envelope>(text);
+            if (envelope.Version != 1 || envelope.Payload is null || SqlSyncHash.Text(envelope.Payload) != envelope.Hash) throw new InvalidDataException("Повреждён индекс истории; сначала требуется восстановить журнал.");
+            var index = Wire.Read<Index>(envelope.Payload);
+            if (index.Version != 1 || index.Context is null || index.Context.ProfileId != context.ProfileId || index.Context.Fingerprint != context.Fingerprint || index.Context.AssignmentId != context.AssignmentId ||
+                Path.GetFileName(source) != "c-" + SqlSyncHash.Text(Wire.Write(index.Context)) + ".json" || index.Pages is null || index.Tail is null) throw new InvalidDataException("Не удалось подтвердить владельца и контекст истории.");
+            if (index.Delivery is { } delivery)
+            {
+                if (!Guid.TryParseExact(delivery.ClientId, "N", out _) || !Guid.TryParseExact(delivery.StreamId, "N", out _) || delivery.Acknowledged < 0 || delivery.Acknowledged > index.Pages.LongLength * 64 + index.Tail.LongLength)
+                    throw new InvalidDataException("Не удалось подтвердить привязку истории.");
+                clients.Add(delivery.ClientId);
+            }
+            hashes.Add(Path.GetFileName(source) + ":" + SqlSyncHash.Text(text));
+        }
+        if (hashes.Count == 0 && Directory.EnumerateFileSystemEntries(directory).Any(p => Path.GetFileName(p) != "open.lock")) throw new InvalidDataException("Найдены фрагменты истории без индекса. Сначала восстановите журнал.");
+        if (clients.Count > 1) throw new InvalidDataException("В истории несколько исходных копий. Автоматический выбор ClientId недоступен.");
+        return (clients.SingleOrDefault(), SqlSyncHash.Text(Wire.Write(hashes)));
+    }
     static string HashFile(string path)
     { Regular(path); using var source = File.OpenRead(path); return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(source)); }
     string PageFile(string hash)

@@ -37,6 +37,7 @@ public sealed class MainWindow : Window
     Action? pageCleanup;
     bool pageOpen;
     StudentReviewPage? teacherReview;
+    bool electronicsRecoveryOpen;
     readonly ContentControl body = new();
     readonly WrapPanel actions = new()
     {
@@ -204,6 +205,33 @@ public sealed class MainWindow : Window
             sqlDeliveryPoll.Stop(); lessonPoll.Stop();
             actions.Children.Clear();
             body.Content = new SqlRecoveryView(this, e.Candidate, async () => { login = null; await ShowLogin(); });
+        }
+        catch (ElectronicsOutboxRecoveryException e)
+        {
+            ClosePage(); await StopElectronicsDelivery();
+            var client = api; var token = api?.Token; var candidate = e.Candidate;
+            if (client is null || token is null || login?.Role != "student" || client.ProfileId != candidate.Context.ProfileId || client.Connection.Fingerprint != candidate.Context.Fingerprint)
+            { Error("Для восстановления войдите в исходный ученический профиль."); StartElectronicsDelivery(); return; }
+            void Bound()
+            {
+                if (!ReferenceEquals(client, api) || client.Token != token || client.ProfileId != candidate.Context.ProfileId || client.Connection.Fingerprint != candidate.Context.Fingerprint)
+                    throw new InvalidDataException("Сеанс изменился. Откройте восстановление из исходного профиля.");
+            }
+            var view = new ElectronicsOutboxRecoveryView(candidate, () => Safe(async () =>
+            {
+                Bound(); ElectronicsOutboxRecovery.Restore(candidate);
+                Message("Очередь восстановлена с прежними номерами результатов. Исходный файл сохранён отдельно, если он существовал.");
+                ClosePage(); await EnterLesson(new("electronics"), e.TaskId);
+            }), () => Safe(() =>
+            {
+                Bound(); return Task.FromException(new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(candidate.ProjectFile, candidate.Context, "Повторная проверка файлов."), e.TaskId));
+            }));
+            ShowPage("Восстановление электронной работы", view, () =>
+            {
+                electronicsRecoveryOpen = false; StartElectronicsDelivery();
+                body.IsEnabled = false; lessonBlock.IsVisible = true; lessonMessage.Text = "Проверяем доступ к занятию…";
+            });
+            electronicsRecoveryOpen = true; body.IsEnabled = true; lessonBlock.IsVisible = false;
         }
         catch (ApiException e)when (e.Status == 401 && (screen is not null || login is not null))
         {
@@ -599,6 +627,7 @@ public sealed class MainWindow : Window
         var lesson = await api.Get<StudentLessonDto>("student/lesson");
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
+        if (electronicsRecoveryOpen) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
         var currentAllowed = screen is ElectronicsScreen ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
         if (body.Content is ElectronicsScreen circuit && circuit.AssignmentId is { } workId)
         {

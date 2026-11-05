@@ -68,7 +68,13 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         this.owner = owner; savePath = path;
         this.assignment = assignment;
+        try
+        {
         if (assignment is not null) project = CircuitProject.Parse(assignment.ProjectJson);
+        ElectronicsHistoryContext? recoveryContext = classroom?.ProfileId is { } studentId && !teacher ? new(studentId, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id) : null;
+        var priorQueue = recoveryContext is not null && ElectronicsOutboxRecovery.Ensure(path, recoveryContext, assignment?.TaskId);
+        string? expectedClientId = null;
+        if (priorQueue && !File.Exists(path)) project = CircuitProject.Parse(ElectronicsSync.ReadOutbox(path + ".sync.json", assignment?.Id).ProjectJson);
         InitializeManipulation();
         string? loadError = null;
         try { if (File.Exists(path)) project = CircuitProject.Parse(File.ReadAllText(path)); }
@@ -82,15 +88,33 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             history = new ElectronicsHistoryStore(path + ".history", new(profile, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id), loadError is null ? project.Serialize() : null);
             try
             {
+                try
+                {
+                    expectedClientId = ElectronicsHistoryStore.InspectBindings(path + ".history", recoveryContext!).ClientId;
+                    if (File.Exists(savePath + ".sync.json")) ElectronicsSync.ReadOutbox(savePath + ".sync.json", assignment?.Id, expectedClientId);
+                }
+                catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
+                { history.Dispose(); throw new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(path, recoveryContext!, e.Message), assignment?.TaskId); }
                 var restored = CircuitProject.Parse(history.ProjectJson);
                 if (history.Reopened && (loadError is not null || restored.Serialize() != project.Serialize()))
                 {
-                    if (File.Exists(path)) File.Copy(path, path + ".history-source-" + Guid.NewGuid().ToString("N"), false);
-                    loadError = "Открыта последняя проверенная версия из локальной истории. Несовпадающий исходный файл сохранён отдельной копией.";
+                    if (File.Exists(path)) { File.Copy(path, path + ".history-source-" + Guid.NewGuid().ToString("N"), false); loadError = "Открыта последняя проверенная версия из локальной истории. Несовпадающий исходный файл сохранён отдельной копией."; }
+                    else loadError = "Схема восстановлена из последней проверенной локальной истории.";
                 }
                 project = restored;
             }
             catch { history.Dispose(); throw; }
+        }
+        if (classroom is not null && !teacher)
+        {
+            try
+            {
+                sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,startTimer:false,assignmentId:assignment?.Id,receipt:OnReceipt,
+                    journalDelivery:history is null ? null : token=>history.Deliver(classroom,sync!.ClientId,token),journalPending:history is null ? null : ()=>history.Pending,
+                    requireExisting:priorQueue,expectedClientId:expectedClientId);
+            }
+            catch (Exception e) when (recoveryContext is not null && (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException))
+            { history?.Dispose(); throw new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(path,recoveryContext,e.Message),assignment?.TaskId); }
         }
         monitor.IsReadOnly = true;
         partCategory.ItemsSource = PartCatalog.Categories; partCategory.SelectedIndex = 0;
@@ -201,9 +225,13 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         status.Text = loadError ?? "";
         if (classroom is not null && !teacher)
         {
-            sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,assignmentId:assignment?.Id,receipt:OnReceipt,
-                journalDelivery:history is null ? null : token=>history.Deliver(classroom,sync!.ClientId,token),journalPending:history is null ? null : ()=>history.Pending);
-            Save();
+            Save(); sync?.Start();
+        }
+        }
+        catch
+        {
+            disposed = true; autosave.Stop(); timer.Stop(); ReleaseHistory(); sync?.Dispose(); history?.Dispose();
+            ThemeManager.Changed -= ApplyEditorTheme; firmware.Dispose(); throw;
         }
     }
 

@@ -8,7 +8,7 @@ public sealed record SqlRejectedExecution(long At, ExecuteRequest Request, strin
 public sealed record SqlLocalWork(string LessonId, StudentTask Task, string Code, string BaseHash, bool Dirty = false,
     SqlDraftSync? PendingDraft = null, SqlDraftReceipt? Conflict = null, ExecuteRequest? Execution = null,
     SqlActionSync[]? Actions = null, SqlConflictArchive[]? Resolutions = null, string? Error = null, int Caret = 0,
-    ExecutionDto? LastExecution = null, SqlRejectedExecution[]? RejectedExecutions = null, SqlTextJournal? Journal = null);
+    ExecutionDto? LastExecution = null, SqlRejectedExecution[]? RejectedExecutions = null, SqlTextJournal? Journal = null, SqlJournalIndex? JournalIndex = null);
 
 // This store contains learning data only. It never serializes a ClassroomApi,
 // login/password/token, teacher seed, solution or unopened hint.
@@ -47,7 +47,8 @@ public sealed partial class SqlLocalStore : IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         var key = Key(work.LessonId, work.Task.WorkScope, work.Task.Id);
-        var payload = Wire.Write(work); var json = Wire.Write(new Envelope(work.Journal is null ? 1 : 2, profileId, fingerprint, payload, SqlSyncHash.Text(payload)));
+        var stored = StorePages(work, directory, pageCache);
+        var payload = Wire.Write(stored); var json = Wire.Write(new Envelope(stored.JournalIndex is not null ? 3 : 1, profileId, fingerprint, payload, SqlSyncHash.Text(payload)));
         if (System.Text.Encoding.UTF8.GetByteCount(json) > 64 * 1024 * 1024) throw new IOException("Локальная очередь SQL заполнена. Новое изменение не записано на диск; восстановите связь или сохраните код отдельно.");
         var file = Path.Combine(directory, key + ".work.json"); var temporary = file + ".tmp-" + Guid.NewGuid().ToString("N");
         try

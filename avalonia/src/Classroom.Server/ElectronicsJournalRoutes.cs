@@ -22,6 +22,7 @@ public static class ElectronicsJournalRoutes
                 if (!await db.LessonParticipants.AnyAsync(p => p.SessionId == input.LessonId && p.StudentId == session.ProfileId)) throw new HttpFault(403, "Вы не участвовали в исходном занятии.");
                 var work = await db.ElectronicsWorks.FindAsync(session.ProfileId, input.ClientId) ?? throw new HttpFault(404, "Сначала передайте сохранённую копию схемы.");
                 if (work.AssignmentId != input.AssignmentId) throw new HttpFault(409, "Копия относится к другой работе.");
+                if(work.FreeProjectId is not null&&work.LessonId!=input.LessonId)throw new HttpFault(409,"История относится к другому исходному занятию свободной схемы.");
                 string title = ElectronicsProjectFormat.Inspect(input.BaseJson).Name;
                 if (input.AssignmentId is { } id)
                 {

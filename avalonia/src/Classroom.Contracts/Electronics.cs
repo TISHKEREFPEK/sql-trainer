@@ -1,8 +1,15 @@
 namespace Classroom.Contracts;
 
 public record ElectronicsReportRequest(string Id,string Kind,string ProjectJson,string Detail,int? ExpectedAssignmentVersion=null);
-public record ElectronicsSyncRequest(string ClientId,long Sequence,string ProjectJson,ElectronicsReportRequest[] Reports,string? AssignmentId=null);
-public record ElectronicsSyncReceipt(long Sequence,long UpdatedAt,string[] ReportIds,string? AssignmentState=null,bool? CanSubmit=null,int? AssignmentVersion=null);
+public record ElectronicsFreeContext(string ProjectId,string LessonId,int ExpectedRevision);
+public record ElectronicsSyncRequest(string ClientId,long Sequence,string ProjectJson,ElectronicsReportRequest[] Reports,string? AssignmentId=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsFreeContext? FreeContext=null);
+public record ElectronicsSyncReceipt(long Sequence,long UpdatedAt,string[] ReportIds,string? AssignmentState=null,bool? CanSubmit=null,int? AssignmentVersion=null,int? ProjectRevision=null);
+public record ElectronicsProjectCreate(string ProjectJson);
+public record ElectronicsProjectOpen(string LessonId);
+public record ElectronicsProjectDto(string Id,string Name,string ProjectJson,int Revision,string State,bool CanSubmit,int StateVersion,long CreatedAt,long UpdatedAt);
+public record ElectronicsProjectSummary(string Id,string Name,int Revision,string State,bool CanSubmit,int StateVersion,long UpdatedAt);
+public record ElectronicsProjectList(ElectronicsProjectSummary[] Projects,bool HasMore,int NextOffset);
 public record ElectronicsStudentResult(string StudentId,string Login,string? GroupId,int WorkCount,int Submitted,int Compiled,int Errors,long? LastAt,string? LastKind);
 public record ElectronicsOverview(GroupDto[] Groups,ElectronicsStudentResult[] Students);
 public record ElectronicsWorkInfo(string ClientId,string Name,int Parts,int Wires,long UpdatedAt);
@@ -21,7 +28,7 @@ public record ElectronicsAssignmentStatus(string Id,string State,bool CanSubmit,
 
 public record ElectronicsReviewRequest(string Action,string Comment,int? Grade,string? ExpectedReviewId,int? ExpectedAssignmentVersion);
 public record ElectronicsReviewDecision(string Id,int Sequence,string Action,string Comment,int? Grade,long At);
-public record ElectronicsReviewItem(string StudentId,string StudentName,string? GroupId,string GroupName,string ReportId,string? AssignmentId,string? LessonId,string Title,long SubmittedAt,string State,int? Grade);
+public record ElectronicsReviewItem(string StudentId,string StudentName,string? GroupId,string GroupName,string ReportId,string? AssignmentId,string? LessonId,string Title,long SubmittedAt,string State,int? Grade,string? FreeProjectId=null);
 public record ElectronicsReviewQueue(ElectronicsReviewItem[] Items,int PendingCount,bool HasMore,int NextOffset);
 public record ElectronicsReviewLesson(string Id,string GroupName,long CreatedAt);
 public record ElectronicsReviewFilters(GroupDto[] Groups,ElectronicsReviewLesson[] Lessons);

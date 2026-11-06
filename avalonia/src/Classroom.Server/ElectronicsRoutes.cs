@@ -15,6 +15,8 @@ public static class ElectronicsRoutes
         {
             var session=state.Authorize(ctx,"student"); var client=Id(input.ClientId);
             var assignmentKey = input.AssignmentId is null ? null : Id(input.AssignmentId);
+            var free=input.FreeContext is { } context?new ElectronicsFreeContext(ElectronicsProjects.Id(context.ProjectId),ElectronicsProjects.Id(context.LessonId),context.ExpectedRevision):null;
+            if(free is not null&&(assignmentKey is not null||free.ExpectedRevision<0))throw new HttpFault(400,"Некорректный контекст свободной схемы.");
             if(input.Sequence<1 || input.Reports.Length>10) throw new HttpFault(400,"Некорректная очередь результатов.");
             var metadata=ElectronicsProjectFormat.Inspect(input.ProjectJson); var hash=Hash(input.ProjectJson);
             var reports=input.Reports.Select(r=>
@@ -28,25 +30,40 @@ public static class ElectronicsRoutes
             {
                 var work=await db.ElectronicsWorks.SingleOrDefaultAsync(w=>w.StudentId==session.ProfileId&&w.ClientId==client);
                 ElectronicsAssignmentEntity? assignment = null;
+                ElectronicsProjectEntity? project=null;ElectronicsPracticeEntity? practice=null;
                 if (assignmentKey is { } assignmentId) assignment = await ElectronicsAssignments.Own(db, session, Id(assignmentId));
+                else if(free is not null)
+                {
+                    project=await ElectronicsProjects.Own(db,session,free.ProjectId);await ElectronicsProjects.Member(db,session,free.LessonId);
+                    practice=await db.ElectronicsPractice.FindAsync(session.ProfileId,free.ProjectId,free.LessonId);
+                }
                 else await LessonRoutes.RequireMember(state, db, session, saving: true);
                 if (work is not null && work.AssignmentId != assignmentKey) throw new HttpFault(409,"Эта копия относится к другой работе. Исходная схема сохранена.");
+                if(work is not null&&(work.FreeProjectId!=free?.ProjectId||work.LessonId!=free?.LessonId))throw new HttpFault(409,"Копия привязана к другому проекту или исходному занятию. Старую очередь нельзя перепривязать.");
                 if(work is not null && (input.Sequence<work.Sequence || input.Sequence==work.Sequence&&hash!=work.ProjectHash)) throw new HttpFault(409,"На сервере есть другая версия этой копии. Локальная схема сохранена; не заменяйте её старой копией.");
+                if(project is not null&&(work is null||input.Sequence>work.Sequence)&&free!.ExpectedRevision!=project.Revision)throw new HttpFault(409,"Проект уже изменён на другом устройстве. Локальная версия сохранена; откройте актуальную или создайте отдельный проект.");
                 if(work is null)
                 {
-                    if(await db.ElectronicsWorks.CountAsync(w=>w.StudentId==session.ProfileId && w.AssignmentId==assignmentKey)>=10) throw new HttpFault(409,"Для этой работы уже сохранены 10 копий с разных устройств.");
-                    work=new(){StudentId=session.ProfileId,ClientId=client,AssignmentId=assignmentKey}; db.ElectronicsWorks.Add(work);
+                    if(await db.ElectronicsWorks.CountAsync(w=>w.StudentId==session.ProfileId&&w.AssignmentId==assignmentKey&&w.FreeProjectId==(free==null?null:free.ProjectId)&&w.LessonId==(free==null?null:free.LessonId))>=10) throw new HttpFault(409,"Для этой работы уже сохранены 10 копий с разных устройств.");
+                    if(project is not null&&practice is null){practice=ElectronicsProjects.Snapshot(project,free!.LessonId);db.ElectronicsPractice.Add(practice);}
+                    work=new(){StudentId=session.ProfileId,ClientId=client,AssignmentId=assignmentKey,FreeProjectId=free?.ProjectId,LessonId=free?.LessonId}; db.ElectronicsWorks.Add(work);
                 }
                 if(input.Sequence>work.Sequence)
                 {
                     work.Sequence=input.Sequence; work.ProjectJson=input.ProjectJson; work.ProjectHash=hash; work.Name=metadata.Name; work.Parts=metadata.Parts; work.Wires=metadata.Wires; work.UpdatedAt=ServerState.Now;
+                    if(project is not null)
+                    {
+                        if(project.Revision==int.MaxValue)throw new HttpFault(409,"Достигнут предел версий проекта.");
+                        project.Revision++;project.ProjectJson=input.ProjectJson;project.ProjectHash=hash;project.Name=metadata.Name;project.Parts=metadata.Parts;project.Wires=metadata.Wires;project.UpdatedAt=work.UpdatedAt;work.ProjectRevision=project.Revision;
+                        practice!.ProjectJson=input.ProjectJson;practice.ProjectHash=hash;practice.Name=metadata.Name;practice.Parts=metadata.Parts;practice.Wires=metadata.Wires;practice.Revision=project.Revision;practice.FirstSavedAt??=work.UpdatedAt;practice.UpdatedAt=work.UpdatedAt;
+                    }
                 }
                 foreach(var report in reports)
                 {
                     var existing=await db.ElectronicsReports.SingleOrDefaultAsync(r=>r.StudentId==session.ProfileId&&r.Id==report.Id);
                     if(existing is not null)
                     {
-                        if(existing.AssignmentId!=assignmentKey||existing.ClientId!=client||existing.ProjectHash!=report.Hash||existing.Kind!=report.Kind||existing.Detail!=report.Detail||existing.ExpectedAssignmentVersion!=report.ExpectedAssignmentVersion) throw new HttpFault(409,"Этот номер результата уже использован для другой операции.");
+                        if(existing.AssignmentId!=assignmentKey||existing.FreeProjectId!=free?.ProjectId||existing.LessonId!=free?.LessonId||existing.ClientId!=client||existing.ProjectHash!=report.Hash||existing.Kind!=report.Kind||existing.Detail!=report.Detail||existing.ExpectedAssignmentVersion!=report.ExpectedAssignmentVersion) throw new HttpFault(409,"Этот номер результата уже использован для другой операции.");
                         continue;
                     }
                     if (report.Kind == "submitted" && assignment is not null)
@@ -57,11 +74,17 @@ public static class ElectronicsRoutes
                         if ((report.ExpectedAssignmentVersion ?? 1) != assignment.StateVersion) throw new HttpFault(409,"Эта сдача создана до последнего решения преподавателя. Сохранённая версия остаётся локально; откройте результат и отправьте новую сдачу.");
                         assignment.State = "awaiting-review"; assignment.CanSubmit = false; assignment.StateVersion++;
                     }
+                    if(report.Kind=="submitted"&&project is not null)
+                    {
+                        if(!project.CanSubmit||report.ExpectedAssignmentVersion!=project.StateVersion)throw new HttpFault(409,"Эта версия свободной схемы уже отправлена или разрешение изменилось. Откройте результат перед новой сдачей.");
+                        project.State="awaiting-review";project.CanSubmit=false;project.StateVersion++;
+                    }
                     var at=ServerState.Now;
                     if(report.Kind=="submitted" && assignment is not null) at=Math.Max(at,1+(await db.ElectronicsReports.Where(r=>r.AssignmentId==assignmentKey&&r.Kind=="submitted").MaxAsync(r=>(long?)r.At)??0));
-                    db.ElectronicsReports.Add(new(){StudentId=session.ProfileId,ClientId=client,AssignmentId=assignmentKey,Id=report.Id,Kind=report.Kind,ProjectJson=report.ProjectJson,ProjectHash=report.Hash,Detail=report.Detail,Name=report.Name,At=at,ExpectedAssignmentVersion=report.ExpectedAssignmentVersion});
+                    if(report.Kind=="submitted"&&project is not null)at=Math.Max(at,1+(await db.ElectronicsReports.Where(r=>r.StudentId==session.ProfileId&&r.FreeProjectId==project.Id&&r.Kind=="submitted").MaxAsync(r=>(long?)r.At)??0));
+                    db.ElectronicsReports.Add(new(){StudentId=session.ProfileId,ClientId=client,AssignmentId=assignmentKey,FreeProjectId=free?.ProjectId,LessonId=free?.LessonId,Id=report.Id,Kind=report.Kind,ProjectJson=report.ProjectJson,ProjectHash=report.Hash,Detail=report.Detail,Name=report.Name,At=at,ExpectedAssignmentVersion=report.ExpectedAssignmentVersion});
                 }
-                return new ElectronicsSyncReceipt(work.Sequence,work.UpdatedAt,reports.Select(r=>r.Id).ToArray(),assignment?.State,assignment?.CanSubmit,assignment?.StateVersion);
+                return new ElectronicsSyncReceipt(work.Sequence,work.UpdatedAt,reports.Select(r=>r.Id).ToArray(),assignment?.State??project?.State,assignment?.CanSubmit??project?.CanSubmit,assignment?.StateVersion??project?.StateVersion,work.ProjectRevision);
             });
         });
         api.MapGet("/teacher/electronics", async (HttpContext ctx)=>

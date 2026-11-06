@@ -15,6 +15,7 @@ public static class Routes
         LessonRoutes.Map(api, state);
         LessonSqlTasks.Map(api, state);
         ElectronicsRoutes.Map(api,state);
+        ElectronicsProjects.Map(api,state);
         ElectronicsAssignments.Map(api, state);
         ElectronicsReviews.Map(api, state);
         ReviewAccessRoutes.Map(api, state);

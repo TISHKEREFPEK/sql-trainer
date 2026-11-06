@@ -19,12 +19,13 @@ public static class ElectronicsReviews
         public string GroupName { get; set; } = "";
         public string ReportId { get; set; } = "";
         public string? AssignmentId { get; set; }
+        public string? FreeProjectId { get; set; }
         public string? LessonId { get; set; }
         public string Title { get; set; } = "";
         public long SubmittedAt { get; set; }
         public string State { get; set; } = "";
         public int? Grade { get; set; }
-        public ElectronicsReviewItem Dto() => new(StudentId, StudentName, GroupId, GroupName, ReportId, AssignmentId, LessonId, Title, SubmittedAt, State, Grade);
+        public ElectronicsReviewItem Dto() => new(StudentId, StudentName, GroupId, GroupName, ReportId, AssignmentId, LessonId, Title, SubmittedAt, State, Grade,FreeProjectId);
     }
     static IQueryable<ReviewRow> Items(ClassroomDb db) =>
         from report in db.ElectronicsReports
@@ -37,7 +38,7 @@ public static class ElectronicsReviews
         join t in db.LessonElectronicsTasks on new { assignment.LessonId, assignment.TaskId } equals new { t.LessonId, t.TaskId } into tasks
         from task in tasks.DefaultIfEmpty()
         select new ReviewRow { StudentId = student.Id, StudentName = student.FullName ?? student.Login, GroupId = student.GroupId, GroupName = pupilGroup == null ? "Без группы" : pupilGroup.Name,
-            ReportId = report.Id, AssignmentId = report.AssignmentId, LessonId = assignment == null ? null : assignment.LessonId, Title = task == null ? report.Name : task.Title, SubmittedAt = report.At,
+            ReportId = report.Id, AssignmentId = report.AssignmentId,FreeProjectId=report.FreeProjectId, LessonId = assignment == null ? report.LessonId : assignment.LessonId, Title = task == null ? report.Name : task.Title, SubmittedAt = report.At,
             State = db.ElectronicsReviews.Where(r => r.StudentId == report.StudentId && r.ReportId == report.Id && r.Action != "allow-resubmit")
                 .OrderByDescending(r => r.Sequence).Select(r => r.Action).FirstOrDefault() ?? "awaiting-review",
             Grade = db.ElectronicsReviews.Where(r => r.StudentId == report.StudentId && r.ReportId == report.Id && r.Action != "allow-resubmit")
@@ -60,11 +61,13 @@ public static class ElectronicsReviews
         var report = await db.ElectronicsReports.FindAsync(studentId, reportId) ?? throw new HttpFault(404, "Сдача не найдена.");
         var history = await db.ElectronicsReviews.Where(r => r.StudentId == studentId && r.ReportId == reportId).OrderBy(r => r.Sequence).ToArrayAsync();
         var assignment = item.AssignmentId is null ? null : await db.ElectronicsAssignments.FindAsync(item.AssignmentId);
+        var project=item.FreeProjectId is null?null:await db.ElectronicsProjects.FindAsync(studentId,item.FreeProjectId);
         var prompt = assignment is null ? "Свободная схема. Условие не было закреплено при отправке." :
             (await db.LessonElectronicsTasks.FindAsync(assignment.LessonId, assignment.TaskId))!.Prompt;
-        var latest = assignment is null || await db.ElectronicsReports.Where(r => r.AssignmentId == assignment.Id && r.Kind == "submitted")
-            .OrderByDescending(r => r.At).ThenByDescending(r => r.Id).Select(r => r.Id).FirstAsync() == reportId;
-        return new(item.Dto(), prompt, report.ProjectJson, history.Select(Decision).ToArray(), assignment?.CanSubmit ?? false, assignment?.StateVersion, latest);
+        var latest = assignment is not null ? await db.ElectronicsReports.Where(r => r.AssignmentId == assignment.Id && r.Kind == "submitted")
+            .OrderByDescending(r => r.At).ThenByDescending(r => r.Id).Select(r => r.Id).FirstAsync() == reportId:
+            project is null||await db.ElectronicsReports.Where(r=>r.StudentId==studentId&&r.FreeProjectId==project.Id&&r.Kind=="submitted").OrderByDescending(r=>r.At).ThenByDescending(r=>r.Id).Select(r=>r.Id).FirstAsync()==reportId;
+        return new(item.Dto(), prompt, report.ProjectJson, history.Select(Decision).ToArray(), assignment?.CanSubmit ?? project?.CanSubmit ?? false, assignment?.StateVersion??project?.StateVersion, latest);
     }
 
 
@@ -84,7 +87,8 @@ public static class ElectronicsReviews
         if (detail.History.LastOrDefault()?.Id != input.ExpectedReviewId || detail.AssignmentVersion != input.ExpectedAssignmentVersion)
             throw new HttpFault(409, "Работа уже изменилась. Обновите сдачу перед сохранением решения.");
         var assignment = detail.Item.AssignmentId is null ? null : await db.ElectronicsAssignments.FindAsync(detail.Item.AssignmentId);
-        if (input.Action == "allow-resubmit" && (assignment is null || !detail.IsLatestSubmission || detail.Item.State == "awaiting-review" || assignment.CanSubmit))
+        var project=detail.Item.FreeProjectId is null?null:await db.ElectronicsProjects.FindAsync(studentId,detail.Item.FreeProjectId);
+        if (input.Action == "allow-resubmit" && (assignment is null&&project is null || !detail.IsLatestSubmission || detail.Item.State == "awaiting-review" || (assignment?.CanSubmit??project!.CanSubmit)))
             throw new HttpFault(409, "Разрешить пересдачу можно для последней проверенной работы, если она ещё не разрешена.");
         var row = new ElectronicsReviewEntity { Id = id, StudentId = studentId, ReportId = reportId, TeacherId = teacherId,
             Sequence = (detail.History.LastOrDefault()?.Sequence ?? 0) + 1, PreviousReviewId = input.ExpectedReviewId,
@@ -96,13 +100,18 @@ public static class ElectronicsReviews
             assignment.CanSubmit = input.Action is "changes-requested" or "allow-resubmit";
             assignment.StateVersion++;
         }
+        if(project is not null&&detail.IsLatestSubmission)
+        {
+            if(input.Action!="allow-resubmit")project.State=input.Action;
+            project.CanSubmit=input.Action is "changes-requested" or "allow-resubmit";project.StateVersion++;
+        }
         return Decision(row);
     }
 
-    public static async Task<ElectronicsReviewQueue> Queue(ClassroomDb db, string? studentId = null, string? status = null, string? groupId = null, string? lessonId = null, int offset = 0, string? assignmentId = null)
+    public static async Task<ElectronicsReviewQueue> Queue(ClassroomDb db, string? studentId = null, string? status = null, string? groupId = null, string? lessonId = null, int offset = 0, string? assignmentId = null,string? projectId=null)
     {
         if (offset < 0 || offset > 1000000 || status is not (null or "pending" or "all")) throw new HttpFault(400, "Некорректный фильтр очереди.");
-        var all = Items(db).Where(r => (studentId == null || r.StudentId == studentId) && (assignmentId == null || r.AssignmentId == assignmentId));
+        var all = Items(db).Where(r => (studentId == null || r.StudentId == studentId) && (assignmentId == null || r.AssignmentId == assignmentId)&&(projectId==null||r.FreeProjectId==projectId));
         var pending = await all.CountAsync(r => r.State == "awaiting-review");
         var query = all.Where(r => (status == "all" || r.State == "awaiting-review") && (groupId == null || r.GroupId == (groupId == "none" ? null : groupId)) && (lessonId == null || r.LessonId == lessonId));
         var rows = await query.OrderByDescending(r => r.SubmittedAt).ThenBy(r => r.StudentId).ThenBy(r => r.ReportId).Skip(offset).Take(31).ToArrayAsync();
@@ -117,10 +126,10 @@ public static class ElectronicsReviews
             return await state.Read(async db => new ElectronicsReviewFilters(await db.Groups.OrderBy(g => g.Name).Select(g => new GroupDto(g.Id, g.Name)).ToArrayAsync(),
                 await db.LessonSessions.OrderByDescending(s => s.CreatedAt).ThenBy(s => s.Id).Select(s => new ElectronicsReviewLesson(s.Id, s.GroupName, s.CreatedAt)).ToArrayAsync()));
         });
-        api.MapGet("/teacher/reviews/electronics", (HttpContext ctx, string? status, string? groupId, string? lessonId, string? studentId, string? assignmentId, int? offset) =>
+        api.MapGet("/teacher/reviews/electronics", (HttpContext ctx, string? status, string? groupId, string? lessonId, string? studentId, string? assignmentId,string? projectId, int? offset) =>
         {
             state.Authorize(ctx, "teacher");
-            return state.Read(db => Queue(db, studentId: studentId, status: status, groupId: groupId, lessonId: lessonId, offset: offset ?? 0, assignmentId: assignmentId));
+            return state.Read(db => Queue(db, studentId: studentId, status: status, groupId: groupId, lessonId: lessonId, offset: offset ?? 0, assignmentId: assignmentId,projectId:projectId));
         });
         api.MapGet("/teacher/reviews/electronics/{studentId}/{reportId}", (HttpContext ctx, string studentId, string reportId) =>
         {

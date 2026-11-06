@@ -26,7 +26,7 @@ public static class ElectronicsProjectFormat
             {
                 if(!ids.Add(Text(p.GetProperty("id"),64))) throw new InvalidDataException("Повтор компонента.");
                 var kind=Text(p.GetProperty("kind"),32);
-                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
                 Number(p.GetProperty("x"),-CoordinateLimit,CoordinateLimit); Number(p.GetProperty("y"),-CoordinateLimit,CoordinateLimit);
                 if(p.TryGetProperty("value",out var value)) Number(value,-1_000_000,1_000_000);
                 if(p.TryGetProperty("scale",out var scale)) Number(scale,0.4,2);

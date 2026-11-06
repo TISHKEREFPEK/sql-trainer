@@ -6,6 +6,20 @@ namespace Classroom.UiTests;
 public sealed class ElectronicsSyncTests
 {
     [Fact]
+    public async Task DrainWaitsForInflightHistoryAndContinuesItsRemainingBatches()
+    {
+        await using var f=await LiveClassroom.Start();var root=Path.Combine(Path.GetTempPath(),"classroom-history-drain-"+Guid.NewGuid().ToString("N"));var path=Path.Combine(root,"queue.json");
+        var started=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var acknowledged=0;var total=3;var calls=0;
+        using var sync=new ElectronicsSync(f.Student,path,_=>{},startTimer:false,journalPending:()=>acknowledged<total,journalDelivery:async token=>
+        {
+            if(Interlocked.Increment(ref calls)==1){started.SetResult();await release.Task.WaitAsync(token);}
+            acknowledged=Math.Min(total,acknowledged+3);return acknowledged==total;
+        });
+        var project=CircuitProject.Blink().Serialize();sync.QueueDraft(project);var originalClient=sync.ClientId;var inFlight=sync.Flush();await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        total=10;var drain=sync.Drain();Assert.False(drain.IsCompleted);release.SetResult();await inFlight;
+        Assert.True(await drain);Assert.False(sync.Pending);Assert.Equal(10,acknowledged);Assert.Equal(4,calls);Assert.Equal(originalClient,sync.ClientId);
+    }
+    [Fact]
     public async Task FailedWindowsQueueWriteBlocksNetworkUntilTheSameIdsAreDurable()
     {
         if(!OperatingSystem.IsWindows()) return;

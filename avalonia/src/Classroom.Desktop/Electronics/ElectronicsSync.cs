@@ -21,7 +21,7 @@ public sealed class ElectronicsSync : IDisposable
     readonly Action<ElectronicsSyncReceipt>? receipt;
     readonly Func<CancellationToken, Task<bool>>? journalDelivery;
     readonly Func<bool>? journalPending;
-    bool historyBusy;
+    volatile bool historyBusy;
     readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(2)};
     readonly CancellationTokenSource lifetime=new();
     readonly object stateGate=new();
@@ -170,14 +170,23 @@ public sealed class ElectronicsSync : IDisposable
     {
         // Finish an already running upload before logout, then send edits/events
         // queued while it was in flight. A failed network attempt stays on disk.
-        var waited=busy;
-        for(var i=0;busy&&!disposed&&i<240;i++) await Task.Delay(25);
-        if(disposed||busy||waited&&lastFailure) return false;
+        async Task<bool> Idle()
+        {
+            var waited=busy||historyBusy;
+            for(var i=0;(busy||historyBusy)&&!disposed&&i<400;i++)await Task.Delay(25);
+            return !disposed&&!busy&&!historyBusy&&!(waited&&(lastFailure||DeliveryError is not null));
+        }
+        if(!await Idle())return false;
         for(var batch=0;Pending&&!disposed&&batch<11;batch++)
         {
+            if(!await Idle())return false;
             int count;bool dirty;lock(stateGate){count=state.Reports.Count;dirty=state.Dirty;}
             if(await Flush()) return true;
-            lock(stateGate){if(lastFailure||count==state.Reports.Count&&dirty==state.Dirty) return false;}
+            lock(stateGate)
+            {
+                if(lastFailure||DeliveryError is not null)return false;
+                if(count==state.Reports.Count&&dirty==state.Dirty&&!busy&&!historyBusy&&!(journalDelivery is not null&&journalPending?.Invoke()==true))return false;
+            }
         }
         return !Pending;
     }

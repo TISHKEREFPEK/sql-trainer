@@ -59,6 +59,7 @@ public static class PartArtwork
     {
         if (p.Kind == PartKind.Uno) return new(260, 195);
         if (p.Kind == PartKind.Mega) return new(500,270);
+        if (p.Kind == PartKind.LcdI2c) return p.ModelId=="lcd-i2c-20x4"?new(360,190):new(300,150);
         if (p.Kind == PartKind.Breadboard) return new(290, 430);
         return PartCatalog.For(p).Art switch
         {
@@ -131,6 +132,7 @@ public static class PartArtwork
             else if (i < 20) { x = 161 + (i - 14) * 14.4; y = 185; }
             else { x = i == 20 ? 109 : 124; y = 185; }
         }
+        else if(p.Kind==PartKind.LcdI2c){x=7;y=40+i*20;}
         else if(p.Kind==PartKind.Mega)
         {
             if(pin.StartsWith('D')&&int.TryParse(pin[1..],out var number))
@@ -181,6 +183,7 @@ public static class PartArtwork
         var size = BaseBody(p); var m = TransformMatrix(p);
         var prefix = FormattableString.Invariant($"<g transform=\"translate({p.X} {p.Y}) matrix({m.M11} {m.M12} {m.M21} {m.M22} {m.M31} {m.M32})\">");
         if (p.Kind == PartKind.Breadboard) return prefix + FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"8\" fill=\"#fafafa\" stroke=\"#b8c0c8\"/>") + "</g>";
+        if(p.Kind==PartKind.LcdI2c)return prefix+FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"6\" fill=\"#17664d\"/><rect x=\"24\" y=\"24\" width=\"{size.Width-48}\" height=\"{size.Height-58}\" fill=\"#293d48\"/>")+"</g>";
         if (!Regions.TryGetValue(PartCatalog.For(p).Art, out var sprite)) return prefix + "<text x=\"15\" y=\"35\" font-size=\"36\">&#x23DA;</text></g>";
         var r = sprite.Region;
         return prefix + FormattableString.Invariant($"<svg width=\"{size.Width}\" height=\"{size.Height}\" viewBox=\"{r.X} {r.Y} {r.Width} {r.Height}\"><use href=\"#atlas-{sprite.Sheet}\"/></svg></g>");

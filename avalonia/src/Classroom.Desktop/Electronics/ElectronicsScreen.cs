@@ -428,6 +428,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             })));
             properties.Children.Add(new Expander{Header=$"Контакты · {PartLibrary.Pins(p).Length}",Content=pinFields,HorizontalAlignment=HorizontalAlignment.Stretch});
         }
+        if(p.Kind==PartKind.LcdI2c)InspectLcd(p);
         if (p.Kind is PartKind.Resistor or PartKind.Potentiometer or PartKind.Pot3 or PartKind.Led or PartKind.Diode or PartKind.Battery or PartKind.AnalogSensor or PartKind.Motor or PartKind.Buzzer)
         {
             var input = Ui.Input(p.Value.ToString(CultureInfo.InvariantCulture));
@@ -523,7 +524,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             var baseSize = PartArtwork.BaseBody(p);
             var face = new Canvas { Width = baseSize.Width, Height = baseSize.Height, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
                 RenderTransformOrigin = new RelativePoint(0,0,RelativeUnit.Relative), RenderTransform = new MatrixTransform { Matrix = PartArtwork.TransformMatrix(p, zoom) } };
-            face.Children.Add(p.Kind == PartKind.Breadboard ? BreadboardFace(1) : PartArtwork.Thumbnail(PartCatalog.For(p).Art, baseSize.Width, baseSize.Height));
+            face.Children.Add(p.Kind == PartKind.Breadboard ? BreadboardFace(1) : p.Kind==PartKind.LcdI2c?new LcdDisplayFace(p,displays.GetValueOrDefault(p.Id)):PartArtwork.Thumbnail(PartCatalog.For(p).Art, baseSize.Width, baseSize.Height));
             board.Child = face;
             group.Children.Add(board);
             var title = new TextBlock { Text = PartLibrary.Name(p), FontSize = 12 * zoom, MaxWidth = Math.Max(80, size.Width) * zoom, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -685,11 +686,13 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 var inputs = Enumerable.Range(0, board.DigitalCount).Select(i => result.Voltages.GetValueOrDefault(new(uno.Id, "D" + i)) > 2.5).ToArray();
                 var analog = Enumerable.Range(0, board.AnalogCount).Select(i => result.Voltages.GetValueOrDefault(new(uno.Id, "A" + i))).ToArray();
                 var serial=pendingSerial;pendingSerial=null;
-                var frame = await firmware.Step(inputs, analog,serial?.Text,serial?.Port??0);
+                var frame = await firmware.Step(inputs, analog,serial?.Text,serial?.Port??0,CircuitI2c.Devices(project,result));
                 if (generation != runId || disposed) return;
                 if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
                 outputs = frame.Pins;
                 ReceiveSerial(frame);
+                if(frame.I2c is {Length:>0} transfers)RecordHistory("i2c-transfer",true,i2cIo:transfers);
+                displays=(frame.Displays??[]).ToDictionary(d=>d.Id);
             }
             result = CircuitSolver.Solve(project, outputs); Draw();
             if (result.Warnings.Length > 0) status.Text = string.Join(" ", result.Warnings);
@@ -703,7 +706,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
         runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose(); outputs = null;
-        serialReady=false;pendingSerial=null;UpdateSerialControls();
+        serialReady=false;pendingSerial=null;displays.Clear();UpdateSerialControls();
     }
     string Svg()
     {

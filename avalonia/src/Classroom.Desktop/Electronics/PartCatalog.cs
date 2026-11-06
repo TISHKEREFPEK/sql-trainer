@@ -19,6 +19,8 @@ public static class PartCatalog
         {
             new("uno", "Arduino Uno", "Платы", PartKind.Uno, 0, "uno", true, ReferenceName:"Arduino UNO"),
             new("mega2560", "Arduino Mega 2560", "Платы", PartKind.Mega, 0, "mega", true, ReferenceName:"Arduino Mega 2560 (AVR)"),
+            new("lcd-i2c-16x2", "LCD 16×2 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"16x2 I2C LCD (PCF8574)"),
+            new("lcd-i2c-20x4", "LCD 20×4 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"20x4 I2C LCD (PCF8574)"),
             new("breadboard", "Макетная плата · 400 точек", "Монтаж", PartKind.Breadboard, 0, "breadboard", true, ReferenceName:"Breadboard (Half Size)"),
             new("resistor-330", "Резистор · 330 Ом", "Пассивные", PartKind.Resistor, 330, "resistor", true, ReferenceName:"Resistor"),
             new("led-red", "Светодиод · красный", "Индикация", PartKind.Led, 2, "led-red", true, ReferenceName:"LED Two Pin (Red)"),

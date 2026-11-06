@@ -41,7 +41,8 @@ public static class CircuitCodeGuide
         }
         bool Ground(Terminal terminal) => Reach(terminal).Any(t=>t.Pin=="GND" && (t.Part==uno.Id || parts[t.Part].Kind==PartKind.Ground));
         var declarations=new List<string>(); var setup=new List<string>(); var loop=new List<string>(); var used=new Dictionary<string,string>();
-        var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var count=0;
+        var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var i2c=false;var count=0;
+        var i2cDevices=CircuitI2c.Devices(project);
         bool Claim(string? pin,CircuitPart part)
         {
             if(pin is null) { notes.Add(PartLibrary.Name(part)+": подключите сигнальный вывод к одному подходящему выводу платы — номер нельзя определить однозначно."); ready=false; return false; }
@@ -53,6 +54,14 @@ public static class CircuitCodeGuide
             var n=++count;
             switch(part.Kind)
             {
+                case PartKind.LcdI2c:
+                {
+                    var device=i2cDevices.Single(d=>d.Id==part.Id);var data=uno.Kind==PartKind.Mega?"20":"A4";var clock=uno.Kind==PartKind.Mega?"21":"A5";
+                    notes.Add($"LCD: Wire.h уже установлена; SDA → {data}, SCL → {clock}, VCC → 5V, GND → GND; адрес 0x{device.Address:X2}. Символы передаются байтами ROM LCD; UTF-8 не является кириллицей дисплея.");
+                    if(!device.Powered||!device.Connected){notes.Add("Для шаблона исправьте питание и соединения LCD.");ready=false;break;}
+                    foreach(var pin in new[]{data,clock}){if(used.TryGetValue(pin,out var usage)&&usage!="Шина I2C"){notes.Add($"Вывод {pin} занят: {usage}.");ready=false;}used[pin]="Шина I2C";}
+                    i2c=true;setup.Add($"lcdBegin(0x{device.Address:X2});");setup.Add($"lcdText(0x{device.Address:X2}, \"LCD ready\");");break;
+                }
                 case PartKind.Led:
                 {
                     notes.Add(PartLibrary.Name(part)+": pinMode(..., OUTPUT), digitalWrite(..., HIGH/LOW). Резистор остаётся частью схемы.");
@@ -87,8 +96,9 @@ public static class CircuitCodeGuide
         if(!ready) return new(string.Join("\n",notes),null);
         var code=new StringBuilder($"// Начальный шаблон по текущим соединениям {profile.Name}.\n");
         if(servo) code.Append("#include <Servo.h>\n");
+        if(i2c)code.AppendLine(I2cSketch.Helpers);
         foreach(var line in declarations) code.AppendLine(line);
-        code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);
+        code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n");if(i2c)code.Append("  Wire.begin();\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);
         code.Append("}\n\nvoid loop() {\n"); if(blink) code.Append("  static bool ledOn = false;\n  ledOn = !ledOn;\n"); foreach(var line in loop) code.Append("  ").AppendLine(line);
         code.Append("  delay(500);\n}\n");
         return new(string.Join("\n",notes),code.ToString());

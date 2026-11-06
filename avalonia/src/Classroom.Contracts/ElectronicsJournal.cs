@@ -1,13 +1,23 @@
 namespace Classroom.Contracts;
 
 public sealed record ElectronicsSerialIo(int Port, string Text);
+public sealed record ElectronicsI2cIo(int Address,bool Read,int[] Data,bool Ack,bool RepeatedStart);
 
 public sealed record ElectronicsChange(string Id, long Sequence, long At, string Actor, string Kind, string BeforeHash, string AfterHash,
     int Offset, int Removed, string Inserted, string? Checkpoint = null, string? GestureId = null, string? ReportId = null, string? ReportHash = null,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsSerialIo? SerialIo = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsSerialIo? SerialIo = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsI2cIo[]? I2cIo = null);
 
 public sealed record ElectronicsJournal(int Version, string StreamId, long StartedAt, string BaseJson, ElectronicsChange[] Changes)
 {
+    static void ValidateI2c(string json,string kind,ElectronicsI2cIo[]? data)
+    {
+        if(data is null)return;
+        if(kind!="i2c-transfer"||data.Length is <1 or >128||data.Any(t=>t is null||t.Address is <0 or >127||t.Data is null||t.Data.Length>4096||t.Data.Any(b=>b is <0 or >255)))
+            throw new InvalidDataException("Некорректные данные I2C в истории.");
+        using var document=System.Text.Json.JsonDocument.Parse(json);
+        if(!document.RootElement.GetProperty("parts").EnumerateArray().Any(p=>p.GetProperty("kind").GetString() is "Uno" or "Mega"))throw new InvalidDataException("У обмена I2C отсутствует исполняемая плата.");
+    }
     static void ValidateSerial(string json,string kind,ElectronicsSerialIo? data)
     {
         if(data is null)return;
@@ -29,10 +39,11 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
     public static ElectronicsJournal Start(string json, long at)
     { Validate(json); return new(1, Guid.NewGuid().ToString("N"), at, json, []); }
     public static ElectronicsJournal Record(ElectronicsJournal journal, string before, string after, string kind, long at,
-        string actor = "student", bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, ElectronicsSerialIo? serialIo = null)
+        string actor = "student", bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, ElectronicsSerialIo? serialIo = null,ElectronicsI2cIo[]? i2cIo = null)
     {
         Validate(after);
         ValidateSerial(after,kind,serialIo);
+        ValidateI2c(after,kind,i2cIo);
         if (journal.Version != 1 || SqlSyncHash.Text(before) != (journal.Changes.Length == 0 ? SqlSyncHash.Text(journal.BaseJson) : journal.Changes[^1].AfterHash))
             throw new InvalidDataException("Исходное состояние не совпадает с историей схемы.");
         if (kind.Length is < 1 or > 80 || actor is not ("student" or "teacher" or "server" or "recovery") || at <= 0 || at > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds() ||
@@ -47,7 +58,7 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
         if (suffix > 0 && (suffix < before.Length && char.IsSurrogatePair(before, before.Length - suffix - 1) || suffix < after.Length && char.IsSurrogatePair(after, after.Length - suffix - 1))) suffix--;
         var sequence = journal.Changes.LongLength + 1;
         var step = new ElectronicsChange(Guid.NewGuid().ToString("N"), sequence, at, actor, kind, SqlSyncHash.Text(before), SqlSyncHash.Text(after),
-            prefix, before.Length - prefix - suffix, after.Substring(prefix, after.Length - prefix - suffix), sequence % 64 == 0 ? after : null, gestureId, reportId, reportHash,serialIo);
+            prefix, before.Length - prefix - suffix, after.Substring(prefix, after.Length - prefix - suffix), sequence % 64 == 0 ? after : null, gestureId, reportId, reportHash,serialIo,i2cIo);
         return journal with { Changes = journal.Changes.Append(step).ToArray() };
     }
     public string Replay(int? through = null)
@@ -67,6 +78,7 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
                 throw new InvalidDataException("Нарушен порядок или исходное состояние истории схемы.");
             json = json.Remove(step.Offset, step.Removed).Insert(step.Offset, step.Inserted); Validate(json);
             ValidateSerial(json,step.Kind,step.SerialIo);
+            ValidateI2c(json,step.Kind,step.I2cIo);
             if (SqlSyncHash.Text(json) != step.AfterHash || step.Checkpoint is { } checkpoint && checkpoint != json)
                 throw new InvalidDataException("История не восстанавливает сохранённую схему.");
         }

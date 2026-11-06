@@ -35,6 +35,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         "rotate-start" => "Начало поворота", "rotate" => "Поворот", "rotate-end" => "Поворот завершён", "gesture-cancel" => "Отмена жеста", "undo" => "Отмена изменения", "redo" => "Повтор изменения",
         "work-open" => "Открыта работа", "work-leave" => "Переход из работы", "work-close" => "Работа закрыта", "window-focus" => "Возврат в окно", "window-blur" => "Переход в другое окно", "window-minimize" => "Окно свёрнуто", "window-restore" => "Окно восстановлено",
         "serial-input-request"=>"Запрошен ввод в порт","serial-input"=>"Ввод принят моделью порта","serial-output"=>"Вывод последовательного порта","serial-clear"=>"Очищен экран порта","serial-channel"=>"Выбран последовательный порт",
+        "i2c-transfer"=>"Обмен по I2C","i2c-address"=>"Адрес I2C",
         "run-request" => "Запрошен запуск", "compile-request" => "Запрошена компиляция", "simulation-stop" => "Симуляция остановлена", "report-submitted" => "Намерение сдачи", "report-received" => "Получен ответ сервера",
         "report-compiled" => "Сообщена компиляция", "report-started" => "Сообщён запуск", "report-compile-error" => "Сообщена ошибка компиляции", "report-run-error" => "Сообщена ошибка запуска", "control-change" => "Регулятор", "part-add" => "Добавлена деталь", "project-replace" => "Замена схемы", "code-template" => "Шаблон кода", _ => kind };
     readonly string? assignmentId, lessonId;
@@ -97,7 +98,8 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         if (disposed || stamp != selection || selected?.Id != source.Id) return;
         info.Text = step.Event is { } e ? $"Шаг {step.Sequence} · {Label(e.Change.Kind)}\nНа ПК ученика: {Ui.Time(e.Change.At)} · получено: {Ui.Time(e.ReceivedAt)}" : "Исходная схема · начало записи на ПК ученика: " + Ui.Time(source.StartedAt);
         if (step.Event?.Change.Kind.StartsWith("window-", StringComparison.Ordinal) == true) info.Text += "\nСобытие окна не является доказательством списывания.";
-        serialDetail.IsVisible=step.Event?.Change.SerialIo is not null;serialDetail.Text=step.Event?.Change.SerialIo?.Text??"";
+        serialDetail.IsVisible=step.Event?.Change.SerialIo is not null||step.Event?.Change.I2cIo is not null;serialDetail.Text=step.Event?.Change.SerialIo?.Text??"";
+        if(step.Event?.Change.I2cIo is { } transfers)serialDetail.Text=string.Join("\n",transfers.Select(t=>$"0x{t.Address:X2} · {(t.Read?"чтение":"запись")} · {(t.Ack?"адрес подтверждён":"нет ответа")}{(t.RepeatedStart?" · повторный START":"")}\nДанные (hex): "+string.Join(" ",t.Data.Select(b=>b.ToString("X2")))));
         if(step.Event?.Change.SerialIo is { }io)info.Text+=$"\n{(io.Port==0?"Serial":"Serial"+io.Port)}";
         if (link is not null) info.Text += link.Availability switch { "available" => "\nСвязанный отчёт подтверждён для этой копии задания.", "legacy-context" => "\nСнимок и копия сверены; в старом свободном отчёте занятие не сохранялось.", "mismatch" => "\nСсылка не совпадает с копией или снимком. Другой отчёт не подставлен.", _ => "\nОтчёт пока не найден; намерение само по себе не подтверждает сдачу." };
         reportId = link?.Availability is "available" or "legacy-context" ? link.ReportId : null; reportButton.IsVisible = reportId is not null;

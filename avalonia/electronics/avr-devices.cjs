@@ -63,6 +63,11 @@ function configure(cpu, board) {
   new avr.AVREEPROM(cpu,eeprom,mega?{...avr.eepromConfig,eepromReadyInterrupt:60}:avr.eepromConfig);
   const clock=new avr.AVRClock(cpu,board.clockHz);
   new avr.AVRWatchdog(cpu,mega?{...avr.watchdogConfig,watchdogInterrupt:24}:avr.watchdogConfig,clock);
-  return {ports,adc,usarts,eeprom,clock};
+  const twi=new avr.AVRTWI(cpu,mega?{...avr.twiConfig,twiInterrupt:78}:avr.twiConfig,board.clockHz);
+  const spi=new avr.AVRSPI(cpu,mega?{...avr.spiConfig,spiInterrupt:48}:avr.spiConfig,board.clockHz);
+  // With no selected peripheral MISO is undriven (pull-up). Devices attach
+  // through the bus adapter rather than replacing SPI.transfer in user code.
+  spi.onTransfer=()=>255;
+  return {ports,adc,usarts,eeprom,clock,twi,spi};
 }
 module.exports={getBoard,configure};

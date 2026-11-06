@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
 public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1);
@@ -44,6 +44,7 @@ public sealed record CircuitProject
             throw new InvalidDataException("Некорректный компонент или координаты.");
         foreach (var p in Parts)
         {
+            if(p.Kind==PartKind.LcdI2c&&(p.Value!=Math.Truncate(p.Value)||!(p.Value is >=32 and <=39 or >=56 and <=63)))throw new InvalidDataException("Адрес PCF8574: 0x20–0x27 или 0x38–0x3F.");
             if (!double.IsFinite(p.Scale) || p.Scale is < 0.4 or > 2 || p.QuarterTurns is < 0 or > 3)
                 throw new InvalidDataException("Размер детали: 40–200%, поворот: 0, 90, 180 или 270 градусов.");
             if (!double.IsFinite(p.Angle) || p.Angle is < 0 or >= 360 || !double.IsFinite(p.StretchX) || p.StretchX is < 0.1 or > 10 || !double.IsFinite(p.StretchY) || p.StretchY is < 0.1 or > 10)
@@ -80,6 +81,7 @@ public static class PartLibrary
     {
         PartKind.Uno => "Arduino Uno", PartKind.Resistor => "Резистор", PartKind.Led => "Светодиод",
         PartKind.Mega => "Arduino Mega 2560",
+        PartKind.LcdI2c => "LCD · I2C",
         PartKind.Switch => "Кнопка", PartKind.Battery => "Источник питания", PartKind.Ground => "Земля",
         PartKind.Potentiometer => "Переменный резистор", PartKind.AnalogSensor => "Аналоговый датчик",
         PartKind.Breadboard => "Макетная плата", PartKind.Diode => "Диод", PartKind.Motor => "Двигатель", PartKind.Buzzer => "Пьезоизлучатель", PartKind.Servo => "Сервопривод", PartKind.Pot3 => "Потенциометр", _ => "Деталь для схемы"
@@ -88,6 +90,7 @@ public static class PartLibrary
     {
         PartKind.Uno => Enumerable.Range(0, 14).Select(i => "D" + i).Concat(Enumerable.Range(0, 6).Select(i => "A" + i)).Concat(["5V", "GND"]).ToArray(),
         PartKind.Mega => AvrBoards.Get("mega2560").PinNames.Concat(["5V","3V3","GND","VIN","IOREF"]).ToArray(),
+        PartKind.LcdI2c => ["GND","VCC","SDA","SCL"],
         PartKind.Led => ["A", "K"], PartKind.Ground => ["GND"],
         PartKind.Diode => ["A", "K"], PartKind.Motor or PartKind.Buzzer => ["+", "−"],
         PartKind.Servo => ["VCC", "GND", "SIG"], PartKind.Pot3 => ["1", "W", "3"],
@@ -143,6 +146,9 @@ public static class CircuitSolver
                     branches.Add((part, T("W"), T("3"), 1 / Math.Max(1, part.Value * (1 - part.Setting)), 0, false)); break;
                 case PartKind.Motor: case PartKind.Buzzer: branches.Add((part, T("+"), T("−"), 1 / part.Value, 0, false)); break;
                 case PartKind.Servo: branches.Add((part, T("VCC"), T("GND"), 1.0 / 200, 0, false)); break;
+                case PartKind.LcdI2c:
+                    branches.Add((part,T("VCC"),T("GND"),1.0/1000,0,false));
+                    branches.Add((part,T("SDA"),T("VCC"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VCC"),1.0/4700,0,false));break;
                 case PartKind.Switch: branches.Add((part, T("1"), T("2"), part.Active ? 100 : 1e-10, 0, false)); break;
                 case PartKind.Led: case PartKind.Diode: branches.Add((part, T("A"), T("K"), 0, part.Value, true)); break;
                 case PartKind.Battery: case PartKind.AnalogSensor: branches.Add((part, T("+"), T("−"), 10, part.Value, false)); break;
@@ -188,7 +194,7 @@ public static class CircuitSolver
         {
             var voltage = V(b.A, volts) - V(b.B, volts);
             var current = b.Diode ? Math.Max(0, (voltage - b.Source) / 10) : (voltage - b.Source) * b.G;
-            if (b.Part.Kind is not (PartKind.Uno or PartKind.Mega)) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
+            if (b.Part.Kind is not (PartKind.Uno or PartKind.Mega)&&(b.Part.Kind!=PartKind.LcdI2c||b.A.Pin=="VCC")) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
                 b.Part.Kind == PartKind.Motor ? Math.Clamp(Math.Abs(voltage) / 5, 0, 1) * 100 : null);
             if (b.Part.Kind == PartKind.Led && current > 0.03) warnings.Add("Ток светодиода выше 30 мА. Добавьте или увеличьте резистор.");
             if (Math.Abs(current) > 0.1 && b.Part.Kind is PartKind.Uno or PartKind.Mega or PartKind.Battery) warnings.Add("Перегрузка источника или короткое замыкание. Проверьте проводку.");

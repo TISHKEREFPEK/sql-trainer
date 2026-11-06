@@ -3,8 +3,9 @@
 const avr = require('./vendor/avr8js/cjs/index.js');
 const {getBoard,configure} = require('./avr-devices.cjs');
 const {StringDecoder} = require('node:string_decoder');
+const {LcdBus} = require('./lcd-i2c.cjs');
 const readline = require('node:readline');
-let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, transmitted=0;
+let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, transmitted=0;
 function load(hex, id='uno') {
   board=getBoard(id);
   if(typeof hex!=='string'||hex.length>1000000)throw Error('Firmware is too large');
@@ -22,7 +23,7 @@ function load(hex, id='uno') {
   }
   if(!ended)throw Error('Incomplete HEX');
   cpu=new avr.CPU(program,board.ramStart+board.ramBytes-0x100);
-  ({ports,adc,usarts}=configure(cpu,board));
+  const peripherals=configure(cpu,board);({ports,adc,usarts}=peripherals);lcdBus=new LcdBus(cpu,board.clockHz,peripherals.twi);
   pinMap=board.pinMap.map(pin=>({port:ports[pin[0]],bit:Number(pin.slice(1))}));
   serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);transmitted=0;
   usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{serial[index].push(value);transmitted++;};uart.onRxComplete=()=>feed(index);});
@@ -32,6 +33,7 @@ function load(hex, id='uno') {
 function feed(index){if(incoming[index].length&&!usarts[index].rxBusy&&usarts[index].writeByte(incoming[index][0]))incoming[index].shift();}
 function step(input) {
   if(!cpu)throw Error('Load firmware first');
+  lcdBus.update(input.devices??[]);
   if(input.digital!=null&&(!Array.isArray(input.digital)||input.digital.length>board.digitalCount))throw Error('Invalid digital input count');
   if(input.analog!=null&&(!Array.isArray(input.analog)||input.analog.length>board.analogCount))throw Error('Invalid analog input count');
   if(input.serialInput!=null){
@@ -58,14 +60,14 @@ function step(input) {
   });
   // Finish a frame early under heavy serial traffic, preserving every byte
   // rather than silently dropping output when a host-side buffer fills.
-  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
+  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192&&lcdBus.trace.length<128){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
   finally{listeners.forEach(({port,listener})=>port.removeListener(listener));}
   const pins=pinMap.map((pin,index)=>{
     if(levels[index])accumulated[index]+=cpu.cycles-last[index];const state=pin.port.pinState(pin.bit);
     return {output:state===avr.PinState.High||state===avr.PinState.Low,voltage:5*accumulated[index]/(cpu.cycles-start),pullUp:state===avr.PinState.InputPullUp,pulseUs:pulses[index],frequency:frequencies[index]};
   });
   const serialPorts=serial.map((values,index)=>decoders[index].write(Buffer.from(values)));serial=usarts.map(()=>[]);transmitted=0;
-  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz};
+  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz,...lcdBus.frame()};
 }
 readline.createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{
   try{if(line.length>1100000)throw Error('Request too large');const input=JSON.parse(line);const output=input.hex!=null?load(input.hex,input.board??'uno'):step(input);process.stdout.write(JSON.stringify(output)+'\n');}

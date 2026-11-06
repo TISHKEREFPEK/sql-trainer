@@ -558,6 +558,42 @@ namespace Classroom.Storage.Migrations
                     b.ToTable("LessonParticipants");
                 });
 
+            modelBuilder.Entity("Classroom.Storage.LessonRosterEntity", b =>
+                {
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("AddedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GroupId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("GroupKnown")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GroupName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StudentName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("LessonId", "StudentId");
+
+                    b.HasIndex("StudentId");
+
+                    b.ToTable("LessonRoster");
+                });
+
             modelBuilder.Entity("Classroom.Storage.LessonSessionEntity", b =>
                 {
                     b.Property<string>("Id")
@@ -595,6 +631,12 @@ namespace Classroom.Storage.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("RegistrationOpen")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RosterAtStart")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("RosterCapturedAt")
                         .HasColumnType("INTEGER");
 
                     b.Property<long?>("StartedAt")
@@ -819,6 +861,12 @@ namespace Classroom.Storage.Migrations
                     b.Property<string>("PresetsJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("ResultsMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("lesson");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -1208,6 +1256,21 @@ namespace Classroom.Storage.Migrations
                     b.HasOne("Classroom.Storage.LessonSessionEntity", null)
                         .WithMany()
                         .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonRosterEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 

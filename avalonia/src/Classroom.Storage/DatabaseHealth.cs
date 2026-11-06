@@ -134,6 +134,15 @@ public static class DatabaseHealth
             }
         }
         var lessons = db.LessonSessions.AsNoTracking().ToArray();
+        if (profiles.Any(p => p.ResultsMode is not ("lesson" or "course"))) throw new InvalidDataException("Некорректный основной вид результатов.");
+        foreach (var row in db.LessonRoster.AsNoTracking())
+        {
+            var lesson = lessons.SingleOrDefault(l => l.Id == row.LessonId);
+            if (lesson is null || !profiles.Any(p => p.Id == row.StudentId && p.Role == "student") || string.IsNullOrWhiteSpace(row.StudentName) || row.StudentName.Length > 200 ||
+                string.IsNullOrWhiteSpace(row.GroupName) || row.GroupName.Length > 200 || row.AddedAt < (lesson.StartedAt ?? lesson.CreatedAt) ||
+                row.Source is not ("selected-group" or "joined" or "registered" or "legacy-participant") || !row.GroupKnown && (row.GroupId is not null || row.Source != "legacy-participant"))
+                throw new InvalidDataException("Некорректный сохранённый состав занятия.");
+        }
         foreach (var lesson in lessons)
         {
             lesson.Validate();

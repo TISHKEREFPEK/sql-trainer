@@ -17,6 +17,8 @@ public sealed class LessonSessionEntity
     public bool OpenToAllGroups { get; set; }
     public bool RegistrationOpen { get; set; }
     public bool FreePractice { get; set; }
+    public long? RosterCapturedAt { get; set; }
+    public bool RosterAtStart { get; set; }
 
     public void Validate()
     {
@@ -31,6 +33,7 @@ public sealed class LessonSessionEntity
             State == "paused" && PausedAt is null || State == "running" && PausedAt is not null ||
             PausedAt > EndedAt)
             throw new InvalidDataException("Некорректные даты или состояние занятия.");
+        if (RosterAtStart && RosterCapturedAt is null || RosterCapturedAt < (StartedAt ?? CreatedAt)) throw new InvalidDataException("Некорректная дата состава занятия.");
         if (RegistrationOpen && GroupId is null)
             throw new InvalidDataException("Для регистрации выберите существующую группу.");
     }

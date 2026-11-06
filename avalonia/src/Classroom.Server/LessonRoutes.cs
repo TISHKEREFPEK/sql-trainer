@@ -55,6 +55,7 @@ public static class LessonRoutes
             db.LessonParticipants.Add(new() { SessionId = lesson.Id, StudentId = student.Id, JoinedAt = ServerState.Now, LastSeenAt = ServerState.Now,
                 GroupNameAtEntry = student.GroupId is null ? "Без группы" : (await db.Groups.FindAsync(student.GroupId))?.Name ?? "Без группы" });
         else participant.LastSeenAt = ServerState.Now;
+        await LessonRoster.Add(db, lesson, student, "joined");
         return lesson.Id;
     }
 
@@ -120,7 +121,9 @@ public static class LessonRoutes
             {
                 var row = await db.LessonSessions.FindAsync(id) ?? throw new HttpFault(404, "Занятие не найдено.");
                 if (row.EndedAt is not null) throw new HttpFault(409, "Завершённое занятие менять нельзя.");
-                await Policy(db, row, input); return await View(state, db, row);
+                await Policy(db, row, input);
+                if (row.StartedAt is not null) await LessonRoster.Capture(db, row, false);
+                return await View(state, db, row);
             });
         });
         api.MapPost("/teacher/lessons/{id}/{action}", (HttpContext ctx, string id, string action) =>
@@ -137,7 +140,9 @@ public static class LessonRoutes
                 else if (action == "start")
                 {
                     if (row.State is not ("preparing" or "running")) throw new HttpFault(409, "Для паузы используйте «Продолжить».");
+                    var firstStart = row.StartedAt is null;
                     row.StartedAt ??= ServerState.Now; row.State = "running";
+                    await LessonRoster.Capture(db, row, firstStart);
                 }
                 else if (action == "pause")
                 {
@@ -150,6 +155,7 @@ public static class LessonRoutes
                     row.PausedAt = null; row.State = "running";
                 }
                 else if (action != "restore" || row.State == "preparing") throw new HttpFault(400, "Неизвестное действие с занятием.");
+                if (action == "restore") await LessonRoster.Capture(db, row, false);
                 await db.SaveChangesAsync();
                 if (row.State != "finished") state.ActivatedLessonId = row.Id;
                 else if (state.ActivatedLessonId == row.Id) state.ActivatedLessonId = null;
@@ -199,7 +205,8 @@ public static class LessonRoutes
                 }
                 if (await db.Profiles.AnyAsync(p => p.Role == "student" && p.GroupId == row.GroupId && p.FullName == fullName)) throw new HttpFault(409, "В этой группе уже есть ученик с таким ФИО. Обратитесь к преподавателю.");
                 var slot = (await db.Profiles.Where(p => p.Role == "student" && p.GroupId == row.GroupId).MaxAsync(p => (int?)p.Slot) ?? -1) + 1;
-                db.Profiles.Add(new() { Id = id, Login = "s-" + id, FullName = fullName, GroupId = row.GroupId, Slot = slot, PasswordHash = Passwords.Hash(input.Password) });
+                var student = new ProfileEntity { Id = id, Login = "s-" + id, FullName = fullName, GroupId = row.GroupId, Slot = slot, PasswordHash = Passwords.Hash(input.Password) };
+                db.Profiles.Add(student); await LessonRoster.Enrolled(db, student);
                 return new StudentChoice(id, fullName);
             });
         }).RequireRateLimiting("login");

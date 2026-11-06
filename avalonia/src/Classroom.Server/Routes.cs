@@ -28,6 +28,7 @@ public static class Routes
             return state.SelectLesson(input);
         });
         LearningAnalytics.Map(api, state);
+        ClassroomResults.Map(api, state);
         api.MapGet("/status", () => state.Read(async db => new StatusDto(!await db.Profiles.AnyAsync(p => p.Role == "teacher"), "0.1.0")));
         api.MapPost("/setup", async (HttpContext ctx, PasswordRequest input) =>
         {
@@ -253,6 +254,7 @@ public static class Routes
                     Slot = slot
                 };
                 db.Profiles.Add(row);
+                await LessonRoster.Enrolled(db, row);
                 return new
                 {
                     row.Id
@@ -303,6 +305,7 @@ public static class Routes
                 {
                     profile.Slot = (await db.Profiles.Where(p => p.Role == "student" && p.GroupId == input.GroupId).MaxAsync(p => (int? )p.Slot) ?? -1) + 1;
                     profile.GroupId = input.GroupId;
+                    await LessonRoster.Enrolled(db, profile);
                 }
 
                 return new

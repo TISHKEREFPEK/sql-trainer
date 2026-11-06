@@ -68,7 +68,7 @@ public static class SqlJournalRoutes
                 return new SqlJournalAck(row.Id, "accepted", sequence, SqlSyncHash.Text(code));
             });
         });
-        api.MapGet("/teacher/sql-journal/{studentId}", (HttpContext ctx, string studentId, string? lessonId, string? taskId, int? offset) =>
+        api.MapGet("/teacher/sql-journal/{studentId}", (HttpContext ctx, string studentId, string? lessonId, string? taskId, string? workScope, int? offset) =>
         {
             state.Authorize(ctx, "teacher"); var start = offset ?? 0;
             if (start is < 0 or > 1000000) throw new HttpFault(400, "Некорректная страница истории.");
@@ -77,6 +77,7 @@ public static class SqlJournalRoutes
                 var query = db.SqlJournalStreams.AsNoTracking().Where(s => s.StudentId == studentId);
                 if (lessonId is not null) query = query.Where(s => s.LessonId == lessonId);
                 if (taskId is not null) query = query.Where(s => s.TaskId == taskId);
+                if (workScope is not null) query = query.Where(s => s.WorkScope == workScope);
                 return (await query.OrderByDescending(s => s.ReceivedAt).ThenBy(s => s.Id).Skip(start).Take(30).ToArrayAsync()).Select(Info).ToArray();
             });
         });

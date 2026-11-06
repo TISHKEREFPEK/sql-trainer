@@ -35,8 +35,10 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         "work-open" => "Открыта работа", "work-leave" => "Переход из работы", "work-close" => "Работа закрыта", "window-focus" => "Возврат в окно", "window-blur" => "Переход в другое окно", "window-minimize" => "Окно свёрнуто", "window-restore" => "Окно восстановлено",
         "run-request" => "Запрошен запуск", "compile-request" => "Запрошена компиляция", "simulation-stop" => "Симуляция остановлена", "report-submitted" => "Намерение сдачи", "report-received" => "Получен ответ сервера",
         "report-compiled" => "Сообщена компиляция", "report-started" => "Сообщён запуск", "report-compile-error" => "Сообщена ошибка компиляции", "report-run-error" => "Сообщена ошибка запуска", "control-change" => "Регулятор", "part-add" => "Добавлена деталь", "project-replace" => "Замена схемы", "code-template" => "Шаблон кода", _ => kind };
-    public ElectronicsJournalView(MainWindow owner, ClassroomApi api, string studentId, string studentName)
+    readonly string? assignmentId, lessonId;
+    public ElectronicsJournalView(MainWindow owner, ClassroomApi api, string studentId, string studentName, string? assignmentId = null, string? lessonId = null)
     {
+        this.assignmentId = assignmentId; this.lessonId = lessonId;
         this.owner = owner; this.api = api; this.studentId = studentId; cancellation = lifetime.Token;
         moreStreams = Ui.Button("Ещё записи", () => Guard(LoadMoreStreams)); moreSteps = Ui.Button("Ещё шаги", () => Guard(LoadMoreSteps));
         reportButton = Ui.Button("Открыть связанный снимок", () => Guard(OpenReport)); reportButton.IsVisible = false;
@@ -68,7 +70,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
     }
     async Task LoadMoreStreams()
     {
-        var stamp = generation; var page = await api.Get<ElectronicsJournalInfo[]>(Prefix + "?offset=" + choices.Count, cancellation); if (disposed || stamp != generation) return;
+        var stamp = generation; var page = await api.Get<ElectronicsJournalInfo[]>(Prefix + "?offset=" + choices.Count + (assignmentId is null ? "" : "&assignmentId=" + Uri.EscapeDataString(assignmentId)) + (lessonId is null ? "" : "&lessonId=" + Uri.EscapeDataString(lessonId)), cancellation); if (disposed || stamp != generation) return;
         choices.AddRange(page.Select(s => new StreamChoice(s))); binding = true; var previous = streams.SelectedItem; streams.ItemsSource = choices.ToArray(); streams.SelectedItem = previous; binding = false;
         if (choices.Count == 0) info.Text = "";
         moreStreams.IsVisible = page.Length == 30; status.Text = choices.Count == 0 ? "История ещё не получена. Прежние незаписанные шаги не восстанавливаются." : "Время действия — по ПК ученика; получение — по серверу преподавателя. Новые шаги появятся после передачи и обновления.";

@@ -99,10 +99,10 @@ public static class ElectronicsReviews
         return Decision(row);
     }
 
-    public static async Task<ElectronicsReviewQueue> Queue(ClassroomDb db, string? studentId = null, string? status = null, string? groupId = null, string? lessonId = null, int offset = 0)
+    public static async Task<ElectronicsReviewQueue> Queue(ClassroomDb db, string? studentId = null, string? status = null, string? groupId = null, string? lessonId = null, int offset = 0, string? assignmentId = null)
     {
         if (offset < 0 || offset > 1000000 || status is not (null or "pending" or "all")) throw new HttpFault(400, "Некорректный фильтр очереди.");
-        var all = Items(db).Where(r => studentId == null || r.StudentId == studentId);
+        var all = Items(db).Where(r => (studentId == null || r.StudentId == studentId) && (assignmentId == null || r.AssignmentId == assignmentId));
         var pending = await all.CountAsync(r => r.State == "awaiting-review");
         var query = all.Where(r => (status == "all" || r.State == "awaiting-review") && (groupId == null || r.GroupId == (groupId == "none" ? null : groupId)) && (lessonId == null || r.LessonId == lessonId));
         var rows = await query.OrderByDescending(r => r.SubmittedAt).ThenBy(r => r.StudentId).ThenBy(r => r.ReportId).Skip(offset).Take(31).ToArrayAsync();
@@ -117,10 +117,10 @@ public static class ElectronicsReviews
             return await state.Read(async db => new ElectronicsReviewFilters(await db.Groups.OrderBy(g => g.Name).Select(g => new GroupDto(g.Id, g.Name)).ToArrayAsync(),
                 await db.LessonSessions.OrderByDescending(s => s.CreatedAt).ThenBy(s => s.Id).Select(s => new ElectronicsReviewLesson(s.Id, s.GroupName, s.CreatedAt)).ToArrayAsync()));
         });
-        api.MapGet("/teacher/reviews/electronics", (HttpContext ctx, string? status, string? groupId, string? lessonId, int? offset) =>
+        api.MapGet("/teacher/reviews/electronics", (HttpContext ctx, string? status, string? groupId, string? lessonId, string? studentId, string? assignmentId, int? offset) =>
         {
             state.Authorize(ctx, "teacher");
-            return state.Read(db => Queue(db, status: status, groupId: groupId, lessonId: lessonId, offset: offset ?? 0));
+            return state.Read(db => Queue(db, studentId: studentId, status: status, groupId: groupId, lessonId: lessonId, offset: offset ?? 0, assignmentId: assignmentId));
         });
         api.MapGet("/teacher/reviews/electronics/{studentId}/{reportId}", (HttpContext ctx, string studentId, string reportId) =>
         {

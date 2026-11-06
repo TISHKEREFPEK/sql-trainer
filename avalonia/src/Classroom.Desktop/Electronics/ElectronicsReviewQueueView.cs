@@ -20,7 +20,7 @@ public sealed class ElectronicsReviewQueueView : UserControl, IDisposable
     readonly TextBlock count = Ui.Text("");
     readonly Button earlier, later;
     int offset, generation;
-    bool disposed, loadingList, hasMore;
+    bool disposed, loadingList, hasMore, singleReport;
 
     public ElectronicsReviewQueueView(MainWindow owner, ClassroomApi api, bool restrictedReview = false)
     {
@@ -72,12 +72,23 @@ public sealed class ElectronicsReviewQueueView : UserControl, IDisposable
         if (data.Items.Length == 0) detail.Content = Ui.Text(showAll.IsChecked == true ? "Сданных работ пока нет." : "Все работы проверены.");
     }
 
+    public Task OpenReport(string studentId, string reportId)
+    {
+        if (!singleReport)
+        {
+            singleReport = true;
+            if (detail.Parent is Panel parent) parent.Children.Remove(detail);
+            Content = detail;
+        }
+        return Open(new(studentId,"",null,"",reportId,null,null,"",0,"",null));
+    }
     async Task Open(ElectronicsReviewItem item)
     {
         if (disposed) return;
         var version = ++generation;
         var route = $"{routeRoot}/{item.StudentId}/{item.ReportId}";
         var data = await api.Get<ElectronicsReviewDetail>(route);
+        item = data.Item;
         if (disposed || version != generation) return;
         var decision = new ComboBox { ItemsSource = new[] { new Choice("accepted", "Принято"), new Choice("changes-requested", "На доработку"), new Choice("rejected", "Не принято") }, SelectedIndex = 0, MinWidth = 150 };
         var grade = new ComboBox { ItemsSource = new[] { "Без оценки", "1", "2", "3", "4", "5" }, SelectedIndex = data.Item.Grade ?? 0, MinWidth = 120 };
@@ -97,7 +108,7 @@ public sealed class ElectronicsReviewQueueView : UserControl, IDisposable
             {
                 await api.Put<ElectronicsReviewDecision>(route + "/decisions/" + operationId, request);
                 if (disposed) return;
-                await Load(offset);
+                if (!singleReport) await Load(offset);
                 if (disposed) return;
                 await Open(item);
                 if (disposed) return;
@@ -143,7 +154,7 @@ public sealed class ElectronicsReviewQueueView : UserControl, IDisposable
         Grid.SetRow(workspace, 1); root.Children.Add(workspace); Content = root;
         return Task.CompletedTask;
     }
-    void CloseWorkspace() { workspace?.Dispose(); workspace = null; Content = queueRoot; }
+    void CloseWorkspace() { workspace?.Dispose(); workspace = null; Content = singleReport ? detail : queueRoot; }
     public void Dispose() { disposed = true; generation++; workspace?.Dispose(); workspace = null; }
     sealed record Row(ElectronicsReviewItem Item)
     {

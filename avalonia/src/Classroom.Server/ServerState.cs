@@ -289,6 +289,9 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(401, "Войдите в приложение.");
             await LessonRoutes.RequireMember(this, db, session);
             var assignment = await Assignment(db, student, taskId, session.LessonId, workScope: expectedWorkScope);
+            if (assignment.TrackingVersion > 0) assignment.StartedAt ??= Now;
+            assignment.LastActivityAt = Now;
+            await db.SaveChangesAsync();
             var task = Catalog.Read(assignment.Json);
             var row = await db.Tasks.FindAsync(taskId);
             var times = Wire.Read<long[]>(assignment.HintsJson);

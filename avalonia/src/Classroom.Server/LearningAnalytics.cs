@@ -7,6 +7,12 @@ namespace Classroom.Server;
 
 public static class LearningAnalytics
 {
+    public static string[] AvailableTaskIds(CatalogueItem[] catalog, AssignmentEntity[] own)
+    {
+        var projects = own.Select(a => Catalog.Read(a.Json).Project).Where(p => p is not null).ToHashSet();
+        var ids = own.Select(a => a.TaskId).ToHashSet();
+        return catalog.Where(t => t.Project is null || !projects.Contains(t.Project) || ids.Contains(t.Id)).Select(t => t.Id).Concat(ids).Distinct().ToArray();
+    }
     static bool Check(AttemptEntity e) => e.Action == "check" || e.Action is null && e.Kind is not ("clipboard" or "capture");
     static bool Violation(AttemptEntity e) => e.Kind is "clipboard" or "capture";
 
@@ -36,9 +42,7 @@ public static class LearningAnalytics
                 var students = (await db.Profiles.Where(p => p.Role == "student").ToArrayAsync()).Select(p =>
                 {
                     var own = assignments.Where(a => a.StudentId == p.Id).ToArray();
-                    var projects = own.Select(a => Catalog.Read(a.Json).Project).Where(x => x is not null).ToHashSet();
-                    var ids = own.Select(a => a.TaskId).ToHashSet();
-                    var available = catalog.Where(t => t.Project is null || !projects.Contains(t.Project) || ids.Contains(t.Id)).Select(t => t.Id).Concat(ids).Distinct().ToArray();
+                    var available = AvailableTaskIds(catalog, own);
                     return new LearningStudent(p.Id, p.Login, p.GroupId, own.Count(a => a.CompletedAt is not null), available.Length,
                         own.Select(a => a.LastActivityAt).Max(), available);
                 }).ToArray();

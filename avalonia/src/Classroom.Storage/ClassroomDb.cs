@@ -19,6 +19,7 @@ public sealed class ProfileEntity
     public long LockedUntil { get; set; }
     public string ThemeJson { get; set; } = "{\"preset\":\"light\"}";
     public string PresetsJson { get; set; } = "[]";
+    public string ResultsMode { get; set; } = "lesson";
 }
 
 public sealed class TaskEntity
@@ -148,6 +149,7 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
     public DbSet<LessonSessionEntity> LessonSessions => Set<LessonSessionEntity>();
     public DbSet<LessonParticipantEntity> LessonParticipants => Set<LessonParticipantEntity>();
+    public DbSet<LessonRosterEntity> LessonRoster => Set<LessonRosterEntity>();
     public DbSet<LessonSqlTaskEntity> LessonSqlTasks => Set<LessonSqlTaskEntity>();
     public DbSet<LessonSqlWorkEntity> LessonSqlWorks => Set<LessonSqlWorkEntity>();
     public DbSet<LessonSqlSnapshotEntity> LessonSqlSnapshots => Set<LessonSqlSnapshotEntity>();
@@ -227,6 +229,10 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<LessonParticipantEntity>().HasKey(x => new { x.SessionId, x.StudentId });
         model.Entity<LessonParticipantEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<LessonParticipantEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonRosterEntity>().HasKey(x => new { x.LessonId, x.StudentId });
+        model.Entity<LessonRosterEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonRosterEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ProfileEntity>().Property(x => x.ResultsMode).HasDefaultValue("lesson");
         model.Entity<LessonSqlTaskEntity>().HasKey(x => new { x.LessonId, x.TaskId });
         model.Entity<LessonSqlTaskEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<LessonSqlTaskEntity>().HasOne<TaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);

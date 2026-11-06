@@ -1,49 +1,71 @@
 'use strict';
-// Offline ATmega328P runner. AVR8js is MIT licensed; see vendor/avr8js/LICENSE.
+// Offline AVR runner. AVR8js is MIT licensed; see vendor/avr8js/LICENSE.
 const avr = require('./vendor/avr8js/cjs/index.js');
+const {getBoard,configure} = require('./avr-devices.cjs');
+const {StringDecoder} = require('node:string_decoder');
 const readline = require('node:readline');
-let cpu, ports, adc, usart, serial = '', rising = [], pulses = [], frequencies = [];
-function load(hex) {
-  const program = new Uint16Array(16384), bytes = new Uint8Array(program.buffer);
-  let upper = 0, ended = false;
-  for (const line of hex.trim().split(/\r?\n/)) {
-    if (!/^:[0-9a-f]+$/i.test(line) || line.length % 2 !== 1) throw Error('Invalid Intel HEX');
-    const record = Buffer.from(line.slice(1),'hex'), count = record[0];
-    if (record.length !== count + 5 || record.reduce((a,b)=>a+b,0) % 256 !== 0) throw Error('Invalid HEX checksum');
-    const address = upper + record.readUInt16BE(1), type = record[3];
-    if (type === 0) { if (address + count > bytes.length) throw Error('Firmware exceeds Uno flash'); bytes.set(record.subarray(4,4+count),address); }
-    else if (type === 1) { ended = true; break; }
-    else if (type === 4) upper = record.readUInt16BE(4) * 65536;
-    else if (type !== 3 && type !== 5) throw Error('Unsupported HEX record');
+let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies;
+function load(hex, id='uno') {
+  board=getBoard(id);
+  if(typeof hex!=='string'||hex.length>1000000)throw Error('Firmware is too large');
+  const program=new Uint16Array(board.flashBytes/2);program.fill(0xffff);
+  const bytes=new Uint8Array(program.buffer);let upper=0,ended=false;
+  for(const line of hex.trim().split(/\r?\n/)) {
+    if(!/^:[0-9a-f]+$/i.test(line)||line.length%2!==1)throw Error('Invalid Intel HEX');
+    const record=Buffer.from(line.slice(1),'hex'),count=record[0];
+    if(record.length!==count+5||record.reduce((a,b)=>a+b,0)%256!==0)throw Error('Invalid HEX checksum');
+    const address=upper+record.readUInt16BE(1),type=record[3];
+    if(type===0){if(address+count>bytes.length)throw Error('Firmware exceeds '+board.name+' flash');bytes.set(record.subarray(4,4+count),address);}
+    else if(type===1){if(count!==0||record.readUInt16BE(1)!==0)throw Error('Invalid HEX end record');ended=true;break;}
+    else if(type===2||type===4){if(count!==2)throw Error('Invalid HEX address record');upper=record.readUInt16BE(4)*(type===2?16:65536);}
+    else if(type!==3&&type!==5)throw Error('Unsupported HEX record');
   }
-  if (!ended) throw Error('Incomplete HEX');
-  cpu = new avr.CPU(program);
-  new avr.AVRTimer(cpu,avr.timer0Config); new avr.AVRTimer(cpu,avr.timer1Config); new avr.AVRTimer(cpu,avr.timer2Config);
-  ports = {b:new avr.AVRIOPort(cpu,avr.portBConfig),c:new avr.AVRIOPort(cpu,avr.portCConfig),d:new avr.AVRIOPort(cpu,avr.portDConfig)};
-  adc = new avr.AVRADC(cpu,avr.adcConfig);
-  usart = new avr.AVRUSART(cpu,avr.usart0Config,16000000);
-  usart.onByteTransmit = value => { if(serial.length < 8192) serial += String.fromCharCode(value); };
-  serial = '';
-  rising = Array(20).fill(null); pulses = Array(20).fill(null); frequencies = Array(20).fill(null);
+  if(!ended)throw Error('Incomplete HEX');
+  cpu=new avr.CPU(program,board.ramStart+board.ramBytes-0x100);
+  ({ports,adc,usarts}=configure(cpu,board));
+  pinMap=board.pinMap.map(pin=>({port:ports[pin[0]],bit:Number(pin.slice(1))}));
+  serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);
+  usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{if(serial[index].length<8192)serial[index].push(value);};uart.onRxComplete=()=>feed(index);});
+  rising=pinMap.map(()=>null);pulses=pinMap.map(()=>null);frequencies=pinMap.map(()=>null);
+  return {ready:true,board:board.id,flashBytes:bytes.length,dataBytes:cpu.data.length,pins:pinMap.length,serialPorts:usarts.length};
 }
+function feed(index){if(incoming[index].length&&!usarts[index].rxBusy&&usarts[index].writeByte(incoming[index][0]))incoming[index].shift();}
 function step(input) {
-  if(!cpu) throw Error('Load firmware first');
-  const period = 800000, start = cpu.cycles, target = start + period;
-  for(let i=0;i<14;i++) (i<8?ports.d:ports.b).setPin(i<8?i:i-8,Boolean(input.digital?.[i]));
-  for(let i=0;i<6;i++) { const value=Number(input.analog?.[i] ?? 0); adc.channelValues[i]=Math.max(0,Math.min(5,value)); ports.c.setPin(i,value>2.5); }
-  const accumulated = Array(20).fill(0), last = Array(20).fill(start), levels = Array(20).fill(false);
-  const track = (port,offset,count) => {
-    for(let i=0;i<count;i++) levels[offset+i]=port.pinState(i)===avr.PinState.High;
-    const listener = () => { for(let i=0;i<count;i++) {const n=offset+i, high=port.pinState(i)===avr.PinState.High; if(levels[n]) accumulated[n]+=cpu.cycles-last[n]; if(high!==levels[n]) { if(high) {if(rising[n]!==null&&cpu.cycles>rising[n]) frequencies[n]=16000000/(cpu.cycles-rising[n]); rising[n]=cpu.cycles;} else if(rising[n]!==null) pulses[n]=(cpu.cycles-rising[n])/16;} last[n]=cpu.cycles;levels[n]=high;} };
-    port.addListener(listener); return listener;
-  };
-  const ld=track(ports.d,0,8), lb=track(ports.b,8,6), lc=track(ports.c,14,6);
-  while(cpu.cycles<target) { avr.avrInstruction(cpu);cpu.tick(); }
-  ports.d.removeListener(ld);ports.b.removeListener(lb);ports.c.removeListener(lc);
-  const pins=levels.map((high,i)=>{if(high) accumulated[i]+=cpu.cycles-last[i]; const state=(i<8?ports.d:i<14?ports.b:ports.c).pinState(i<8?i:i<14?i-8:i-14);return {output:state===avr.PinState.High||state===avr.PinState.Low,voltage:5*accumulated[i]/(cpu.cycles-start),pullUp:state===avr.PinState.InputPullUp,pulseUs:pulses[i],frequency:frequencies[i]};});
-  const output={pins,serial,milliseconds:cpu.cycles/16000};serial='';return output;
+  if(!cpu)throw Error('Load firmware first');
+  if(input.digital!=null&&(!Array.isArray(input.digital)||input.digital.length>board.digitalCount))throw Error('Invalid digital input count');
+  if(input.analog!=null&&(!Array.isArray(input.analog)||input.analog.length>board.analogCount))throw Error('Invalid analog input count');
+  if(input.serialInput!=null){
+    const index=input.serialPort??0;
+    if(typeof input.serialInput!=='string'||!Number.isInteger(index)||index<0||index>=usarts.length)throw Error('Invalid serial input');
+    const values=Buffer.from(input.serialInput,'utf8');if(values.length+incoming[index].length>4096)throw Error('Serial input queue is full');incoming[index].push(...values);
+  }
+  for(let i=0;i<board.digitalCount;i++)pinMap[i].port.setPin(pinMap[i].bit,Boolean(input.digital?.[i]));
+  for(let i=0;i<board.analogCount;i++){
+    const value=input.analog?.[i]??0;if(typeof value!=='number'||!Number.isFinite(value))throw Error('Invalid analog voltage');
+    adc.channelValues[i]=Math.max(0,Math.min(5,value));const pin=pinMap[board.digitalCount+i];pin.port.setPin(pin.bit,value>2.5);
+  }
+  const start=cpu.cycles,target=start+board.clockHz/20;
+  const accumulated=pinMap.map(()=>0),last=pinMap.map(()=>start),levels=pinMap.map(pin=>pin.port.pinState(pin.bit)===avr.PinState.High);
+  const listeners=Object.values(ports).map(port=>{
+    const indices=pinMap.map((pin,index)=>pin.port===port?index:-1).filter(index=>index>=0);
+    const listener=()=>{for(const index of indices){
+      const high=port.pinState(pinMap[index].bit)===avr.PinState.High;
+      if(levels[index])accumulated[index]+=cpu.cycles-last[index];
+      if(high!==levels[index]){if(high){if(rising[index]!==null&&cpu.cycles>rising[index])frequencies[index]=board.clockHz/(cpu.cycles-rising[index]);rising[index]=cpu.cycles;}
+        else if(rising[index]!==null)pulses[index]=(cpu.cycles-rising[index])*1000000/board.clockHz;}
+      last[index]=cpu.cycles;levels[index]=high;
+    }};port.addListener(listener);return {port,listener};
+  });
+  try {let instructions=0;while(cpu.cycles<target){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
+  finally{listeners.forEach(({port,listener})=>port.removeListener(listener));}
+  const pins=pinMap.map((pin,index)=>{
+    if(levels[index])accumulated[index]+=cpu.cycles-last[index];const state=pin.port.pinState(pin.bit);
+    return {output:state===avr.PinState.High||state===avr.PinState.Low,voltage:5*accumulated[index]/(cpu.cycles-start),pullUp:state===avr.PinState.InputPullUp,pulseUs:pulses[index],frequency:frequencies[index]};
+  });
+  const serialPorts=serial.map((values,index)=>decoders[index].write(Buffer.from(values)));serial=usarts.map(()=>[]);
+  return {pins,serial:serialPorts[0],serialPorts,milliseconds:cpu.cycles*1000/board.clockHz};
 }
 readline.createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{
-  try {if(line.length>200000) throw Error('Request too large');const input=JSON.parse(line); const output=input.hex?(load(input.hex),{ready:true}):step(input);process.stdout.write(JSON.stringify(output)+'\n');}
-  catch(error) {process.stdout.write(JSON.stringify({error:error.message})+'\n');}
+  try{if(line.length>1100000)throw Error('Request too large');const input=JSON.parse(line);const output=input.hex!=null?load(input.hex,input.board??'uno'):step(input);process.stdout.write(JSON.stringify(output)+'\n');}
+  catch(error){process.stdout.write(JSON.stringify({error:error.message})+'\n');}
 });

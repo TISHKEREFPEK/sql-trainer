@@ -4,7 +4,7 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds);
+public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null);
 
 public sealed class FirmwareRunner : IDisposable
 {
@@ -27,8 +27,9 @@ public sealed class FirmwareRunner : IDisposable
         File.Exists(Path.Combine(Runtime, "sandbox-avr", "bin", "avr-g++.exe")) && File.Exists(Path.Combine(Runtime, "sandbox-avr", "ctags.exe")) &&
         Directory.Exists(Path.Combine(Runtime, "data", "packages", "arduino", "hardware", "avr", "1.8.6"));
 
-    public static async Task<string> Compile(string code, CancellationToken cancellation)
+    public static async Task<string> Compile(string code, CancellationToken cancellation, string boardId = "uno")
     {
+        var board=AvrBoards.Get(boardId);
         if (!Available) throw new IOException("Не установлен автономный комплект Arduino Uno. Подготовьте его командой avalonia/scripts/prepare-electronics.ps1; при работе интернет не требуется.");
         if (!OperatingSystem.IsWindows()) throw new IOException("Изолированная компиляция требует Windows 10 или новее.");
         var scratch = Path.Combine(Path.GetTempPath(), "classroom-firmware-" + Guid.NewGuid().ToString("N"));
@@ -47,7 +48,7 @@ public sealed class FirmwareRunner : IDisposable
             };
             var config = Path.Combine(scratch, "arduino-cli.yaml");
             await File.WriteAllTextAsync(config, Wire.Write(new { metrics = new { enabled = false }, updater = new { enable_notification = false } }), cancellation);
-            var args = new[] { "--config-file", config, "--no-color", "compile", "--fqbn", "arduino:avr:uno", "--build-path", Path.Combine(scratch, "build"), "--output-dir", output,
+            var args = new[] { "--config-file", config, "--no-color", "compile", "--fqbn", board.Fqbn, "--build-path", Path.Combine(scratch, "build"), "--output-dir", output,
                 "--build-property", "compiler.path=" + Path.Combine(runtime, "sandbox-avr", "bin") + Path.DirectorySeparatorChar,
                 "--build-property", "runtime.tools.ctags.path=" + Path.Combine(runtime, "sandbox-avr"), "--warnings", "all", "--jobs", "2", sketch };
             var result = await Task.Run(() => OperatingSystem.IsWindows() ? WindowsSandboxProcess.Run(Path.Combine(runtime, "arduino-cli.exe"), args, runtime, scratch, settings, cancellation) : throw new IOException("Изолированная компиляция требует Windows."), cancellation);
@@ -63,17 +64,19 @@ public sealed class FirmwareRunner : IDisposable
         }
     }
 
-    public async Task Start(string hex)
+    public async Task Start(string hex, string boardId = "uno")
     {
+        _=AvrBoards.Get(boardId);
         Dispose();
         var start = new ProcessStartInfo(Path.Combine(Runtime, "node.exe")) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.StandardInputEncoding = start.StandardOutputEncoding = start.StandardErrorEncoding = new System.Text.UTF8Encoding(false);
         start.ArgumentList.Add("--max-old-space-size=96");
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "electronics", "firmware-worker.cjs"));
         process = Process.Start(start) ?? throw new IOException("Не удалось запустить симулятор AVR.");
         process.ErrorDataReceived += (_, _) => { }; process.BeginErrorReadLine();
-        await Exchange<JsonElement>(new { hex });
+        try{await Exchange<JsonElement>(new { hex, board=boardId });}catch{Dispose();throw;}
     }
-    public Task<FirmwareFrame> Step(bool[] digital, double[] analog) => Exchange<FirmwareFrame>(new { digital, analog });
+    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort });
     async Task<T> Exchange<T>(object request)
     {
         var active = process ?? throw new IOException("Симулятор не запущен.");

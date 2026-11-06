@@ -22,7 +22,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     string mode = "lesson"; string? lessonId, group, studentId, subject; bool allStudents, initialized, loading, refreshPending, disposed;
     ResultsWork? selectedWork; ResultsSqlDetail? sqlDetail;
     ElectronicsReviewQueue? submissions;
-    int generation; string Location => $"{mode}/{lessonId}/{group}/{studentId}/{selectedWork?.Subject}:{selectedWork?.TaskId}:{selectedWork?.LessonId}";
+    int generation; string Location => $"{mode}/{lessonId}/{group}/{studentId}/{selectedWork?.Subject}:{selectedWork?.TaskId}:{selectedWork?.LessonId}:{selectedWork?.WorkScope}";
     public ClassroomResultsView(MainWindow owner, ClassroomApi api) { this.owner=owner;this.api=api;scroll=Ui.Scroll(page);Content=scroll; }
     static string Percent(double? value) => value is null ? "—" : value.Value.ToString("F1") + "%";
     static string Date(long? at) => at is { } time ? Ui.Time(time) : "—";
@@ -49,7 +49,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
             var result=await api.Get<ResultsOverview>("teacher/results"+Query());
             if(disposed||stamp!=generation)return;data=result;
             if(studentId is not null&&data.Students.All(p=>p.Id!=studentId)){studentId=null;selectedWork=null;}
-            if(selectedWork is { } previous){selectedWork=data.Works.SingleOrDefault(w=>w.StudentId==previous.StudentId&&w.Subject==previous.Subject&&w.TaskId==previous.TaskId&&w.LessonId==previous.LessonId);sqlDetail=null;submissions=null;}
+            if(selectedWork is { } previous){selectedWork=data.Works.SingleOrDefault(w=>w.StudentId==previous.StudentId&&w.Subject==previous.Subject&&w.TaskId==previous.TaskId&&w.LessonId==previous.LessonId&&w.WorkScope==previous.WorkScope);sqlDetail=null;submissions=null;}
             Render();if(selectedWork is not null)await LoadWork();
         }
         finally{loading=false;if(refreshPending&&!disposed){refreshPending=false;await Refresh(true);}}
@@ -114,7 +114,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     void RestorePosition(int stamp){var key=Location;Dispatcher.UIThread.Post(()=>{if(!disposed&&generation==stamp&&Location==key)scroll.Offset=positions.GetValueOrDefault(key);},DispatcherPriority.Loaded);}
     void RenderStudent(ResultsStudent pupil)
     {
-        var table=Table(data!.Works.Where(w=>w.StudentId==pupil.Id).Select(w=>new Row(w.Subject+":"+w.TaskId,w.Title+(w.Required?"":" · вне выдачи"),State(w),w.Grade is { }grade?grade.ToString():"—",Date(w.CompletedAt??w.LastActivityAt),w)),("Задание","Name"),("Состояние","Progress"),("Оценка","State"),("Дата","Last"));
+        var table=Table(data!.Works.Where(w=>w.StudentId==pupil.Id).Select(w=>new Row(w.Subject+":"+w.TaskId,w.Title+(w.WorkScope=="course"&&w.LessonId is not null?" · свободная практика":w.Required?"":" · вне выдачи"),State(w),w.Grade is { }grade?grade.ToString():"—",Date(w.CompletedAt??w.LastActivityAt),w)),("Задание","Name"),("Состояние","Progress"),("Оценка","State"),("Дата","Last"));
         page.Children.Add(table);async Task Open(){if(table.SelectedItem is Row{Work:{ }work}){positions[Location]=scroll.Offset;selectedWork=work;sqlDetail=null;submissions=null;generation++;Render();await LoadWork();}}
         table.DoubleTapped+=async(_,_)=>await owner.Safe(Open);page.Children.Add(Ui.Button("Открыть работу",()=>owner.Safe(Open)));
     }
@@ -127,12 +127,15 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         }
         if(selectedWork is not {Subject:"sql"}work)return;var stamp=generation;
         var route=$"teacher/results/sql/{work.StudentId}/{Uri.EscapeDataString(work.TaskId)}?offset="+(more?sqlDetail?.NextOffset??0:0)+(work.LessonId is { }id?"&lessonId="+id:"");
+        if(work.WorkScope=="course"&&work.LessonId is not null)route+="&workScope=course";
         var detail=await api.Get<ResultsSqlDetail>(route);if(disposed||stamp!=generation)return;
         positions[Location]=scroll.Offset;sqlDetail=more&&sqlDetail is not null?detail with{Events=sqlDetail.Events.Concat(detail.Events).ToArray()}:detail;Render();
     }
     void RenderWork(ResultsStudent pupil)
     {
         var work=selectedWork!;page.Children.Add(Ui.Text(work.Title,20));page.Children.Add(Ui.Text(State(work)+(work.Grade is { }grade?$" · Оценка: {grade}":"")));
+        if(work.WorkScope=="course"&&work.LessonId is not null)page.Children.Add(Ui.Text("Свободная практика этого занятия. Не входит в обязательный прогресс.",12));
+        if(work.Partial)page.Children.Add(Ui.Text("История неполная: показаны известные записи; пропущенные даты и длительность не восстановлены догадками.",12));
         page.Children.Add(Ui.Text($"Открыто: {Date(work.StartedAt)} · Завершено: {Date(work.CompletedAt)}\nПроверок или сдач: {work.Checks} · Ошибок: {work.Errors} · Подсказок: {work.Hints?.ToString()??"не записывалось"} · Обнаруженных ограничений: {work.Violations?.ToString()??"не записывалось"}\nАктивная длительность: {(work.ActiveSeconds is { }seconds?$"{seconds} с":"не записывалась")}",13));
         page.Children.Add(Ui.Text("Ограничения — обнаруженные события, а не доказательство списывания.",12));
         if(work.Subject=="electronics")
@@ -152,7 +155,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         page.Children.Add(Ui.Text(sqlDetail.Prompt));
         page.Children.Add(Ui.Text(sqlDetail.Opened?$"Вариант {sqlDetail.Variant} · редакция {sqlDetail.Revision}"+(work.Reused?" · зачтено прежнее решение":""):"Задание ещё не открыто; персональный вариант пока не выдан.",12));
         var answer=Ui.Input(sqlDetail.AcceptedCode??sqlDetail.Draft,true);answer.IsReadOnly=true;answer.MaxHeight=230;page.Children.Add(Ui.Field(sqlDetail.AcceptedCode is null?"Черновик":"Принятый ответ",answer));
-        page.Children.Add(Ui.Button("Пошаговая история SQL",()=>owner.Safe(async()=>{var view=new SqlJournalView(owner,api,pupil.Id,work.TaskId,work.Title,sqlDetail.WorkScope);owner.ShowPage("История SQL",view,view.Dispose);await view.Load();})));
+        page.Children.Add(Ui.Button("Пошаговая история SQL",()=>owner.Safe(async()=>{var view=new SqlJournalView(owner,api,pupil.Id,work.TaskId,work.Title,sqlDetail.WorkScope,sqlDetail.SourceLessonId);owner.ShowPage("История SQL",view,view.Dispose);await view.Load();})));
         foreach(var attempt in sqlDetail.Events)
         {
             var text=$"{Date(attempt.At)} · {attempt.Action switch{"check"=>"Проверка","run"=>"Запуск","hint"=>"Подсказка",_=>attempt.Action}} · {attempt.Result switch{"correct"=>"Верно","different"=>"Результат отличается","executed"=>"Выполнено",_=>attempt.Result}}";

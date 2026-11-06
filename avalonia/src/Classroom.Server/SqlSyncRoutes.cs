@@ -45,6 +45,7 @@ public static class SqlSyncRoutes
                 if (input.BaseHash != serverHash && input.Code != work.Draft)
                     return new SqlDraftReceipt(input.Id, "conflict", work.Draft, serverHash);
                 work.Draft = input.Code; work.LastActivityAt = ServerState.Now;
+                await SqlPractice.Observe(db, work, input.LessonId, draft: input.Code);
                 var receipt = new SqlDraftReceipt(input.Id, "saved", input.Code, SqlSyncHash.Text(input.Code));
                 db.Operations.Add(new() { StudentId = session.ProfileId, Id = key, RequestHash = hash, ResponseJson = Wire.Write(receipt), At = ServerState.Now });
                 return receipt;
@@ -73,6 +74,7 @@ public static class SqlSyncRoutes
                 {
                     if (work.TrackingVersion > 0) work.StartedAt ??= input.At;
                     work.LastActivityAt = ServerState.Now;
+                    await SqlPractice.Observe(db, work, input.LessonId, opened: immediate);
                 }
                 else if (input.Action == "activity")
                 {
@@ -80,6 +82,7 @@ public static class SqlSyncRoutes
                     if (immediate && lesson!.AllowSql && student.LockedUntil <= ServerState.Now && work.CompletedAt is null)
                         work.ActiveSeconds += (int)Math.Min(input.Seconds, elapsed);
                     if (immediate) work.LastHeartbeatAt = ServerState.Now;
+                    await SqlPractice.Activity(db, work, input.LessonId, input.Seconds, immediate && lesson!.AllowSql && student.LockedUntil <= ServerState.Now);
                 }
                 else
                 {

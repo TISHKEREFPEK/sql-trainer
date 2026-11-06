@@ -639,6 +639,9 @@ namespace Classroom.Storage.Migrations
                     b.Property<long?>("RosterCapturedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long?>("SqlPracticeTrackingAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("StartedAt")
                         .HasColumnType("INTEGER");
 
@@ -659,6 +662,78 @@ namespace Classroom.Storage.Migrations
                         .HasFilter("\"EndedAt\" IS NULL");
 
                     b.ToTable("LessonSessions");
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSqlPracticeEntity", b =>
+                {
+                    b.Property<string>("LessonId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StudentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TaskId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AcceptedCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActiveSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ActiveSecondsAtCompletion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Checks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Draft")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Errors")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("HintsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastActivityAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastHeartbeatAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Partial")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ProjectOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TrackingVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("LessonId", "StudentId", "TaskId");
+
+                    b.HasIndex("StudentId");
+
+                    b.ToTable("LessonSqlPractice");
                 });
 
             modelBuilder.Entity("Classroom.Storage.LessonSqlSnapshotEntity", b =>
@@ -1292,6 +1367,21 @@ namespace Classroom.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("TeacherId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Classroom.Storage.LessonSqlPracticeEntity", b =>
+                {
+                    b.HasOne("Classroom.Storage.LessonSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Classroom.Storage.ProfileEntity", null)
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

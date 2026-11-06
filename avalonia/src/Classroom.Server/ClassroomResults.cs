@@ -51,6 +51,14 @@ public static class ClassroomResults
             effective?.Action == "accepted", false, assignment?.OpenedAt, effective?.Action == "accepted" ? effective.At : null, last,
             submitted.Length, reports.Count(r => r.Kind is "compile-error" or "run-error"), null, null, null, effective?.Grade, latest?.Id, effective?.At);
     }
+    static ResultsWork Practice(LessonSqlPracticeEntity row, AttemptEntity[] events)
+    {
+        var checks = events.Where(SqlCheck).OrderBy(e => e.At).ThenBy(e => e.Id).ToArray();
+        return new(row.StudentId,"sql",row.TaskId,null,row.LessonId,Catalog.Read(row.Json).Title,row.CompletedAt is null?"working":"completed",
+            false,true,row.CompletedAt is not null,false,row.StartedAt,row.CompletedAt,row.LastActivityAt,row.Checks,row.Errors,
+            row.Partial?null:Wire.Read<long[]>(row.HintsJson).Length,events.Count(e=>e.Kind is "clipboard" or "capture"),row.Partial?null:row.ActiveSeconds,null,null,null,
+            !row.Partial&&checks.Length==row.Checks&&checks.Length>0?checks[0].Kind=="correct"?0:1:null,"course",row.Partial);
+    }
     public static async Task<ResultsOverview> Build(ServerState state, ClassroomDb db, string mode, string? lessonId, string? groupKey = null, string? subject = null, string? studentId = null)
     {
         if (mode is not ("lesson" or "course") || subject is not (null or "sql" or "electronics")) throw new HttpFault(400, "Некорректный вид результатов.");
@@ -96,6 +104,20 @@ public static class ClassroomResults
                 var retained = await db.LessonSqlWorks.AsNoTracking().Where(w => w.LessonId == lesson.Id && w.StudentId == pupil.Id).ToArrayAsync();
                 foreach (var old in retained.Where(w => works.All(r => r.StudentId != pupil.Id || r.Subject != "sql" || r.TaskId != w.TaskId)))
                     works.Add(Sql(old, pupil.Id, old.TaskId, Catalog.Read(old.Json).Title, lesson.Id, false, events.Where(e => e.StudentId == pupil.Id && e.TaskId == old.TaskId && e.LessonId == lesson.Id && e.WorkScope == "lesson:" + lesson.Id).ToArray()));
+                var practice = await db.LessonSqlPractice.AsNoTracking().Where(w=>w.LessonId==lesson.Id&&w.StudentId==pupil.Id).ToArrayAsync();
+                foreach(var row in practice)works.Add(Practice(row,events.Where(e=>e.StudentId==pupil.Id&&e.TaskId==row.TaskId&&e.LessonId==lesson.Id&&(e.WorkScope is null or "course")).ToArray()));
+                var streams = await db.SqlJournalStreams.AsNoTracking().Where(s=>s.StudentId==pupil.Id&&s.LessonId==lesson.Id&&s.WorkScope=="course").ToArrayAsync();
+                var oldPracticeIds = events.Where(e=>e.StudentId==pupil.Id&&e.LessonId==lesson.Id&&(e.WorkScope is null or "course")).Select(e=>e.TaskId).Concat(streams.Select(s=>s.TaskId)).Distinct().Where(id=>practice.All(p=>p.TaskId!=id));
+                foreach(var id in oldPracticeIds)
+                {
+                    var ownEvents=events.Where(e=>e.StudentId==pupil.Id&&e.TaskId==id&&e.LessonId==lesson.Id&&(e.WorkScope is null or "course")).OrderBy(e=>e.At).ThenBy(e=>e.Id).ToArray();
+                    var checks=ownEvents.Where(SqlCheck).ToArray();var correct=checks.FirstOrDefault(e=>e.Kind=="correct");
+                    var stream=streams.Where(s=>s.TaskId==id).OrderByDescending(s=>s.ReceivedAt).FirstOrDefault();
+                    var evidenceJson=await (from a in db.Attempts.AsNoTracking() join proof in db.SqlExecutionEvidence on a.Id equals proof.AttemptId
+                        where a.StudentId==pupil.Id&&a.LessonId==lesson.Id&&a.TaskId==id&&(a.WorkScope==null||a.WorkScope=="course") orderby a.At,a.Id select proof.TaskJson).FirstOrDefaultAsync();
+                    works.Add(new(pupil.Id,"sql",id,null,lesson.Id,evidenceJson is null?stream?.Title??id:Catalog.Read(evidenceJson).Title,correct is null?"working":"completed",false,true,correct is not null,false,null,correct?.At,
+                        ownEvents.Where(e=>e.Kind is not ("clipboard" or "capture")).Select(e=>(long?)e.At).Append(stream?.ReceivedAt).Max(),checks.Length,checks.Count(e=>e.Kind!="correct"),null,ownEvents.Count(e=>e.Kind is "clipboard" or "capture"),null,null,null,null,null,"course",true));
+                }
                 foreach (var task in electronicsTasks.Where(t => t.LessonId == lesson.Id && (!t.Withdrawn || electronicAssignments.Any(a => a.LessonId == lesson.Id && a.TaskId == t.TaskId && a.StudentId == pupil.Id))))
                 {
                     var assignment = electronicAssignments.SingleOrDefault(a => a.LessonId == lesson.Id && a.TaskId == task.TaskId && a.StudentId == pupil.Id);
@@ -154,16 +176,31 @@ public static class ClassroomResults
         return "\"" + value.Replace("\"", "\"\"") + "\"";
     }
     static string At(long? at) => at is null ? "" : DateTimeOffset.FromUnixTimeMilliseconds(at.Value).ToString("O", CultureInfo.InvariantCulture);
+    static async Task<ResultsSqlDetail> PracticeDetail(ClassroomDb db,string studentId,string taskId,string lessonId,int start)
+    {
+        if(!await db.LessonParticipants.AnyAsync(p=>p.SessionId==lessonId&&p.StudentId==studentId))throw new HttpFault(404,"Участник занятия не найден.");
+        var work=await db.LessonSqlPractice.FindAsync(lessonId,studentId,taskId);
+        var query=db.Attempts.AsNoTracking().Where(e=>e.StudentId==studentId&&e.TaskId==taskId&&e.LessonId==lessonId&&(e.WorkScope==null||e.WorkScope=="course"));
+        var evidence=await (from a in query join proof in db.SqlExecutionEvidence on a.Id equals proof.AttemptId orderby a.At,a.Id select new{proof.TaskJson,proof.Revision}).FirstOrDefaultAsync();
+        var stream=await db.SqlJournalStreams.AsNoTracking().Where(s=>s.StudentId==studentId&&s.TaskId==taskId&&s.LessonId==lessonId&&s.WorkScope=="course").OrderByDescending(s=>s.ReceivedAt).ThenBy(s=>s.Id).FirstOrDefaultAsync();
+        if(work is null&&stream is null&&!await query.AnyAsync())throw new HttpFault(404,"Свободная работа этого занятия не записана.");
+        var task=work is not null?Catalog.Read(work.Json):evidence is null?null:Catalog.Read(evidence.TaskJson);
+        var correct=await query.Where(e=>e.Kind=="correct"&&(e.Action==null||e.Action=="check")).OrderBy(e=>e.At).ThenBy(e=>e.Id).FirstOrDefaultAsync();
+        var rows=await query.OrderByDescending(e=>e.At).ThenByDescending(e=>e.Id).Skip(start).Take(101).ToArrayAsync();
+        return new(task?.Title??stream?.Title??taskId,task?.Prompt??"Условие этой исторической работы не записывалось. Текущий каталог не подставлен вместо прежнего задания.",
+            work?.Draft??stream?.TipCode??"",work?.AcceptedCode??correct?.Code,task?.VariantIndex,work?.Revision??evidence?.Revision,lessonId,"course",true,
+            rows.Take(100).Select(e=>new LearningEvent(e.Id,e.At,e.Action??(e.Kind is "clipboard" or "capture"?e.Kind:"check"),e.Kind,e.Code,e.Explanation)).ToArray(),rows.Length>100,start+Math.Min(100,rows.Length),work?.Partial??true);
+    }
     public static string Export(ResultsOverview data)
     {
-        var b = new StringBuilder("Ученик;Группа;Направление;Задание;Занятие;Обязательное;Состояние;Завершено;Открыто UTC;Завершено UTC;Проверок или сдач;Ошибок;Подсказок;Обнаруженных ограничений;Активных секунд;Оценка\r\n");
+        var b = new StringBuilder("Ученик;Группа;Направление;Задание;Занятие;Обязательное;Состояние;Завершено;Открыто UTC;Завершено UTC;Проверок или сдач;Ошибок;Подсказок;Обнаруженных ограничений;Активных секунд;Оценка;Контекст;Полнота\r\n");
         foreach (var row in data.Works)
         {
             var pupil = data.Students.Single(p => p.Id == row.StudentId);
-            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, row.Subject, row.Title, row.LessonId ?? "", row.Required ? "1" : "0", row.State, row.Completed ? "1" : "0", At(row.StartedAt), At(row.CompletedAt), row.Checks.ToString(CultureInfo.InvariantCulture), row.Errors.ToString(CultureInfo.InvariantCulture), row.Hints?.ToString(CultureInfo.InvariantCulture) ?? "", row.Violations?.ToString(CultureInfo.InvariantCulture) ?? "", row.ActiveSeconds?.ToString(CultureInfo.InvariantCulture) ?? "", row.Grade?.ToString(CultureInfo.InvariantCulture) ?? "" }.Select(Csv)));
+            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, row.Subject, row.Title, row.LessonId ?? "", row.Required ? "1" : "0", row.State, row.Completed ? "1" : "0", At(row.StartedAt), At(row.CompletedAt), row.Checks.ToString(CultureInfo.InvariantCulture), row.Errors.ToString(CultureInfo.InvariantCulture), row.Hints?.ToString(CultureInfo.InvariantCulture) ?? "", row.Violations?.ToString(CultureInfo.InvariantCulture) ?? "", row.ActiveSeconds?.ToString(CultureInfo.InvariantCulture) ?? "", row.Grade?.ToString(CultureInfo.InvariantCulture) ?? "", row.WorkScope=="course"&&row.LessonId is not null?"free-practice":row.LessonId is null?"course":"lesson",row.Partial?"partial":"recorded" }.Select(Csv)));
         }
         foreach (var pupil in data.Students.Where(p => data.Works.All(w => w.StudentId != p.Id)))
-            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, "", "Нет выданных работ", data.LessonId ?? "", "0", "", "0", "", "", "", "", "", "", "", "" }.Select(Csv)));
+            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, "", "Нет выданных работ", data.LessonId ?? "", "0", "", "0", "", "", "", "", "", "", "", "", "", "" }.Select(Csv)));
         return b.ToString();
     }
     public static void Map(RouteGroupBuilder api, ServerState state)
@@ -176,11 +213,16 @@ public static class ClassroomResults
         });
         api.MapGet("/teacher/results", (HttpContext ctx, string? mode, string? lessonId, string? group, string? subject) =>
         { state.Authorize(ctx, "teacher"); return state.Read(db => Build(state, db, mode ?? "lesson", lessonId, group, subject)); });
-        api.MapGet("/teacher/results/sql/{studentId}/{taskId}", (HttpContext ctx, string studentId, string taskId, string? lessonId, int? offset) =>
+        api.MapGet("/teacher/results/sql/{studentId}/{taskId}", (HttpContext ctx, string studentId, string taskId, string? lessonId, string? workScope, int? offset) =>
         {
             state.Authorize(ctx, "teacher"); var start = offset ?? 0; if (start is < 0 or > 1000000) throw new HttpFault(400, "Некорректная страница попыток.");
             return state.Read(async db =>
             {
+                if(workScope is not null)
+                {
+                    if(workScope!="course"||lessonId is null)throw new HttpFault(400,"Для свободной практики выберите занятие.");
+                    return await PracticeDetail(db,studentId,taskId,lessonId,start);
+                }
                 ISqlWork? work = lessonId is null ? await db.Assignments.FindAsync(studentId, taskId) : await db.LessonSqlWorks.FindAsync(lessonId, studentId, taskId);
                 var profile = await db.Profiles.FindAsync(studentId) ?? throw new HttpFault(404, "Ученик не найден.");
                 LessonSqlTaskEntity? policy = null;

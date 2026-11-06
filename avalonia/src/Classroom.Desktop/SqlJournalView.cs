@@ -22,6 +22,7 @@ public sealed class SqlJournalView : UserControl, IDisposable
     readonly ClassroomApi api;
     readonly string studentId, taskId;
     readonly string? workScope;
+    readonly string? lessonId;
     readonly CancellationTokenSource lifetime = new();
     readonly CancellationToken cancellation;
     readonly ComboBox streams = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -50,9 +51,10 @@ public sealed class SqlJournalView : UserControl, IDisposable
         "window-minimize" => "Окно свёрнуто", "window-restore" => "Окно восстановлено", "restricted-copy" => "Запрет копирования", "restricted-cut" => "Запрет вырезания",
         "restricted-paste" => "Запрет вставки", "restricted-capture" => "Обнаружена попытка снимка", "restricted-drop" => "Запрет перетаскивания", "restricted-clipboard" => "Запрет буфера обмена", _ => value };
 
-    public SqlJournalView(MainWindow owner, ClassroomApi api, string studentId, string taskId, string title, string? workScope = null)
+    public SqlJournalView(MainWindow owner, ClassroomApi api, string studentId, string taskId, string title, string? workScope = null, string? lessonId = null)
     {
         this.workScope = workScope;
+        this.lessonId = lessonId;
         this.owner = owner; this.api = api; this.studentId = studentId; this.taskId = taskId; cancellation = lifetime.Token;
         moreStreams = Ui.Button("Ещё записи", () => Guard(LoadMoreStreams)); moreStreams.IsVisible = false;
         steps.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<StepChoice>((step, _) => new TextBlock {
@@ -102,7 +104,7 @@ public sealed class SqlJournalView : UserControl, IDisposable
     async Task LoadMoreStreams()
     {
         var stamp = generation;
-        var page = await api.Get<SqlJournalStreamInfo[]>(Prefix + $"?taskId={Uri.EscapeDataString(taskId)}&offset={choices.Count}" + (workScope is null ? "" : "&workScope=" + Uri.EscapeDataString(workScope)), cancellation);
+        var page = await api.Get<SqlJournalStreamInfo[]>(Prefix + $"?taskId={Uri.EscapeDataString(taskId)}&offset={choices.Count}" + (workScope is null ? "" : "&workScope=" + Uri.EscapeDataString(workScope)) + (lessonId is null ? "" : "&lessonId=" + Uri.EscapeDataString(lessonId)), cancellation);
         if (disposed || stamp != generation) return;
         choices.AddRange(page.Select(s => new StreamChoice(s)));
         binding = true; var previous = streams.SelectedItem; streams.ItemsSource = choices.ToArray(); streams.SelectedItem = previous; binding = false;

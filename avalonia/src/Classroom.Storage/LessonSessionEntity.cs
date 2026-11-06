@@ -19,6 +19,7 @@ public sealed class LessonSessionEntity
     public bool FreePractice { get; set; }
     public long? RosterCapturedAt { get; set; }
     public bool RosterAtStart { get; set; }
+    public long? SqlPracticeTrackingAt { get; set; }
 
     public void Validate()
     {
@@ -34,6 +35,7 @@ public sealed class LessonSessionEntity
             PausedAt > EndedAt)
             throw new InvalidDataException("Некорректные даты или состояние занятия.");
         if (RosterAtStart && RosterCapturedAt is null || RosterCapturedAt < (StartedAt ?? CreatedAt)) throw new InvalidDataException("Некорректная дата состава занятия.");
+        if (SqlPracticeTrackingAt is not null && (StartedAt is null || SqlPracticeTrackingAt < StartedAt)) throw new InvalidDataException("Некорректная дата учёта свободной SQL-практики.");
         if (RegistrationOpen && GroupId is null)
             throw new InvalidDataException("Для регистрации выберите существующую группу.");
     }

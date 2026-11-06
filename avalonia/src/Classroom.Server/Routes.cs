@@ -87,6 +87,7 @@ public static class Routes
                 var row = await state.Assignment(db, Profile(db, session.ProfileId), id, session.LessonId, retainedSave: true, workScope: input.WorkScope);
                 row.Draft = input.Code;
                 row.LastActivityAt = ServerState.Now;
+                await SqlPractice.Observe(db, row, session.LessonId, draft: input.Code);
                 return new
                 {
                     ok = true
@@ -126,6 +127,7 @@ public static class Routes
                 if (state.ActivatedLessonId == lesson.Id && lesson.State == "running" && lesson.AllowSql && Profile(db, session.ProfileId).LockedUntil <= ServerState.Now && row.CompletedAt is null)
                     row.ActiveSeconds += (int)Math.Min(input.Seconds, elapsed);
                 row.LastHeartbeatAt = ServerState.Now;
+                await SqlPractice.Activity(db, row, session.LessonId, input.Seconds, state.ActivatedLessonId == lesson.Id && lesson.State == "running" && lesson.AllowSql && Profile(db, session.ProfileId).LockedUntil <= ServerState.Now);
                 row.LastActivityAt = ServerState.Now;
                 return new
                 {
@@ -154,6 +156,7 @@ public static class Routes
                 {
                     row.HintsJson = Wire.Write(times.Append(ServerState.Now).ToArray());
                     row.LastActivityAt = ServerState.Now;
+                    await SqlPractice.Hint(db, row, session.LessonId);
                 }
                 return true;
             });

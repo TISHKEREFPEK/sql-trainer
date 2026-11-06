@@ -178,6 +178,19 @@ public static class DatabaseHealth
                 Wire.Read<long[]>(work.HintsJson).Length > definition.Hints.Length || work.Checks < 0 || work.Errors < 0 || work.Errors > work.Checks || work.ActiveSeconds < 0)
                 throw new InvalidDataException("Некорректная SQL-работа занятия.");
         }
+        foreach (var practice in db.LessonSqlPractice.AsNoTracking())
+        {
+            var definition = Task(practice.TaskId, practice.Json);
+            if (!db.LessonParticipants.Any(p => p.SessionId == practice.LessonId && p.StudentId == practice.StudentId) ||
+                practice.CreatedAt < (lessons.SingleOrDefault(l => l.Id == practice.LessonId)?.StartedAt ?? long.MaxValue) ||
+                practice.Revision < 1 || practice.Draft.Length > 12000 || practice.AcceptedCode?.Length > 12000 ||
+                practice.Checks < 0 || practice.Errors < 0 || practice.Errors > practice.Checks || practice.ActiveSeconds < 0 ||
+                practice.LastActivityAt < practice.CreatedAt || practice.StartedAt < practice.CreatedAt ||
+                practice.CompletedAt < (lessons.SingleOrDefault(l => l.Id == practice.LessonId)?.StartedAt ?? long.MaxValue) ||
+                practice.Partial && practice.TrackingVersion != 0 || !practice.Partial && (practice.TrackingVersion != 1 || practice.StartedAt is null) ||
+                Wire.Read<long[]>(practice.HintsJson).Length > definition.Hints.Length)
+                throw new InvalidDataException("Некорректный снимок свободной SQL-практики занятия.");
+        }
         foreach (var snapshot in db.LessonSqlSnapshots.AsNoTracking())
         {
             if (!db.LessonParticipants.Any(p => p.SessionId == snapshot.LessonId && p.StudentId == snapshot.StudentId))

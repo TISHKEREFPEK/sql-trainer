@@ -142,6 +142,7 @@ public static class LessonRoutes
                     if (row.State is not ("preparing" or "running")) throw new HttpFault(409, "Для паузы используйте «Продолжить».");
                     var firstStart = row.StartedAt is null;
                     row.StartedAt ??= ServerState.Now; row.State = "running";
+                    if(firstStart)row.SqlPracticeTrackingAt=ServerState.Now;
                     await LessonRoster.Capture(db, row, firstStart);
                 }
                 else if (action == "pause")

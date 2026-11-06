@@ -291,6 +291,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
             var assignment = await Assignment(db, student, taskId, session.LessonId, workScope: expectedWorkScope);
             if (assignment.TrackingVersion > 0) assignment.StartedAt ??= Now;
             assignment.LastActivityAt = Now;
+            await SqlPractice.Observe(db, assignment, session.LessonId, opened: true);
             await db.SaveChangesAsync();
             var task = Catalog.Read(assignment.Json);
             var row = await db.Tasks.FindAsync(taskId);
@@ -393,6 +394,7 @@ public sealed class ServerState(string databasePath, WorkerRunner worker)
 
                 }
 
+                await SqlPractice.Execution(db, assignment, session.LessonId, input, reply.Result);
                 if (input.Check || !string.IsNullOrWhiteSpace(input.Code))
                 {
                     var attempt = new AttemptEntity { Id = Guid.NewGuid().ToString("N"), LessonId = session.LessonId, WorkScope = executingScope, StudentId = session.ProfileId, TaskId = taskId, Action = input.Check ? "check" : "run", Code = input.Code, Explanation = reply.Result.Explanation, Kind = reply.Result.Error ?? (input.Check ? reply.Result.Correct ? "correct" : "different" : "executed"), At = Now };

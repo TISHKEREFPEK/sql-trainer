@@ -37,7 +37,28 @@ function configure(cpu, board) {
   }
   const adc = new avr.AVRADC(cpu,mega?{...avr.adcConfig,numChannels:16,adcInterrupt:58,muxInputMask:0x3f,muxChannels,adcReferences:[avr.ADCReference.AREF,avr.ADCReference.AVCC,avr.ADCReference.Internal1V1,avr.ADCReference.Internal2V56]}:avr.adcConfig);
   const usartConfig=(base,vector)=>({...avr.usart0Config,UCSRA:base,UCSRB:base+1,UCSRC:base+2,UBRRL:base+4,UBRRH:base+5,UDR:base+6,rxCompleteInterrupt:vector*2,dataRegisterEmptyInterrupt:(vector+1)*2,txCompleteInterrupt:(vector+2)*2});
-  const usarts=(mega?[usartConfig(0xc0,25),usartConfig(0xc8,36),usartConfig(0xd0,51),usartConfig(0x130,54)]:[avr.usart0Config]).map(config=>new avr.AVRUSART(cpu,config,board.clockHz));
+  const usarts=(mega?[usartConfig(0xc0,25),usartConfig(0xc8,36),usartConfig(0xd0,51),usartConfig(0x130,54)]:[avr.usart0Config]).map(config=>{
+    const uart=new avr.AVRUSART(cpu,config,board.clockHz);
+    // AVR8js 0.21's UCSRA write hook replaces read-only status bits. Arduino
+    // clears TXC during transmission; that must not erase a concurrent RXC.
+    // Keep vendor intact and preserve status here, including TXC unless W1C.
+    const write=cpu.writeHooks[config.UCSRA];
+    cpu.writeHooks[config.UCSRA]=(value,oldValue)=>{
+      const result=write(value,oldValue);
+      cpu.data[config.UCSRA]|=(oldValue&0xbc)|(value&0x40?0:oldValue&0x40);
+      return result;
+    };
+    // Toggling the transmit-empty interrupt while RX stays enabled must not
+    // acknowledge unread input. The vendor hook clears RXC on that write.
+    const writeControl=cpu.writeHooks[config.UCSRB];
+    cpu.writeHooks[config.UCSRB]=(value,oldValue)=>{
+      const unread=(cpu.data[config.UCSRA]&0x80)&&(oldValue&0x10)&&(value&0x10);
+      const result=writeControl(value,oldValue);
+      if(unread)cpu.setInterruptFlag(uart.RXC);
+      return result;
+    };
+    return uart;
+  });
   const eeprom=new avr.EEPROMMemoryBackend(board.eepromBytes);
   new avr.AVREEPROM(cpu,eeprom,mega?{...avr.eepromConfig,eepromReadyInterrupt:60}:avr.eepromConfig);
   const clock=new avr.AVRClock(cpu,board.clockHz);

@@ -10,8 +10,9 @@ public static class CircuitCodeGuide
         var notes = new List<string> { "setup() — начальная настройка; loop() — повторяющиеся действия. Код меняется только по вашей команде." };
         var unsupported = project.Parts.Where(p => !PartCatalog.CanSimulate(p)).ToArray();
         if (unsupported.Length > 0) notes.Add("Только для схемы: " + string.Join(", ", unsupported.Select(PartLibrary.Name).Distinct()) + ". Автонастройка и исполнение для этих моделей пока недоступны.");
-        var uno = project.Parts.SingleOrDefault(p => p.Kind == PartKind.Uno);
-        if (uno is null) return new(string.Join("\n", notes.Append("Для готового шаблона нужна Arduino Uno. Для Pico, Mega и ESP32 требуется отдельная поддержка платформы.")), null);
+        var uno = project.Parts.SingleOrDefault(p => AvrBoards.For(p) is not null);
+        if (uno is null) return new(string.Join("\n", notes.Append("Для готового шаблона добавьте Arduino Uno или Mega 2560. Для Pico и ESP32 поддержка платформы ещё нужна.")), null);
+        var profile=AvrBoards.For(uno)!;
         var edges = project.Parts.SelectMany(p => PartLibrary.Pins(p).Select(pin => new Terminal(p.Id,pin))).ToDictionary(t => t, _ => new List<Terminal>());
         var parts = project.Parts.ToDictionary(p => p.Id);
         void Link(Terminal a, Terminal b) { edges[a].Add(b); edges[b].Add(a); }
@@ -43,7 +44,7 @@ public static class CircuitCodeGuide
         var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var count=0;
         bool Claim(string? pin,CircuitPart part)
         {
-            if(pin is null) { notes.Add(PartLibrary.Name(part)+": подключите сигнальный вывод к одному подходящему выводу Uno — номер нельзя определить однозначно."); ready=false; return false; }
+            if(pin is null) { notes.Add(PartLibrary.Name(part)+": подключите сигнальный вывод к одному подходящему выводу платы — номер нельзя определить однозначно."); ready=false; return false; }
             if(used.TryGetValue(pin,out var other)) { notes.Add($"Вывод {pin} уже используется: {other}. Совместное использование нужно настроить вручную."); ready=false; return false; }
             used[pin]=PartLibrary.Name(part); return true;
         }
@@ -56,18 +57,18 @@ public static class CircuitCodeGuide
                 {
                     notes.Add(PartLibrary.Name(part)+": pinMode(..., OUTPUT), digitalWrite(..., HIGH/LOW). Резистор остаётся частью схемы.");
                     var pin=Pin(new(part.Id,"A"),resistor:true); if(!Claim(pin,part)) break;
-                    declarations.Add($"const int ledPin{n} = {pin};"); setup.Add($"pinMode(ledPin{n}, OUTPUT);"); loop.Add($"digitalWrite(ledPin{n}, ledOn ? HIGH : LOW);"); blink=true; notes.Add($"Светодиод: вывод Uno {pin}."); break;
+                    declarations.Add($"const int ledPin{n} = {pin};"); setup.Add($"pinMode(ledPin{n}, OUTPUT);"); loop.Add($"digitalWrite(ledPin{n}, ledOn ? HIGH : LOW);"); blink=true; notes.Add($"Светодиод: вывод {profile.Name} {pin}."); break;
                 }
                 case PartKind.Servo:
                 {
                     notes.Add("Сервопривод: библиотека Servo.h, attach(вывод), write(угол 0…180). Библиотека уже установлена локально.");
                     var pin=Pin(new(part.Id,"SIG")); if(!Claim(pin,part)) break;
-                    servo=true; declarations.Add($"Servo servo{n};"); setup.Add($"servo{n}.attach({pin});"); loop.Add($"servo{n}.write(90);"); notes.Add($"Servo SIG: вывод Uno {pin}."); break;
+                    servo=true; declarations.Add($"Servo servo{n};"); setup.Add($"servo{n}.attach({pin});"); loop.Add($"servo{n}.write(90);"); notes.Add($"Servo SIG: вывод {profile.Name} {pin}."); break;
                 }
                 case PartKind.Pot3:
                 case PartKind.AnalogSensor:
                 {
-                    notes.Add(PartLibrary.Name(part)+": analogRead(A0…A5), результат 0…1023.");
+                    notes.Add(PartLibrary.Name(part)+$": analogRead(A0…A{profile.AnalogCount-1}), результат 0…1023.");
                     var pin=Pin(new(part.Id,part.Kind==PartKind.Pot3?"W":"+"),analog:true); if(!Claim(pin,part)) break;
                     serial=true; loop.Add($"Serial.println(analogRead({pin}));"); notes.Add($"Аналоговый сигнал: {pin}."); break;
                 }
@@ -84,7 +85,7 @@ public static class CircuitCodeGuide
             }
         }
         if(!ready) return new(string.Join("\n",notes),null);
-        var code=new StringBuilder("// Начальный шаблон по текущим соединениям Arduino Uno.\n");
+        var code=new StringBuilder($"// Начальный шаблон по текущим соединениям {profile.Name}.\n");
         if(servo) code.Append("#include <Servo.h>\n");
         foreach(var line in declarations) code.AppendLine(line);
         code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);

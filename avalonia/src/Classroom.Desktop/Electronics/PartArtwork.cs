@@ -58,6 +58,7 @@ public static class PartArtwork
     public static Size BaseBody(CircuitPart p)
     {
         if (p.Kind == PartKind.Uno) return new(260, 195);
+        if (p.Kind == PartKind.Mega) return new(500,270);
         if (p.Kind == PartKind.Breadboard) return new(290, 430);
         return PartCatalog.For(p).Art switch
         {
@@ -129,6 +130,17 @@ public static class PartArtwork
             if (i < 14) { x = 246 - i * 13.4; y = 9; }
             else if (i < 20) { x = 161 + (i - 14) * 14.4; y = 185; }
             else { x = i == 20 ? 109 : 124; y = 185; }
+        }
+        else if(p.Kind==PartKind.Mega)
+        {
+            if(pin.StartsWith('D')&&int.TryParse(pin[1..],out var number))
+            {
+                if(number<14){x=283-number*15;y=14;}
+                else if(number<22){x=313+(number-14)*15;y=14;}
+                else{x=number%2==0?474:490;y=30+(number-22)/2*14;}
+            }
+            else if(pin.StartsWith('A')&&int.TryParse(pin[1..],out var analog)){x=200+analog*15;y=259;}
+            else{x=pin switch{"IOREF"=>66,"3V3"=>92,"5V"=>105,"GND"=>118,"VIN"=>144,_=>20};y=259;}
         }
         else if (PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico" && pins.Length == 40)
         {

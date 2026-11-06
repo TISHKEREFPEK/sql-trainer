@@ -20,6 +20,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
     readonly ListBox steps = new();
     readonly ContentControl preview = new();
     readonly TextBlock info = Ui.Text("", 12), status = Ui.Text("", 12);
+    readonly TextBox serialDetail = new(){IsReadOnly=true,AcceptsReturn=true,IsVisible=false,MinHeight=45,MaxHeight=140};
     readonly Button moreStreams, moreSteps, reportButton;
     readonly List<StreamChoice> choices = new();
     readonly List<StepChoice> events = new();
@@ -33,6 +34,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         "move-start" => "Начало перемещения", "move" => "Перемещение", "move-end" or "move-capture-lost" => "Конец перемещения", "resize-start" => "Начало изменения размера", "resize" => "Размер", "resize-end" => "Размер изменён",
         "rotate-start" => "Начало поворота", "rotate" => "Поворот", "rotate-end" => "Поворот завершён", "gesture-cancel" => "Отмена жеста", "undo" => "Отмена изменения", "redo" => "Повтор изменения",
         "work-open" => "Открыта работа", "work-leave" => "Переход из работы", "work-close" => "Работа закрыта", "window-focus" => "Возврат в окно", "window-blur" => "Переход в другое окно", "window-minimize" => "Окно свёрнуто", "window-restore" => "Окно восстановлено",
+        "serial-input-request"=>"Запрошен ввод в порт","serial-input"=>"Ввод принят моделью порта","serial-output"=>"Вывод последовательного порта","serial-clear"=>"Очищен экран порта","serial-channel"=>"Выбран последовательный порт",
         "run-request" => "Запрошен запуск", "compile-request" => "Запрошена компиляция", "simulation-stop" => "Симуляция остановлена", "report-submitted" => "Намерение сдачи", "report-received" => "Получен ответ сервера",
         "report-compiled" => "Сообщена компиляция", "report-started" => "Сообщён запуск", "report-compile-error" => "Сообщена ошибка компиляции", "report-run-error" => "Сообщена ошибка запуска", "control-change" => "Регулятор", "part-add" => "Добавлена деталь", "project-replace" => "Замена схемы", "code-template" => "Шаблон кода", _ => kind };
     readonly string? assignmentId, lessonId;
@@ -47,7 +49,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         steps.SelectionChanged += async (_, _) => { if (!binding && steps.SelectedItem is StepChoice step) await Guard(() => Select(step)); };
         var picker = new Grid { ColumnDefinitions = new("*,Auto,Auto"), ColumnSpacing = 8 }; picker.Children.Add(streams); Grid.SetColumn(moreStreams, 1); picker.Children.Add(moreStreams); var refresh = Ui.Button("Обновить", () => Guard(Load)); Grid.SetColumn(refresh, 2); picker.Children.Add(refresh);
         var left = new Grid { RowDefinitions = new("*,Auto"), RowSpacing = 8 }; left.Children.Add(steps); Grid.SetRow(moreSteps, 1); left.Children.Add(moreSteps);
-        var right = new Grid { RowDefinitions = new("Auto,Auto,*"), RowSpacing = 8 }; right.Children.Add(info); Grid.SetRow(reportButton, 1); right.Children.Add(reportButton); Grid.SetRow(preview, 2); right.Children.Add(preview);
+        var right = new Grid { RowDefinitions = new("Auto,Auto,Auto,*"), RowSpacing = 8 }; right.Children.Add(info); Grid.SetRow(serialDetail,1);right.Children.Add(serialDetail);Grid.SetRow(reportButton, 2); right.Children.Add(reportButton); Grid.SetRow(preview, 3); right.Children.Add(preview);
         var split = new Grid { ColumnDefinitions = new("220,8,*") }; split.Children.Add(left); Grid.SetColumn(right, 2); split.Children.Add(right);
         var page = new Grid { RowDefinitions = new("Auto,Auto,Auto,*"), RowSpacing = 10, Margin = new Avalonia.Thickness(8) };
         page.Children.Add(Ui.Text(studentName + " · история электроники", 20)); Grid.SetRow(picker, 1); page.Children.Add(picker); Grid.SetRow(status, 2); page.Children.Add(status); Grid.SetRow(split, 3); page.Children.Add(split); Content = root = page;
@@ -95,6 +97,8 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         if (disposed || stamp != selection || selected?.Id != source.Id) return;
         info.Text = step.Event is { } e ? $"Шаг {step.Sequence} · {Label(e.Change.Kind)}\nНа ПК ученика: {Ui.Time(e.Change.At)} · получено: {Ui.Time(e.ReceivedAt)}" : "Исходная схема · начало записи на ПК ученика: " + Ui.Time(source.StartedAt);
         if (step.Event?.Change.Kind.StartsWith("window-", StringComparison.Ordinal) == true) info.Text += "\nСобытие окна не является доказательством списывания.";
+        serialDetail.IsVisible=step.Event?.Change.SerialIo is not null;serialDetail.Text=step.Event?.Change.SerialIo?.Text??"";
+        if(step.Event?.Change.SerialIo is { }io)info.Text+=$"\n{(io.Port==0?"Serial":"Serial"+io.Port)}";
         if (link is not null) info.Text += link.Availability switch { "available" => "\nСвязанный отчёт подтверждён для этой копии задания.", "legacy-context" => "\nСнимок и копия сверены; в старом свободном отчёте занятие не сохранялось.", "mismatch" => "\nСсылка не совпадает с копией или снимком. Другой отчёт не подставлен.", _ => "\nОтчёт пока не найден; намерение само по себе не подтверждает сдачу." };
         reportId = link?.Availability is "available" or "legacy-context" ? link.ReportId : null; reportButton.IsVisible = reportId is not null;
         preview.Content = new ElectronicsSnapshotView(new(state.ProjectJson, "history", step.Event?.ReceivedAt ?? source.ReceivedAt, ""));

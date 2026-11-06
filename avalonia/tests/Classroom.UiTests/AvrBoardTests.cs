@@ -5,6 +5,15 @@ namespace Classroom.UiTests;
 
 public sealed class AvrBoardTests
 {
+    [Fact]
+    public async Task SerialFloodFinishesFramesEarlyWithoutDroppingOutput()
+    {
+        var hex=await FirmwareRunner.Compile("void setup(){Serial.begin(2000000);for(int i=0;i<20000;i++)Serial.write('A');Serial.print(\"END\");}void loop(){}",CancellationToken.None,"mega2560");
+        using var runner=new FirmwareRunner();await runner.Start(hex,"mega2560");var text="";
+        for(var i=0;i<8;i++){var frame=await runner.Step(new bool[54],new double[16]);Assert.InRange(frame.Serial.Length,0,8192);text+=frame.Serial;}
+        Assert.Equal(20000,text.Count(c=>c=='A'));Assert.EndsWith("END",text);
+    }
+
     [Theory]
     [InlineData("uno")]
     [InlineData("mega2560")]
@@ -54,12 +63,15 @@ public sealed class AvrBoardTests
         var text="";for(var i=0;i<4;i++)text+=(await runner.Step(new bool[54],new double[16])).Serial;Assert.Contains("HIGHPC:42:1",text);
     }
 
-    [Fact]
-    public async Task MegaUsartReceivesOnlyItsOwnInputAndPreservesUtf8()
+    [Theory]
+    [InlineData(9600)]
+    [InlineData(115200)]
+    public async Task MegaUsartReceivesOnlyItsOwnInputAndPreservesUtf8(int baud)
     {
         var code="void setup(){Serial.begin(9600);Serial1.begin(9600);Serial2.begin(9600);Serial3.begin(9600);}\nvoid loop(){if(Serial.available())Serial.write(Serial.read());if(Serial1.available())Serial1.write(Serial1.read());if(Serial2.available())Serial2.write(Serial2.read());if(Serial3.available())Serial3.write(Serial3.read());}";
+        code=code.Replace("9600",baud.ToString(System.Globalization.CultureInfo.InvariantCulture));
         var hex=await FirmwareRunner.Compile(code,CancellationToken.None,"mega2560");using var runner=new FirmwareRunner();await runner.Start(hex,"mega2560");await runner.Step(new bool[54],new double[16]);
-        var text="порт-2: abc";var output=new string[4];Array.Fill(output,"");
+        var text="проверка платы: ввод ученика";var output=new string[4];Array.Fill(output,"");
         for(var i=0;i<5;i++){var frame=await runner.Step(new bool[54],new double[16],i==0?text:null,2);for(var n=0;n<4;n++)output[n]+=frame.SerialPorts![n];}
         Assert.Equal(text,output[2]);Assert.Equal("",output[0]);Assert.Equal("",output[1]);Assert.Equal("",output[3]);
         await Assert.ThrowsAsync<InvalidDataException>(()=>runner.Step(new bool[54],new double[16],"x",4));

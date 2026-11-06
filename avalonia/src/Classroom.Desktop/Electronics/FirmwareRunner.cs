@@ -4,7 +4,7 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null);
+public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null);
 
 public sealed class FirmwareRunner : IDisposable
 {

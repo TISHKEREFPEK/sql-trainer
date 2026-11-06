@@ -17,4 +17,5 @@ public static class AvrBoards
         return Wire.Read<AvrBoard[]>(json.RootElement.GetProperty("boards").GetRawText());
     }
     public static AvrBoard Get(string id)=>boards.SingleOrDefault(b=>b.Id==id)??throw new InvalidDataException("Неизвестная AVR-плата: "+id);
+    public static AvrBoard? For(CircuitPart part)=>part.Kind switch{PartKind.Uno=>Get("uno"),PartKind.Mega=>Get("mega2560"),_=>null};
 }

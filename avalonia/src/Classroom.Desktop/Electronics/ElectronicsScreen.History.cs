@@ -9,11 +9,11 @@ public sealed partial class ElectronicsScreen
     string codeHistoryKind = "code-edit";
     bool historyVisible;
     internal Classroom.Contracts.ElectronicsJournal? LocalHistory => history?.Journal;
-    void RecordHistory(string kind, bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null)
+    void RecordHistory(string kind, bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, Classroom.Contracts.ElectronicsSerialIo? serialIo = null)
     {
         if (history is null || disposed) return;
         project.Validate(); var json = project.Serialize(); var changed = history.ProjectJson != json;
-        history.Record(json, kind, force, gestureId, reportId, reportHash);
+        history.Record(json, kind, force, gestureId, reportId, reportHash,serialIo);
         // An in-flight old ACK must not label a newly recorded edit as saved remotely.
         if (changed) sync?.QueueDraft(json);
     }

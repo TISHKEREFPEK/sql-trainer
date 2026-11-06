@@ -4,7 +4,7 @@ const avr = require('./vendor/avr8js/cjs/index.js');
 const {getBoard,configure} = require('./avr-devices.cjs');
 const {StringDecoder} = require('node:string_decoder');
 const readline = require('node:readline');
-let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies;
+let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, transmitted=0;
 function load(hex, id='uno') {
   board=getBoard(id);
   if(typeof hex!=='string'||hex.length>1000000)throw Error('Firmware is too large');
@@ -24,8 +24,8 @@ function load(hex, id='uno') {
   cpu=new avr.CPU(program,board.ramStart+board.ramBytes-0x100);
   ({ports,adc,usarts}=configure(cpu,board));
   pinMap=board.pinMap.map(pin=>({port:ports[pin[0]],bit:Number(pin.slice(1))}));
-  serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);
-  usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{if(serial[index].length<8192)serial[index].push(value);};uart.onRxComplete=()=>feed(index);});
+  serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);transmitted=0;
+  usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{serial[index].push(value);transmitted++;};uart.onRxComplete=()=>feed(index);});
   rising=pinMap.map(()=>null);pulses=pinMap.map(()=>null);frequencies=pinMap.map(()=>null);
   return {ready:true,board:board.id,flashBytes:bytes.length,dataBytes:cpu.data.length,pins:pinMap.length,serialPorts:usarts.length};
 }
@@ -56,14 +56,16 @@ function step(input) {
       last[index]=cpu.cycles;levels[index]=high;
     }};port.addListener(listener);return {port,listener};
   });
-  try {let instructions=0;while(cpu.cycles<target){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
+  // Finish a frame early under heavy serial traffic, preserving every byte
+  // rather than silently dropping output when a host-side buffer fills.
+  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
   finally{listeners.forEach(({port,listener})=>port.removeListener(listener));}
   const pins=pinMap.map((pin,index)=>{
     if(levels[index])accumulated[index]+=cpu.cycles-last[index];const state=pin.port.pinState(pin.bit);
     return {output:state===avr.PinState.High||state===avr.PinState.Low,voltage:5*accumulated[index]/(cpu.cycles-start),pullUp:state===avr.PinState.InputPullUp,pulseUs:pulses[index],frequency:frequencies[index]};
   });
-  const serialPorts=serial.map((values,index)=>decoders[index].write(Buffer.from(values)));serial=usarts.map(()=>[]);
-  return {pins,serial:serialPorts[0],serialPorts,milliseconds:cpu.cycles*1000/board.clockHz};
+  const serialPorts=serial.map((values,index)=>decoders[index].write(Buffer.from(values)));serial=usarts.map(()=>[]);transmitted=0;
+  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz};
 }
 readline.createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{
   try{if(line.length>1100000)throw Error('Request too large');const input=JSON.parse(line);const output=input.hex!=null?load(input.hex,input.board??'uno'):step(input);process.stdout.write(JSON.stringify(output)+'\n');}

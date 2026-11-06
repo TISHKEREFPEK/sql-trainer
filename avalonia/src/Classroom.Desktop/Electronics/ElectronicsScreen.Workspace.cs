@@ -56,7 +56,7 @@ public sealed partial class ElectronicsScreen
         codeTabs = new TabControl { Name = "ElectronicsCodeTabs", ItemsSource = new[]
         {
             new TabItem { Header = "Код Arduino Uno", Content = code },
-            new TabItem { Header = "Последовательный монитор", Content = monitor }
+            new TabItem { Header = "Последовательный монитор", Content = BuildSerialPanel() }
         }};
         split.RowDefinitions[3].MinHeight = 220;
         Grid.SetRow(codeTabs, 3); split.Children.Add(codeTabs);

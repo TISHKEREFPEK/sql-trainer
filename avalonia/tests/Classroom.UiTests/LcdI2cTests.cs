@@ -74,7 +74,7 @@ public sealed class LcdI2cTests
     {
         const string code="#include <Wire.h>\n#include <SPI.h>\nvoid setup(){Serial.begin(9600);Wire.begin();SPI.begin();Serial.print(\"SPI:\");Serial.println(SPI.transfer(90));unsigned long t=micros();Wire.beginTransmission(0x27);for(byte i=0;i<4;i++)Wire.write(8);byte result=Wire.endTransmission();unsigned long elapsed=micros()-t;Serial.print(\"BUS:\");Serial.println(result);Serial.print(\"TIME:\");Serial.println(elapsed);}void loop(){}";
         var hex=await FirmwareRunner.Compile(code,CancellationToken.None,board);var original=Assert.Single(CircuitI2c.Devices(Project(board)));
-        foreach(var devices in new[]{Array.Empty<LcdDevice>(),new[]{original with{Powered=false}},new[]{original with{Connected=false}},new[]{original with{Address=38}},new[]{original}})
+        foreach(var devices in new[]{Array.Empty<I2cDevice>(),new[]{original with{Powered=false}},new[]{original with{Connected=false}},new[]{original with{Address=38}},new[]{original}})
         {
             using var runner=new FirmwareRunner();await runner.Start(hex,board);var serial="";var trace=new List<ElectronicsI2cIo>();
             for(var i=0;i<3;i++){var frame=await runner.Step(Digital(board),Analog(board),devices:devices);serial+=frame.Serial;trace.AddRange(frame.I2c??[]);}

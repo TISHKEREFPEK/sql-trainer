@@ -3,7 +3,7 @@
 const avr = require('./vendor/avr8js/cjs/index.js');
 const {getBoard,configure} = require('./avr-devices.cjs');
 const {StringDecoder} = require('node:string_decoder');
-const {LcdBus} = require('./lcd-i2c.cjs');
+const {I2cBus} = require('./i2c-bus.cjs');
 const readline = require('node:readline');
 let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, transmitted=0;
 function load(hex, id='uno') {
@@ -23,7 +23,7 @@ function load(hex, id='uno') {
   }
   if(!ended)throw Error('Incomplete HEX');
   cpu=new avr.CPU(program,board.ramStart+board.ramBytes-0x100);
-  const peripherals=configure(cpu,board);({ports,adc,usarts}=peripherals);lcdBus=new LcdBus(cpu,board.clockHz,peripherals.twi);
+  const peripherals=configure(cpu,board);({ports,adc,usarts}=peripherals);lcdBus=new I2cBus(cpu,board.clockHz,peripherals.twi);
   pinMap=board.pinMap.map(pin=>({port:ports[pin[0]],bit:Number(pin.slice(1))}));
   serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);transmitted=0;
   usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{serial[index].push(value);transmitted++;};uart.onRxComplete=()=>feed(index);});

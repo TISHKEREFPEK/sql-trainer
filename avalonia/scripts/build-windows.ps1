@@ -30,7 +30,7 @@ $electronicsSource = Join-Path $root 'artifacts/electronics-runtime'
 foreach ($app in @('Teacher', 'Student')) {
 $electronicsTarget = Join-Path $publish "$app/electronics/runtime"
 New-Item -ItemType Directory -Path $electronicsTarget -Force | Out-Null
-foreach ($item in @('arduino-cli.exe', 'node.exe', 'ArduinoCLI-LICENSE.txt', 'Node-LICENSE.txt', 'offline-ready-v3.json', 'sandbox-avr', 'data', 'user')) {
+foreach ($item in @('arduino-cli.exe', 'node.exe', 'ArduinoCLI-LICENSE.txt', 'Node-LICENSE.txt', 'offline-ready-v4.json', 'sandbox-avr', 'data', 'user')) {
     Copy-Item -LiteralPath (Join-Path $electronicsSource $item) -Destination $electronicsTarget -Recurse -Force
 }
 New-Item -ItemType Directory -Path (Join-Path $electronicsTarget 'user') -Force | Out-Null

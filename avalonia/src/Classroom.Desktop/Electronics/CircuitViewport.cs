@@ -46,11 +46,12 @@ public sealed class CircuitViewport : Decorator
     public Point ToWorld(Point point)=>new((point.X-Pan.X)/Zoom,(point.Y-Pan.Y)/Zoom);
     public void SetView(double zoom,Vector pan)
     {Zoom=zoom;Pan=pan;translation.X=pan.X;translation.Y=pan.Y;InvalidateVisual();}
-    public void Fit(Rect bounds,double maximum=1.4)
+    public void Fit(Rect bounds,double maximum=1.4,Thickness? reserved=null)
     {
         if(Bounds.Width<1||Bounds.Height<1)return;
-        var zoom=Math.Clamp(Math.Min(Bounds.Width/Math.Max(1,bounds.Width),Bounds.Height/Math.Max(1,bounds.Height)),0.1,maximum);
-        SetView(zoom,new(Bounds.Width/2-bounds.Center.X*zoom,Bounds.Height/2-bounds.Center.Y*zoom));
+        var inset=reserved??default;var available=new Rect(inset.Left,inset.Top,Math.Max(1,Bounds.Width-inset.Left-inset.Right),Math.Max(1,Bounds.Height-inset.Top-inset.Bottom));
+        var zoom=Math.Clamp(Math.Min(available.Width/Math.Max(1,bounds.Width),available.Height/Math.Max(1,bounds.Height)),0.1,maximum);
+        SetView(zoom,new(available.Center.X-bounds.Center.X*zoom,available.Center.Y-bounds.Center.Y*zoom));
     }
     public override void Render(DrawingContext context)
     {

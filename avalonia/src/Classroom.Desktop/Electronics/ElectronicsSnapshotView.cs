@@ -48,7 +48,7 @@ public sealed class ElectronicsSnapshotView : UserControl
         foreach(var part in project.Parts)
         {
             var size=PartArtwork.BaseBody(part); var face=new Canvas{Width=size.Width,Height=size.Height,RenderTransformOrigin=new RelativePoint(0,0,RelativeUnit.Relative),RenderTransform=new MatrixTransform{Matrix=PartArtwork.TransformMatrix(part,zoom)}};
-            face.Children.Add(part.Kind==PartKind.Breadboard?ElectronicsScreen.BreadboardFace(1):part.Kind==PartKind.LcdI2c?new LcdDisplayFace(part):PartArtwork.Thumbnail(PartCatalog.For(part).Art,size.Width,size.Height)); Canvas.SetLeft(face,part.X*zoom);Canvas.SetTop(face,part.Y*zoom);canvas.Children.Add(face);
+            face.Children.Add(part.Kind==PartKind.Breadboard?ElectronicsScreen.BreadboardFace(1):part.Kind==PartKind.LcdI2c?new LcdDisplayFace(part):part.Kind==PartKind.OledI2c?new OledDisplayFace(part):PartArtwork.Thumbnail(PartCatalog.For(part).Art,size.Width,size.Height)); Canvas.SetLeft(face,part.X*zoom);Canvas.SetTop(face,part.Y*zoom);canvas.Children.Add(face);
             var title=Ui.Text(PartLibrary.Name(part),12*zoom);Canvas.SetLeft(title,part.X*zoom);Canvas.SetTop(title,(part.Y-22)*zoom);canvas.Children.Add(title);
             foreach(var pin in PartLibrary.Pins(part)){var at=PartArtwork.Pin(part,pin); var hole=new Ellipse{Width=8*zoom,Height=8*zoom,Fill=Brushes.DodgerBlue,Stroke=Brushes.White,StrokeThickness=1};ToolTip.SetTip(hole,pin);Canvas.SetLeft(hole,(at.X-4)*zoom);Canvas.SetTop(hole,(at.Y-4)*zoom);canvas.Children.Add(hole);}
         }

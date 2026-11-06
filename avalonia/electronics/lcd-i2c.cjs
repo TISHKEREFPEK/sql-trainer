@@ -3,7 +3,7 @@
 // P0 RS, P1 RW, P2 E, P3 backlight, P4..P7 DB4..DB7.
 // Sources/limits are documented in docs/architecture.md; no Cirkit code used.
 class Lcd {
-  constructor(cpu,hz,config){this.cpu=cpu;this.hz=hz;this.config=config;this.powered=false;this.reset();}
+  constructor(cpu,hz,config){this.cpu=cpu;this.hz=hz;this.config=config;this.powered=false;this.readable=true;this.maxFrequency=100000;this.reset();}
   reset(){this.ddram=new Uint8Array(128).fill(32);this.cgram=new Uint8Array(64);this.address=0;this.cg=false;this.shift=0;this.increment=true;this.entryShift=false;this.display=false;this.cursor=false;this.blink=false;this.four=false;this.twoLines=false;this.high=null;this.readHigh=true;this.latch=255;this.busyUntil=this.cpu.cycles+this.hz*.015;}
   update(config){if(config.powered&&!this.powered)this.reset();this.config=config;this.powered=config.powered;}
   busy(){return this.cpu.cycles<this.busyUntil;}
@@ -50,31 +50,4 @@ class Lcd {
     return {id,columns,rows,cells,cgram:Array.from(this.cgram),powered:this.powered,display:this.display&&this.powered,backlight:!!(this.latch&8)&&this.powered,cursor:this.cursor||this.blink?visibleCursor:-1,underline:this.cursor,blink:this.blink&&Math.floor(this.cpu.cycles/this.hz/.4096)%2===0};
   }
 }
-class LcdBus {
-  constructor(cpu,hz,twi){this.cpu=cpu;this.hz=hz;this.twi=twi;this.devices=new Map();this.trace=[];this.packet=null;this.active=[];this.repeated=false;
-    const delay=(callback,bits=9)=>cpu.addClockEvent(callback,Math.max(1,Math.round(bits*hz/twi.sclFrequency)));
-    twi.eventHandler={
-      start:()=>{const repeated=this.packet!==null;this.flush();this.repeated=repeated;delay(()=>twi.completeStart(),1);},
-      stop:()=>{this.flush();this.active=[];delay(()=>twi.completeStop(),1);},
-      connectToSlave:(address,write)=>{
-        this.active=[...this.devices.values()].filter(d=>d.powered&&d.config.connected&&d.config.address===address);
-        if(this.active.length&&twi.sclFrequency>100001)throw Error('LCD PCF8574: модель поддерживает I2C до 100 кГц.');
-        const ack=this.active.length>0;this.packet={address,read:!write,data:[],ack,repeatedStart:this.repeated};delay(()=>twi.completeConnect(ack));
-      },
-      writeByte:value=>{if(this.packet.data.length>=4096)throw Error('I2C transfer exceeds 4096 bytes');delay(()=>{this.packet.data.push(value);const targets=this.active.filter(d=>d.powered&&d.config.connected);for(const d of targets)d.write(value);twi.completeWrite(targets.length>0);});},
-      readByte:()=>{const value=this.active.reduce((a,d)=>a&d.read(),255);if(this.packet.data.length>=4096)throw Error('I2C transfer exceeds 4096 bytes');this.packet.data.push(value);delay(()=>twi.completeRead(value));}
-    };
-  }
-  update(configs){
-    if(!Array.isArray(configs)||configs.length>80)throw Error('Invalid I2C devices');const ids=new Set();
-    for(const config of configs){
-      if(!config||typeof config.id!=='string'||config.id.length<1||config.id.length>64||ids.has(config.id)||!Number.isInteger(config.address)||!(config.address>=32&&config.address<=39||config.address>=56&&config.address<=63)||
-        !(config.columns===16&&config.rows===2||config.columns===20&&config.rows===4)||typeof config.connected!=='boolean'||typeof config.powered!=='boolean')throw Error('Invalid LCD device');
-      ids.add(config.id);if(!this.devices.has(config.id))this.devices.set(config.id,new Lcd(this.cpu,this.hz,config));this.devices.get(config.id).update(config);
-    }
-    for(const id of this.devices.keys())if(!ids.has(id))this.devices.delete(id);
-  }
-  flush(){if(this.packet){this.trace.push(this.packet);this.packet=null;}}
-  frame(){const i2c=this.trace;this.trace=[];return {i2c,displays:[...this.devices.values()].map(d=>d.frame())};}
-}
-module.exports={Lcd,LcdBus};
+module.exports={Lcd};

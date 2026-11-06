@@ -174,6 +174,11 @@ public sealed class LearningStatisticsView : UserControl
         page.Children.Add(Ui.Text("Принятый ответ", 20));
         page.Children.Add(Code(d.AcceptedCode ?? (r.CompletedAt is null ? "Ещё не решено" : "Ответ не записывался в прежней версии")));
         page.Children.Add(new Expander { Header = "Текущий сохранённый черновик", Content = Code(d.Draft.Length == 0 ? "Черновик пуст" : d.Draft) });
+        page.Children.Add(Ui.Button("Пошаговая история SQL", () => owner.Safe(async () =>
+        {
+            var view = new SqlJournalView(owner, api, r.StudentId, r.TaskId, r.Title);
+            owner.ShowPage("История SQL", view, view.Dispose); await view.Load();
+        })));
         page.Children.Add(Ui.Text("История действий · последние сверху", 20));
         foreach (var e in history)
         {
@@ -181,6 +186,11 @@ public sealed class LearningStatisticsView : UserControl
             if (e.Code is not null) panel.Children.Add(Code(e.Code));
             else if (e.Action is "check" or "run") panel.Children.Add(Ui.Text("SQL этой попытки не записывался", 12));
             if (e.Explanation is not null) panel.Children.Add(Ui.Text(e.Explanation));
+            if (e.Action is "check" or "run") panel.Children.Add(Ui.Button("Открыть попытку SQL", () => owner.Safe(async () =>
+            {
+                var source = await api.Get<SqlReviewAttempt>("teacher/sql-review/attempts/" + Uri.EscapeDataString(e.Id));
+                var view = new SqlAttemptReviewView(owner, api, source); owner.ShowPage("Проверка SQL", view, view.Dispose);
+            })));
             page.Children.Add(Ui.Card(panel));
         }
         if (history.Count == 0) page.Children.Add(Ui.Text("Записанных событий нет."));

@@ -9,7 +9,7 @@ namespace Classroom.Desktop.Electronics;
 
 public static class ElectronicsLabels
 {
-    public static string Kind(string? kind)=>kind switch {"submitted"=>"Работа отправлена","compiled"=>"Компиляция успешна","compile-error"=>"Ошибка компиляции","started"=>"Симуляция запущена","run-error"=>"Ошибка симуляции","draft"=>"Схема сохранена",_=>"Нет работ"};
+    public static string Kind(string? kind)=>kind switch {"history"=>"Состояние выбранного шага","submitted"=>"Работа отправлена","compiled"=>"Компиляция успешна","compile-error"=>"Ошибка компиляции","started"=>"Симуляция запущена","run-error"=>"Ошибка симуляции","draft"=>"Схема сохранена",_=>"Нет работ"};
     public static string Date(long at)=>DateTimeOffset.FromUnixTimeMilliseconds(at).LocalDateTime.ToString("dd.MM.yyyy HH:mm:ss");
 }
 public sealed class ElectronicsSnapshotView : UserControl
@@ -32,7 +32,7 @@ public sealed class ElectronicsSnapshotView : UserControl
         var tabs=new TabControl{ItemsSource=new[]{new TabItem{Header="Схема · снимок",Content=scene},new TabItem{Header="Код ученика",Content=code},new TabItem{Header="Сообщение запуска",Content=detail}}};
         var root=new Grid{RowDefinitions=new("Auto,Auto,*"),RowSpacing=8};
         root.Children.Add(Ui.Text(project.Name.Length==0?"Без названия":project.Name,20));
-        var description=Ui.Text(ElectronicsLabels.Kind(snapshot.Kind)+" · получено "+ElectronicsLabels.Date(snapshot.At)+"\nПросмотр без редактирования. Состояние запуска сообщено приложением ученика; это не оценка задания.",12); Grid.SetRow(description,1);root.Children.Add(description); Grid.SetRow(tabs,2);root.Children.Add(tabs); Content=root;
+        var description=Ui.Text(ElectronicsLabels.Kind(snapshot.Kind)+" · получено "+ElectronicsLabels.Date(snapshot.At)+(snapshot.Kind=="history"?"\nВосстановленный снимок истории. Просмотр не меняет работу ученика.":"\nПросмотр без редактирования. Состояние запуска сообщено приложением ученика; это не оценка задания."),12); Grid.SetRow(description,1);root.Children.Add(description); Grid.SetRow(tabs,2);root.Children.Add(tabs); Content=root;
         Draw(); var first=true; scroll.LayoutUpdated+=(_,_)=>{if(first&&scroll.Bounds.Width>150){first=false;Fit(scroll);}};
     }
     Task Change(double delta){var anchor=new Point(viewport.Bounds.Width/2,viewport.Bounds.Height/2);var world=viewport.ToWorld(anchor);zoom=Math.Clamp(zoom+delta,0.1,3);viewport.SetView(zoom,new(anchor.X-world.X*zoom,anchor.Y-world.Y*zoom));Draw();return Task.CompletedTask;}
@@ -48,7 +48,7 @@ public sealed class ElectronicsSnapshotView : UserControl
         foreach(var part in project.Parts)
         {
             var size=PartArtwork.BaseBody(part); var face=new Canvas{Width=size.Width,Height=size.Height,RenderTransformOrigin=new RelativePoint(0,0,RelativeUnit.Relative),RenderTransform=new MatrixTransform{Matrix=PartArtwork.TransformMatrix(part,zoom)}};
-            face.Children.Add(part.Kind==PartKind.Breadboard?ElectronicsScreen.BreadboardFace(1):PartArtwork.Thumbnail(PartCatalog.For(part).Art,size.Width,size.Height)); Canvas.SetLeft(face,part.X*zoom);Canvas.SetTop(face,part.Y*zoom);canvas.Children.Add(face);
+            face.Children.Add(part.Kind==PartKind.Breadboard?ElectronicsScreen.BreadboardFace(1):part.Kind==PartKind.LcdI2c?new LcdDisplayFace(part):part.Kind==PartKind.OledI2c?new OledDisplayFace(part):PartArtwork.Thumbnail(PartCatalog.For(part).Art,size.Width,size.Height)); Canvas.SetLeft(face,part.X*zoom);Canvas.SetTop(face,part.Y*zoom);canvas.Children.Add(face);
             var title=Ui.Text(PartLibrary.Name(part),12*zoom);Canvas.SetLeft(title,part.X*zoom);Canvas.SetTop(title,(part.Y-22)*zoom);canvas.Children.Add(title);
             foreach(var pin in PartLibrary.Pins(part)){var at=PartArtwork.Pin(part,pin); var hole=new Ellipse{Width=8*zoom,Height=8*zoom,Fill=Brushes.DodgerBlue,Stroke=Brushes.White,StrokeThickness=1};ToolTip.SetTip(hole,pin);Canvas.SetLeft(hole,(at.X-4)*zoom);Canvas.SetTop(hole,(at.Y-4)*zoom);canvas.Children.Add(hole);}
         }

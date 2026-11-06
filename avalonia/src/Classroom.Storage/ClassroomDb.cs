@@ -11,6 +11,7 @@ public sealed class ProfileEntity
 {
     public string Id { get; set; } = "";
     public string Login { get; set; } = "";
+    public string? FullName { get; set; }
     public string PasswordHash { get; set; } = "";
     public string Role { get; set; } = "student";
     public string? GroupId { get; set; }
@@ -18,6 +19,7 @@ public sealed class ProfileEntity
     public long LockedUntil { get; set; }
     public string ThemeJson { get; set; } = "{\"preset\":\"light\"}";
     public string PresetsJson { get; set; } = "[]";
+    public string ResultsMode { get; set; } = "lesson";
 }
 
 public sealed class TaskEntity
@@ -47,7 +49,7 @@ public sealed class VariantEntity
     public string Json { get; set; } = "";
 }
 
-public sealed class AssignmentEntity
+public sealed class AssignmentEntity : ISqlWork
 {
     public string StudentId { get; set; } = "";
     public string TaskId { get; set; } = "";
@@ -77,6 +79,8 @@ public sealed class SnapshotEntity
 
 public sealed class AttemptEntity
 {
+    public string? LessonId { get; set; }
+    public string? WorkScope { get; set; }
     public string Id { get; set; } = "";
     public string StudentId { get; set; } = "";
     public string TaskId { get; set; } = "";
@@ -104,6 +108,10 @@ public sealed class ImportEntity
 
 public sealed class ElectronicsWorkEntity
 {
+    public string? FreeProjectId { get; set; }
+    public string? LessonId { get; set; }
+    public int? ProjectRevision { get; set; }
+    public string? AssignmentId { get; set; }
     public string StudentId { get; set; } = "";
     public string ClientId { get; set; } = "";
     public long Sequence { get; set; }
@@ -116,6 +124,10 @@ public sealed class ElectronicsWorkEntity
 }
 public sealed class ElectronicsReportEntity
 {
+    public string? FreeProjectId { get; set; }
+    public string? LessonId { get; set; }
+    public int? ExpectedAssignmentVersion { get; set; }
+    public string? AssignmentId { get; set; }
     public string StudentId { get; set; } = "";
     public string Id { get; set; } = "";
     public string ClientId { get; set; } = "";
@@ -137,12 +149,34 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     public DbSet<SnapshotEntity> Snapshots => Set<SnapshotEntity>();
     public DbSet<AttemptEntity> Attempts => Set<AttemptEntity>();
     public DbSet<OperationEntity> Operations => Set<OperationEntity>();
+    public DbSet<SqlJournalStreamEntity> SqlJournalStreams => Set<SqlJournalStreamEntity>();
+    public DbSet<SqlJournalChangeEntity> SqlJournalChanges => Set<SqlJournalChangeEntity>();
     public DbSet<ImportEntity> Imports => Set<ImportEntity>();
+    public DbSet<LessonSessionEntity> LessonSessions => Set<LessonSessionEntity>();
+    public DbSet<LessonParticipantEntity> LessonParticipants => Set<LessonParticipantEntity>();
+    public DbSet<LessonRosterEntity> LessonRoster => Set<LessonRosterEntity>();
+    public DbSet<LessonSqlTaskEntity> LessonSqlTasks => Set<LessonSqlTaskEntity>();
+    public DbSet<LessonSqlWorkEntity> LessonSqlWorks => Set<LessonSqlWorkEntity>();
+    public DbSet<LessonSqlPracticeEntity> LessonSqlPractice => Set<LessonSqlPracticeEntity>();
+    public DbSet<LessonSqlSnapshotEntity> LessonSqlSnapshots => Set<LessonSqlSnapshotEntity>();
+    public DbSet<ElectronicsTaskEntity> ElectronicsTasks => Set<ElectronicsTaskEntity>();
+    public DbSet<ElectronicsTaskRevisionEntity> ElectronicsTaskRevisions => Set<ElectronicsTaskRevisionEntity>();
+    public DbSet<LessonElectronicsTaskEntity> LessonElectronicsTasks => Set<LessonElectronicsTaskEntity>();
+    public DbSet<ElectronicsAssignmentEntity> ElectronicsAssignments => Set<ElectronicsAssignmentEntity>();
     public DbSet<ElectronicsWorkEntity> ElectronicsWorks => Set<ElectronicsWorkEntity>();
+    public DbSet<ElectronicsProjectEntity> ElectronicsProjects => Set<ElectronicsProjectEntity>();
+    public DbSet<ElectronicsPracticeEntity> ElectronicsPractice => Set<ElectronicsPracticeEntity>();
+    public DbSet<ElectronicsJournalStreamEntity> ElectronicsJournalStreams => Set<ElectronicsJournalStreamEntity>();
+    public DbSet<ElectronicsJournalChangeEntity> ElectronicsJournalChanges => Set<ElectronicsJournalChangeEntity>();
     public DbSet<ElectronicsReportEntity> ElectronicsReports => Set<ElectronicsReportEntity>();
+    public DbSet<ElectronicsReviewEntity> ElectronicsReviews => Set<ElectronicsReviewEntity>();
+    public DbSet<SqlExecutionStateEntity> SqlExecutionStates => Set<SqlExecutionStateEntity>();
+    public DbSet<SqlExecutionEvidenceEntity> SqlExecutionEvidence => Set<SqlExecutionEvidenceEntity>();
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        foreach (var entry in ChangeTracker.Entries<LessonSessionEntity>().Where(e => e.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.Validate();
         foreach (var entry in ChangeTracker.Entries<TaskEntity>().Where(e => e.State is EntityState.Added or EntityState.Modified).ToArray())
         {
             var task = entry.Entity;
@@ -168,6 +202,16 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
     protected override void OnModelCreating(ModelBuilder model) => Configure(model);
     public static void Configure(ModelBuilder model)
     {
+        model.Entity<LessonSqlPracticeEntity>().HasKey(x => new { x.LessonId, x.StudentId, x.TaskId });
+        model.Entity<LessonSqlPracticeEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonSqlPracticeEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlJournalStreamEntity>().HasKey(x => new { x.StudentId, x.Id });
+        model.Entity<SqlJournalStreamEntity>().HasIndex(x => new { x.StudentId, x.LessonId, x.TaskId, x.ReceivedAt });
+        model.Entity<SqlJournalStreamEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlJournalStreamEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<SqlJournalChangeEntity>().HasKey(x => new { x.StudentId, x.StreamId, x.Sequence });
+        model.Entity<SqlJournalChangeEntity>().HasIndex(x => new { x.StudentId, x.StreamId, x.EventId }).IsUnique();
+        model.Entity<SqlJournalChangeEntity>().HasOne<SqlJournalStreamEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.StreamId }).OnDelete(DeleteBehavior.Cascade);
         model.Entity<GroupEntity>().HasKey(x => x.Id);
         model.Entity<ProfileEntity>().HasKey(x => x.Id);
         model.Entity<ProfileEntity>().HasIndex(x => x.Login).IsUnique();
@@ -187,10 +231,70 @@ public sealed class ClassroomDb(DbContextOptions<ClassroomDb> options) : DbConte
         model.Entity<OperationEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<OperationEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ImportEntity>().HasKey(x => x.Hash);
+        model.Entity<ProfileEntity>().Property(x => x.FullName).HasMaxLength(200);
+        model.Entity<LessonSessionEntity>().HasKey(x => x.Id);
+        // A shared teacher host has at most one unfinished lesson, including preparation.
+        model.Entity<LessonSessionEntity>().HasIndex(x => x.TeacherId).IsUnique().HasFilter("\"EndedAt\" IS NULL");
+        model.Entity<LessonSessionEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.TeacherId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSessionEntity>().HasOne<GroupEntity>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<LessonParticipantEntity>().HasKey(x => new { x.SessionId, x.StudentId });
+        model.Entity<LessonParticipantEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonParticipantEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonRosterEntity>().HasKey(x => new { x.LessonId, x.StudentId });
+        model.Entity<LessonRosterEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonRosterEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ProfileEntity>().Property(x => x.ResultsMode).HasDefaultValue("lesson");
+        model.Entity<LessonSqlTaskEntity>().HasKey(x => new { x.LessonId, x.TaskId });
+        model.Entity<LessonSqlTaskEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonSqlTaskEntity>().HasOne<TaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSqlWorkEntity>().HasKey(x => new { x.LessonId, x.StudentId, x.TaskId });
+        model.Entity<LessonSqlWorkEntity>().HasIndex(x => new { x.StudentId, x.Project, x.CreatedAt });
+        model.Entity<LessonSqlWorkEntity>().HasOne<LessonSqlTaskEntity>().WithMany().HasForeignKey(x => new { x.LessonId, x.PolicyTaskId }).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSqlWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonSqlSnapshotEntity>().HasKey(x => new { x.LessonId, x.StudentId, x.Project });
+        model.Entity<LessonSqlSnapshotEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonSqlSnapshotEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<AttemptEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<ElectronicsWorkEntity>().HasKey(x => new { x.StudentId, x.ClientId });
+        model.Entity<ElectronicsProjectEntity>().HasKey(x=>new{x.StudentId,x.Id});
+        model.Entity<ElectronicsProjectEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x=>x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsPracticeEntity>().HasKey(x=>new{x.StudentId,x.ProjectId,x.LessonId});
+        model.Entity<ElectronicsPracticeEntity>().HasOne<ElectronicsProjectEntity>().WithMany().HasForeignKey(x=>new{x.StudentId,x.ProjectId}).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsPracticeEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x=>x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<ElectronicsWorkEntity>().HasOne<ElectronicsPracticeEntity>().WithMany().HasForeignKey(x=>new{x.StudentId,x.FreeProjectId,x.LessonId}).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReportEntity>().HasOne<ElectronicsPracticeEntity>().WithMany().HasForeignKey(x=>new{x.StudentId,x.FreeProjectId,x.LessonId}).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsJournalStreamEntity>().HasKey(x => new { x.StudentId, x.Id });
+        model.Entity<ElectronicsJournalStreamEntity>().HasIndex(x => new { x.StudentId, x.LessonId, x.ReceivedAt });
+        model.Entity<ElectronicsJournalStreamEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsJournalStreamEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<ElectronicsJournalChangeEntity>().HasKey(x => new { x.StudentId, x.StreamId, x.Sequence });
+        model.Entity<ElectronicsJournalChangeEntity>().HasIndex(x => new { x.StudentId, x.StreamId, x.EventId }).IsUnique();
+        model.Entity<ElectronicsJournalChangeEntity>().HasOne<ElectronicsJournalStreamEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.StreamId }).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsTaskEntity>().HasKey(x => x.Id);
+        model.Entity<ElectronicsTaskRevisionEntity>().HasKey(x => new { x.TaskId, x.Revision });
+        model.Entity<ElectronicsTaskRevisionEntity>().HasOne<ElectronicsTaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<LessonElectronicsTaskEntity>().HasKey(x => new { x.LessonId, x.TaskId });
+        model.Entity<LessonElectronicsTaskEntity>().HasOne<LessonSessionEntity>().WithMany().HasForeignKey(x => x.LessonId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<LessonElectronicsTaskEntity>().HasOne<ElectronicsTaskEntity>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<ElectronicsAssignmentEntity>().HasKey(x => x.Id);
+        model.Entity<ElectronicsAssignmentEntity>().HasIndex(x => new { x.LessonId, x.StudentId, x.TaskId }).IsUnique();
+        model.Entity<ElectronicsAssignmentEntity>().HasOne<LessonElectronicsTaskEntity>().WithMany().HasForeignKey(x => new { x.LessonId, x.TaskId }).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<ElectronicsAssignmentEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsWorkEntity>().HasOne<ElectronicsAssignmentEntity>().WithMany().HasForeignKey(x => x.AssignmentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReportEntity>().HasOne<ElectronicsAssignmentEntity>().WithMany().HasForeignKey(x => x.AssignmentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsWorkEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ElectronicsReportEntity>().HasKey(x => new { x.StudentId, x.Id });
         model.Entity<ElectronicsReportEntity>().HasIndex(x => new { x.StudentId, x.At, x.Id });
         model.Entity<ElectronicsReportEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReviewEntity>().HasKey(x => x.Id);
+        model.Entity<ElectronicsReviewEntity>().HasIndex(x => new { x.StudentId, x.ReportId, x.Sequence }).IsUnique();
+        model.Entity<ElectronicsReviewEntity>().HasOne<ElectronicsReportEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.ReportId }).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ElectronicsReviewEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.TeacherId).OnDelete(DeleteBehavior.Restrict);
+        model.Entity<SqlExecutionStateEntity>().HasKey(x => new { x.StudentId, x.Hash });
+        model.Entity<SqlExecutionStateEntity>().HasOne<ProfileEntity>().WithMany().HasForeignKey(x => x.StudentId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlExecutionEvidenceEntity>().HasKey(x => x.AttemptId);
+        model.Entity<SqlExecutionEvidenceEntity>().HasIndex(x => new { x.StudentId, x.OperationId }).IsUnique();
+        model.Entity<SqlExecutionEvidenceEntity>().HasOne<AttemptEntity>().WithOne().HasForeignKey<SqlExecutionEvidenceEntity>(x => x.AttemptId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SqlExecutionEvidenceEntity>().HasOne<SqlExecutionStateEntity>().WithMany().HasForeignKey(x => new { x.StudentId, x.BeforeHash }).OnDelete(DeleteBehavior.Cascade);
     }
 }

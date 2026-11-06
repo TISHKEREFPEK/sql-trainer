@@ -12,13 +12,24 @@ public static class Routes
     public static void Map(WebApplication app, ServerState state, string dataDir, WorkerRunner worker)
     {
         var api = app.MapGroup("/api/v1");
+        LessonRoutes.Map(api, state);
+        LessonSqlTasks.Map(api, state);
         ElectronicsRoutes.Map(api,state);
+        ElectronicsProjects.Map(api,state);
+        ElectronicsAssignments.Map(api, state);
+        ElectronicsReviews.Map(api, state);
+        ReviewAccessRoutes.Map(api, state);
+        SqlReviewRoutes.Map(api, state, worker);
+        SqlSyncRoutes.Map(api, state);
+        SqlJournalRoutes.Map(api, state);
+        ElectronicsJournalRoutes.Map(api, state);
         api.MapPut("/teacher/lesson", (HttpContext ctx, LessonDestination input) =>
         {
             state.Authorize(ctx, "teacher");
             return state.SelectLesson(input);
         });
         LearningAnalytics.Map(api, state);
+        ClassroomResults.Map(api, state);
         api.MapGet("/status", () => state.Read(async db => new StatusDto(!await db.Profiles.AnyAsync(p => p.Role == "teacher"), "0.1.0")));
         api.MapPost("/setup", async (HttpContext ctx, PasswordRequest input) =>
         {
@@ -52,17 +63,10 @@ public static class Routes
             var session = state.Authorize(ctx, "student");
             return await state.Read(async db =>
             {
-                var assigned = await db.Assignments.Where(a => a.StudentId == session.ProfileId).ToArrayAsync();
-                var projects = assigned.Select(a => Catalog.Read(a.Json).Project).Where(p => p is not null).ToHashSet();
-                var assignedIds = assigned.Select(a => a.TaskId).ToHashSet();
-                var items = (await state.Tasks(db)).Select(ServerState.Item).Where(t => t.Project is null || !projects.Contains(t.Project) || assignedIds.Contains(t.Id)).ToDictionary(t => t.Id);
-                foreach (var a in assigned)
-                {
-                    var task = Catalog.Read(a.Json);
-                    items[task.Id] = new(task.Id, task.Title, task.Module, task.Project);
-                }
-
-                return new CatalogueDto(items.Values.ToArray(), await db.Assignments.Where(a => a.StudentId == session.ProfileId && a.CompletedAt != null).Select(a => a.TaskId).ToArrayAsync(), Profile(db, session.ProfileId).LockedUntil);
+                var lesson = await LessonRoutes.RequireMember(state, db, session);
+                var student = Profile(db, session.ProfileId);
+                var available = await LessonSqlTasks.Catalogue(state, db, student, lesson);
+                return new CatalogueDto(available.Tasks, available.Work.Values.Where(w => w.CompletedAt is not null).Select(w => w.TaskId).ToArray(), student.LockedUntil, available.Required, lesson.FreePractice);
             });
         });
         api.MapGet("/glossary", (HttpContext ctx) =>
@@ -70,18 +74,21 @@ public static class Routes
             state.Authorize(ctx, "student");
             return Catalog.Data.GlossaryLong;
         });
-        api.MapGet("/tasks/{id}", (HttpContext ctx, string id) => state.GetTask(state.Authorize(ctx, "student"), id));
+        api.MapGet("/tasks/{id}", (HttpContext ctx, string id, string? workScope) => state.GetTask(state.Authorize(ctx, "student"), id, workScope));
         api.MapPost("/tasks/{id}/execute", (HttpContext ctx, string id, ExecuteRequest input) => state.Execute(state.Authorize(ctx, "student"), id, input));
         api.MapPut("/tasks/{id}/draft", async (HttpContext ctx, string id, DraftRequest input) =>
         {
             var session = state.Authorize(ctx, "student");
+            LessonRoutes.CheckContext(session, input.LessonId);
             if (input.Code.Length > 12000)
                 throw new HttpFault(400, "SQL слишком длинный.");
             return await state.Write(async db =>
             {
-                var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
+                await LessonRoutes.RequireMember(state, db, session, saving: true);
+                var row = await state.Assignment(db, Profile(db, session.ProfileId), id, session.LessonId, retainedSave: true, workScope: input.WorkScope);
                 row.Draft = input.Code;
                 row.LastActivityAt = ServerState.Now;
+                await SqlPractice.Observe(db, row, session.LessonId, draft: input.Code);
                 return new
                 {
                     ok = true
@@ -91,15 +98,17 @@ public static class Routes
         api.MapPost("/tasks/{id}/activity", async (HttpContext ctx, string id, ActivityRequest input) =>
         {
             var session = state.Authorize(ctx, "student");
+            LessonRoutes.CheckContext(session, input.LessonId);
             if (input.Seconds is < 0 or > 30)
                 throw new HttpFault(400, "Некорректное время активности.");
             if (input.EventId is not null && (!Guid.TryParseExact(input.EventId, "N", out _) || input.Sequence < 1))
                 throw new HttpFault(400, "Некорректный номер активности.");
             return await state.Write(async db =>
             {
-                var row = await state.Assignment(db, Profile(db, session.ProfileId), id);
+                var lesson = await LessonRoutes.RequireMember(state, db, session, saving: true);
+                var row = await state.Assignment(db, Profile(db, session.ProfileId), id, session.LessonId, retainedSave: true, workScope: input.WorkScope);
                 var receiptId = "activity:" + input.EventId;
-                var hash = id + ":" + input.Seconds;
+                var hash = session.LessonId + ":" + ServerState.Scope(row) + ":" + id + ":" + input.Seconds;
                 if (input.EventId is not null)
                 {
                     var receipt = await db.Operations.FindAsync(session.ProfileId, receiptId);
@@ -116,9 +125,10 @@ public static class Routes
                 }
                 // Clamp by elapsed server time: concurrent clients/retries cannot inflate time.
                 var elapsed = row.LastHeartbeatAt is { } at ? Math.Clamp((ServerState.Now - at) / 1000, 0, 30) : Math.Min(2, input.Seconds);
-                if (Profile(db, session.ProfileId).LockedUntil <= ServerState.Now && row.CompletedAt is null)
+                if (state.ActivatedLessonId == lesson.Id && lesson.State == "running" && lesson.AllowSql && Profile(db, session.ProfileId).LockedUntil <= ServerState.Now && row.CompletedAt is null)
                     row.ActiveSeconds += (int)Math.Min(input.Seconds, elapsed);
                 row.LastHeartbeatAt = ServerState.Now;
+                await SqlPractice.Activity(db, row, session.LessonId, input.Seconds, state.ActivatedLessonId == lesson.Id && lesson.State == "running" && lesson.AllowSql && Profile(db, session.ProfileId).LockedUntil <= ServerState.Now);
                 row.LastActivityAt = ServerState.Now;
                 return new
                 {
@@ -129,12 +139,14 @@ public static class Routes
         api.MapPost("/tasks/{id}/hint", async (HttpContext ctx, string id, HintRequest input) =>
         {
             var session = state.Authorize(ctx, "student");
+            LessonRoutes.CheckContext(session, input.LessonId);
             await state.Write(async db =>
             {
                 var student = Profile(db, session.ProfileId);
+                await LessonRoutes.RequireWork(state, db, session, "sql");
                 if (student.LockedUntil > ServerState.Now)
                     throw new HttpFault(423, "Работа приостановлена.");
-                var row = await state.Assignment(db, student, id);
+                var row = await state.Assignment(db, student, id, session.LessonId, workScope: input.WorkScope);
                 var task = Catalog.Read(row.Json);
                 var times = Wire.Read<long[]>(row.HintsJson);
                 if (input.Index < 0 || input.Index >= task.Hints.Length)
@@ -145,6 +157,7 @@ public static class Routes
                 {
                     row.HintsJson = Wire.Write(times.Append(ServerState.Now).ToArray());
                     row.LastActivityAt = ServerState.Now;
+                    await SqlPractice.Hint(db, row, session.LessonId);
                 }
                 return true;
             });
@@ -156,12 +169,12 @@ public static class Routes
             return await state.Write(async db =>
             {
                 var student = Profile(db, session.ProfileId);
-                await state.Assignment(db, student, id);
+                var work = await state.Assignment(db, student, id, session.LessonId);
                 var policy = await db.Tasks.FindAsync(id);
                 if (policy?.Restricted == true && student.LockedUntil <= ServerState.Now)
                 {
                     student.LockedUntil = ServerState.Now + 30000;
-                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), StudentId = student.Id, TaskId = id, Kind = "clipboard", At = ServerState.Now });
+                    db.Attempts.Add(new() { Id = Guid.NewGuid().ToString("N"), LessonId = session.LessonId, WorkScope = ServerState.Scope(work), StudentId = student.Id, TaskId = id, Kind = "clipboard", At = ServerState.Now });
                 }
 
                 return new
@@ -245,6 +258,7 @@ public static class Routes
                     Slot = slot
                 };
                 db.Profiles.Add(row);
+                await LessonRoster.Enrolled(db, row);
                 return new
                 {
                     row.Id
@@ -295,6 +309,7 @@ public static class Routes
                 {
                     profile.Slot = (await db.Profiles.Where(p => p.Role == "student" && p.GroupId == input.GroupId).MaxAsync(p => (int? )p.Slot) ?? -1) + 1;
                     profile.GroupId = input.GroupId;
+                    await LessonRoster.Enrolled(db, profile);
                 }
 
                 return new
@@ -336,6 +351,12 @@ public static class Routes
                 var group = await db.Groups.FindAsync(id) ?? throw new HttpFault(404, "Группа не найдена.");
                 foreach (var p in await db.Profiles.Where(p => p.GroupId == id).ToArrayAsync())
                     p.GroupId = null;
+                foreach (var lesson in await db.LessonSessions.Where(s => s.GroupId == id).ToArrayAsync())
+                {
+                    lesson.GroupId = null;
+                    lesson.RegistrationOpen = false;
+                    if (!lesson.OpenToAllGroups) lesson.AdmissionOpen = false;
+                }
                 db.Groups.Remove(group);
                 return new
                 {
@@ -541,6 +562,8 @@ public static class Routes
                 state.Backups.Restore(name);
                 await state.Initialize();
                 state.Sessions.Clear();
+                state.ReviewAccess.Clear();
+                state.ActivatedLessonId = null;
                 return new
                 {
                     ok = true,

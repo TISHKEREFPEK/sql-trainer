@@ -38,6 +38,7 @@ public sealed class CircuitViewportTests
     public void CompactWorkspaceHasCenteredStarsAndNoConnectionInstruction(int width)
     {
         ThemeManager.Apply(new());var file=System.IO.Path.Combine(System.IO.Path.GetTempPath(),"classroom-compact-"+Guid.NewGuid().ToString("N"),"project.json");var window=new MainWindow(true,false){Width=width,Height=1000};using var view=new ElectronicsScreen(window,file);window.Preview(view);window.Show();window.UpdateLayout();
+        view.GetVisualDescendants().OfType<Button>().Single(b=>Avalonia.Automation.AutomationProperties.GetName(b)=="Панель кода").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
         var viewport=view.GetVisualDescendants().OfType<CircuitViewport>().Single();Assert.Empty(viewport.GetVisualAncestors().OfType<ScrollViewer>());Assert.True(viewport.Bounds.Height>500);
         Assert.DoesNotContain(view.GetVisualDescendants().OfType<TextBlock>(),t=>t.Text?.StartsWith("Соединение: нажмите")==true);
         var favorite=view.GetVisualDescendants().OfType<Button>().First(b=>Avalonia.Automation.AutomationProperties.GetName(b)?.StartsWith("Избранное:")==true);var icon=(PathIcon)favorite.Content!;var center=icon.TranslatePoint(new(icon.Bounds.Width/2,icon.Bounds.Height/2),favorite)!.Value;

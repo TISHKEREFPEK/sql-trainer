@@ -4,8 +4,8 @@ using Classroom.Contracts;
 using Classroom.Domain;
 
 namespace Classroom.Server;
-public record WorkerRequest(TaskDefinition Task, string? Snapshot, string Code, bool Check);
-public record WorkerReply(ExecutionDto Result, string? Snapshot);
+public record WorkerRequest(TaskDefinition Task, string? Snapshot, string Code, bool Check, bool CaptureState = false);
+public record WorkerReply(ExecutionDto Result, string? Snapshot, string? BeforeSnapshot = null, int EvidenceVersion = 0);
 public sealed class WorkerRunner(string executable)
 {
     readonly SemaphoreSlim slots = new(4, 4);
@@ -57,7 +57,10 @@ public sealed class WorkerRunner(string executable)
                 await error;
                 if (process.ExitCode != 0)
                     throw new IOException("Рабочий процесс проверки остановлен.");
-                return Wire.Read<WorkerReply>(text);
+                var reply = Wire.Read<WorkerReply>(text);
+                if (request.CaptureState && reply.EvidenceVersion != 1)
+                    throw new HttpFault(409, "Обновите SQL worker вместе с сервером: эта версия не сохраняет исходные состояния попыток.");
+                return reply;
             }
             catch (OperationCanceledException)
             {

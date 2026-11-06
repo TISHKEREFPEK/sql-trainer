@@ -6,9 +6,15 @@ New-Item -ItemType Directory -Path $RuntimePath -Force | Out-Null
 $cli = Join-Path $RuntimePath 'arduino-cli.exe'
 $node = Join-Path $RuntimePath 'node.exe'
 $core = Join-Path $RuntimePath 'data/packages/arduino/hardware/avr/1.8.6'
-$marker = Join-Path $RuntimePath 'offline-ready-v2.json'
-if ((Test-Path -LiteralPath $marker) -and (Test-Path -LiteralPath $cli) -and (Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $core)) {
-    Write-Output 'Offline Arduino Uno runtime is already prepared.'
+$marker = Join-Path $RuntimePath 'offline-ready-v4.json'
+$libraries = @{ 'Servo'='1.2.2'; 'Adafruit_SSD1306'='2.5.17'; 'Adafruit_GFX_Library'='1.13.0'; 'Adafruit_BusIO'='1.17.4' }
+$librariesReady = $true
+foreach ($library in $libraries.GetEnumerator()) {
+    $properties = Join-Path $RuntimePath "user/libraries/$($library.Key)/library.properties"
+    if (-not (Test-Path -LiteralPath $properties) -or -not (Select-String -LiteralPath $properties -Pattern "^version=$([regex]::Escape($library.Value))$" -Quiet)) { $librariesReady = $false }
+}
+if ($librariesReady -and (Test-Path -LiteralPath $marker) -and (Test-Path -LiteralPath $cli) -and (Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $core) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/sandbox-ready.json')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/bin/avr-g++.exe')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/ctags.exe'))) {
+    Write-Output 'Offline AVR runtime is already prepared.'
     return
 }
 function Download([string]$Url, [string]$File) { Invoke-WebRequest -Uri $Url -OutFile $File }
@@ -46,5 +52,7 @@ New-Item -ItemType Directory -Path $env:ARDUINO_DIRECTORIES_USER -Force | Out-Nu
 Run-Cli @('core', 'update-index')
 Run-Cli @('core', 'install', 'arduino:avr@1.8.6')
 Run-Cli @('lib', 'install', 'Servo@1.2.2')
-Set-Content -LiteralPath $marker -Value '{"version":2,"arduinoCli":"1.5.1","avrCore":"1.8.6","node":"24.19.0","avr8js":"0.21.0","servo":"1.2.2"}'
-Write-Output 'Prepared offline Arduino Uno toolchain. Internet is not needed for sketch compilation or simulation.'
+Run-Cli @('lib', 'install', '--no-deps', 'Adafruit BusIO@1.17.4', 'Adafruit GFX Library@1.13.0', 'Adafruit SSD1306@2.5.17')
+& (Join-Path $PSScriptRoot 'prepare-sandbox-compiler.ps1') -RuntimePath $RuntimePath
+Set-Content -LiteralPath $marker -Value '{"version":4,"arduinoCli":"1.5.1","avrCore":"1.8.6","avrGcc":"16.1.0","node":"24.19.0","avr8js":"0.21.0","servo":"1.2.2","adafruitSsd1306":"2.5.17","adafruitGfx":"1.13.0","adafruitBusIo":"1.17.4","sandbox":"AppContainer"}'
+Write-Output 'Prepared offline AVR toolchain. Internet is not needed for sketch compilation or simulation.'

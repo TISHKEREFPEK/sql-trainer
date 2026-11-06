@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
 public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1);
@@ -21,7 +21,7 @@ public sealed record CircuitProject
         WriteIndented = true, Converters = { new JsonStringEnumConverter() },
         RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true
     };
-    public string Serialize() => JsonSerializer.Serialize(this, Json);
+    public string Serialize() { Validate(); return JsonSerializer.Serialize(this, Json); }
     public static CircuitProject Parse(string text)
     {
         if (text.Length > 2_000_000) throw new InvalidDataException("Схема слишком большая (не более 2 МБ).");
@@ -30,6 +30,13 @@ public sealed record CircuitProject
     }
     public void Validate()
     {
+        try
+        {
+            var encoding = new System.Text.UTF8Encoding(false, true);
+            foreach (var text in new[] { Code, Name }.Concat(Favorites).Concat(Parts.SelectMany(p => (p.CustomPins ?? []).Append(p.Id).Append(p.ModelId ?? "")))
+                         .Concat(Wires.SelectMany(w => new[] { w.Id, w.From.Part, w.From.Pin, w.To.Part, w.To.Pin, w.Color }))) _ = encoding.GetByteCount(text);
+        }
+        catch (System.Text.EncoderFallbackException e) { throw new InvalidDataException("В тексте есть неполный символ. Завершите ввод или отмените изменение; новая схема не сохранена.", e); }
         if (Version != 1) throw new InvalidDataException("Версия схемы не поддерживается. Исходный файл сохранён без изменений.");
         if (Parts.Count > 80 || Wires.Count > 200 || Code.Length > 100_000 || Name.Length > 120 || Favorites.Count > 256 || Favorites.Any(f => f.Length > 100))
             throw new InvalidDataException("Превышен размер проекта: 80 компонентов, 200 проводов, 100 000 символов кода.");
@@ -37,6 +44,8 @@ public sealed record CircuitProject
             throw new InvalidDataException("Некорректный компонент или координаты.");
         foreach (var p in Parts)
         {
+            if(p.Kind==PartKind.LcdI2c&&(p.Value!=Math.Truncate(p.Value)||!(p.Value is >=32 and <=39 or >=56 and <=63)))throw new InvalidDataException("Адрес PCF8574: 0x20–0x27 или 0x38–0x3F.");
+            if(p.Kind==PartKind.OledI2c&&p.Value is not (60 or 61))throw new InvalidDataException("Адрес SSD1306: 0x3C или 0x3D.");
             if (!double.IsFinite(p.Scale) || p.Scale is < 0.4 or > 2 || p.QuarterTurns is < 0 or > 3)
                 throw new InvalidDataException("Размер детали: 40–200%, поворот: 0, 90, 180 или 270 градусов.");
             if (!double.IsFinite(p.Angle) || p.Angle is < 0 or >= 360 || !double.IsFinite(p.StretchX) || p.StretchX is < 0.1 or > 10 || !double.IsFinite(p.StretchY) || p.StretchY is < 0.1 or > 10)
@@ -52,7 +61,7 @@ public sealed record CircuitProject
         }
         if (Wires.Any(w => !Valid(w.From) || !Valid(w.To) || w.From == w.To || !System.Text.RegularExpressions.Regex.IsMatch(w.Color, "^#[0-9A-Fa-f]{6}$")) || Wires.Select(w => w.Id).Distinct().Count() != Wires.Count)
             throw new InvalidDataException("Провод ссылается на отсутствующий вывод.");
-        if (Parts.Count(p => p.Kind == PartKind.Uno) > 1) throw new InvalidDataException("В этой версии поддерживается одна Arduino Uno на схему.");
+        if (Parts.Count(p => p.Kind is PartKind.Uno or PartKind.Mega) > 1) throw new InvalidDataException("Пока доступна одна исполняемая плата на схему; остальные платы можно сохранить в режиме схемы.");
         if (Parts.Count(p => p.Kind == PartKind.Breadboard) > 2) throw new InvalidDataException("На схеме допускается до двух макетных плат.");
         bool Valid(Terminal pin) => Parts.Any(p => p.Id == pin.Part && PartLibrary.Pins(p).Contains(pin.Pin));
     }
@@ -72,6 +81,9 @@ public static class PartLibrary
     public static string Name(PartKind kind) => kind switch
     {
         PartKind.Uno => "Arduino Uno", PartKind.Resistor => "Резистор", PartKind.Led => "Светодиод",
+        PartKind.Mega => "Arduino Mega 2560",
+        PartKind.LcdI2c => "LCD · I2C",
+        PartKind.OledI2c => "OLED 128×64 · I2C",
         PartKind.Switch => "Кнопка", PartKind.Battery => "Источник питания", PartKind.Ground => "Земля",
         PartKind.Potentiometer => "Переменный резистор", PartKind.AnalogSensor => "Аналоговый датчик",
         PartKind.Breadboard => "Макетная плата", PartKind.Diode => "Диод", PartKind.Motor => "Двигатель", PartKind.Buzzer => "Пьезоизлучатель", PartKind.Servo => "Сервопривод", PartKind.Pot3 => "Потенциометр", _ => "Деталь для схемы"
@@ -79,6 +91,9 @@ public static class PartLibrary
     public static string[] Pins(PartKind kind) => kind switch
     {
         PartKind.Uno => Enumerable.Range(0, 14).Select(i => "D" + i).Concat(Enumerable.Range(0, 6).Select(i => "A" + i)).Concat(["5V", "GND"]).ToArray(),
+        PartKind.Mega => AvrBoards.Get("mega2560").PinNames.Concat(["5V","3V3","GND","VIN","IOREF"]).ToArray(),
+        PartKind.LcdI2c => ["GND","VCC","SDA","SCL"],
+        PartKind.OledI2c => ["VDD","GND","SCL","SDA"],
         PartKind.Led => ["A", "K"], PartKind.Ground => ["GND"],
         PartKind.Diode => ["A", "K"], PartKind.Motor or PartKind.Buzzer => ["+", "−"],
         PartKind.Servo => ["VCC", "GND", "SIG"], PartKind.Pot3 => ["1", "W", "3"],
@@ -116,15 +131,12 @@ public static class CircuitSolver
             foreach (var rail in new[] {"L+","L−","R+","R−"})
                 for (var row = 2; row <= 25; row++) Join(new(breadboard.Id, rail + "1"), new(breadboard.Id, rail + row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
-        var grounds = project.Parts.Where(p => p.Kind is PartKind.Ground or PartKind.Uno).Select(p => new Terminal(p.Id, "GND")).ToArray();
+        var grounds = project.Parts.Where(p => p.Kind is PartKind.Ground or PartKind.Uno or PartKind.Mega).Select(p => new Terminal(p.Id, "GND")).ToArray();
         if (grounds.Length == 0 && project.Parts.FirstOrDefault(p => p.Kind is PartKind.Battery or PartKind.AnalogSensor) is { } battery)
             grounds = [new(battery.Id, "−")];
         foreach (var ground in grounds.Skip(1)) Join(grounds[0], ground);
         var reference = grounds.Length > 0 ? Root(grounds[0]) : pins.FirstOrDefault();
         if (reference is not null) reference = Root(reference);
-        var nodes = pins.Select(Root).Distinct().Where(p => p != reference).Select((p, i) => (p, i)).ToDictionary(v => v.p, v => v.i);
-        int Index(Terminal p) => nodes.GetValueOrDefault(Root(p), -1);
-        double V(Terminal p, double[] values) => Index(p) < 0 ? 0 : values[Index(p)];
         var branches = new List<(CircuitPart Part, Terminal A, Terminal B, double G, double Source, bool Diode)>();
         foreach (var part in project.Parts)
         {
@@ -137,17 +149,29 @@ public static class CircuitSolver
                     branches.Add((part, T("W"), T("3"), 1 / Math.Max(1, part.Value * (1 - part.Setting)), 0, false)); break;
                 case PartKind.Motor: case PartKind.Buzzer: branches.Add((part, T("+"), T("−"), 1 / part.Value, 0, false)); break;
                 case PartKind.Servo: branches.Add((part, T("VCC"), T("GND"), 1.0 / 200, 0, false)); break;
+                case PartKind.LcdI2c:
+                    branches.Add((part,T("VCC"),T("GND"),1.0/1000,0,false));
+                    branches.Add((part,T("SDA"),T("VCC"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VCC"),1.0/4700,0,false));break;
+                case PartKind.OledI2c:
+                    branches.Add((part,T("VDD"),T("GND"),1.0/330,0,false));branches.Add((part,T("SDA"),T("VDD"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VDD"),1.0/4700,0,false));break;
                 case PartKind.Switch: branches.Add((part, T("1"), T("2"), part.Active ? 100 : 1e-10, 0, false)); break;
                 case PartKind.Led: case PartKind.Diode: branches.Add((part, T("A"), T("K"), 0, part.Value, true)); break;
                 case PartKind.Battery: case PartKind.AnalogSensor: branches.Add((part, T("+"), T("−"), 10, part.Value, false)); break;
-                case PartKind.Uno:
+                case PartKind.Uno: case PartKind.Mega:
                     branches.Add((part, T("5V"), T("GND"), 10, 5, false));
-                    for (var i = 0; i < 20; i++)
+                    if(part.Kind==PartKind.Mega){branches.Add((part,T("3V3"),T("GND"),10,3.3,false));branches.Add((part,T("IOREF"),T("GND"),10,5,false));}
+                    var board=AvrBoards.For(part)!;var names=board.PinNames;
+                    for (var i = 0; i < names.Length; i++)
                         if (digital is not null && i < digital.Length && (digital[i].Output || digital[i].PullUp))
-                            branches.Add((part, T(i < 14 ? "D" + i : "A" + (i - 14)), T("GND"), digital[i].Output ? 1.0 / 25 : 1.0 / 50000, digital[i].PullUp ? 5 : Math.Clamp(digital[i].Voltage, 0, 5), false));
+                            branches.Add((part, T(names[i]), T("GND"), digital[i].Output ? 1.0 / 25 : 1.0 / 50000, digital[i].PullUp ? 5 : Math.Clamp(digital[i].Voltage, 0, 5), false));
                     break;
             }
         }
+        // Unconnected GPIO/visual terminals have zero potential in this model;
+        // adding every floating terminal needlessly cubed the matrix cost.
+        var nodes = branches.SelectMany(b=>new[]{Root(b.A),Root(b.B)}).Distinct().Where(p=>p!=reference).Select((p,i)=>(p,i)).ToDictionary(v=>v.p,v=>v.i);
+        int Index(Terminal p) => nodes.GetValueOrDefault(Root(p), -1);
+        double V(Terminal p, double[] values) => Index(p)<0?0:values[Index(p)];
         var volts = new double[nodes.Count];
         var nonlinear = branches.Any(b => b.Diode);
         for (var iteration = 0; iteration < 80 && nodes.Count > 0; iteration++)
@@ -175,18 +199,21 @@ public static class CircuitSolver
         {
             var voltage = V(b.A, volts) - V(b.B, volts);
             var current = b.Diode ? Math.Max(0, (voltage - b.Source) / 10) : (voltage - b.Source) * b.G;
-            if (b.Part.Kind != PartKind.Uno) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
+            if (b.Part.Kind is not (PartKind.Uno or PartKind.Mega)&&(!CircuitI2c.IsDevice(b.Part)||b.A.Pin==CircuitI2c.PowerPin(b.Part))) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
                 b.Part.Kind == PartKind.Motor ? Math.Clamp(Math.Abs(voltage) / 5, 0, 1) * 100 : null);
             if (b.Part.Kind == PartKind.Led && current > 0.03) warnings.Add("Ток светодиода выше 30 мА. Добавьте или увеличьте резистор.");
-            if (Math.Abs(current) > 0.1 && b.Part.Kind is PartKind.Uno or PartKind.Battery) warnings.Add("Перегрузка источника или короткое замыкание. Проверьте проводку.");
+            if (Math.Abs(current) > 0.1 && b.Part.Kind is PartKind.Uno or PartKind.Mega or PartKind.Battery) warnings.Add("Перегрузка источника или короткое замыкание. Проверьте проводку.");
         }
         foreach (var servo in project.Parts.Where(p => p.Kind == PartKind.Servo))
         {
             var signal = Root(new(servo.Id, "SIG"));
             double? pulse = null;
-            foreach (var uno in project.Parts.Where(p => p.Kind == PartKind.Uno))
-                for (var i = 0; digital is not null && i < Math.Min(20, digital.Length); i++)
-                    if (Root(new(uno.Id, i < 14 ? "D" + i : "A" + (i - 14))) == signal) pulse = digital[i].PulseUs;
+            foreach (var mcu in project.Parts.Where(p => AvrBoards.For(p) is not null))
+            {
+                var names=AvrBoards.For(mcu)!.PinNames;
+                for (var i = 0; digital is not null && i < Math.Min(names.Length, digital.Length); i++)
+                    if (Root(new(mcu.Id,names[i])) == signal) pulse = digital[i].PulseUs;
+            }
             if (readings.TryGetValue(servo.Id, out var reading) && reading.Voltage > 3.5 && pulse is >= 500 and <= 2500)
                 readings[servo.Id] = reading with { Indicator = Math.Clamp((pulse.Value - 500) * 180 / 2000, 0, 180) };
         }

@@ -36,10 +36,17 @@ internal sealed class ElectronicsBackgroundDelivery : IAsyncDisposable
     {
         if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("Фоновая отправка через файловую ссылку не поддерживается. Исходники сохранены.");
     }
-    bool OwnedProject(string path, out string? assignment)
+    bool OwnedProject(string path, out string? assignment,out ElectronicsFreeContext? free)
     {
-        assignment = null; var name = Path.GetFileName(path);
+        assignment = null;free=null; var name = Path.GetFileName(path);
         if (name == identity + ".json") return true;
+        var prefix=identity+"-free-";
+        if(name.StartsWith(prefix,StringComparison.Ordinal)&&name.EndsWith(".json",StringComparison.Ordinal))
+        {
+            var keys=name[prefix.Length..^5].Split('-');
+            if(keys.Length!=2||!Guid.TryParseExact(keys[0],"N",out var project)||!Guid.TryParseExact(keys[1],"N",out var lesson))return false;
+            free=new(project.ToString("N"),lesson.ToString("N"),0);return true;
+        }
         if (!name.StartsWith(identity + "-", StringComparison.Ordinal) || !name.EndsWith(".json", StringComparison.Ordinal) ||
             !Guid.TryParseExact(name[(identity.Length + 1)..^5], "N", out var id)) return false;
         assignment = id.ToString("N"); return true;
@@ -66,28 +73,28 @@ internal sealed class ElectronicsBackgroundDelivery : IAsyncDisposable
             Regular(Path.GetDirectoryName(directory)!); Regular(directory);
             // Only direct, deterministically named files of the authenticated pupil.
             // No recursion through imported projects, backups or other profiles.
-            var candidates = new List<(string Directory, string? Index, string Project, string? Assignment, string? Error)>();
+            var candidates = new List<(string Directory, string? Index, string Project, string? Assignment,ElectronicsFreeContext? Free, string? Error)>();
             var projects = Directory.EnumerateDirectories(directory, identity + "*.json.history").Select(p => p[..^8])
                 .Concat(Directory.EnumerateFiles(directory, identity + "*.json.sync.json").Select(p => p[..^10])).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal);
             foreach (var project in projects)
             {
-                if (!OwnedProject(project, out var assignment) || isOpen(project)) continue;
+                if (!OwnedProject(project, out var assignment,out var free) || isOpen(project)) continue;
                 var folder = project + ".history";
                 try
                 {
                     if (Directory.Exists(folder))
                     {
                         Regular(folder); var indexes = Directory.EnumerateFiles(folder, "c-*.json").Order(StringComparer.Ordinal).ToArray();
-                        if (indexes.Length > 0) { foreach (var index in indexes) candidates.Add((folder, index, project, assignment, null)); continue; }
+                        if (indexes.Length > 0) { foreach (var index in indexes) candidates.Add((folder, index, project, assignment,free, null)); continue; }
                         // Never turn an incomplete history (pages/backup/temp) into a
                         // purported legacy copy. Keep every fragment for recovery.
                         if (Directory.EnumerateFileSystemEntries(folder).Any(p => Path.GetFileName(p) != "open.lock"))
                             throw new InvalidDataException("Найдены файлы истории без исходного индекса. Требуется восстановить историю; исходники сохранены.");
                     }
-                    candidates.Add((folder, null, project, assignment, null));
+                    candidates.Add((folder, null, project, assignment,free, null));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
-                { candidates.Add((folder, null, project, assignment, e.Message)); }
+                { candidates.Add((folder, null, project, assignment,free, e.Message)); }
             }
             if (candidates.Count == 0) return new(true);
             for (var checkedCount = 0; checkedCount < candidates.Count; checkedCount++)
@@ -101,11 +108,13 @@ internal sealed class ElectronicsBackgroundDelivery : IAsyncDisposable
                     if (item.Error is { } error) throw new InvalidDataException(error);
                     using var history = item.Index is null ? null : ElectronicsHistoryStore.OpenExisting(item.Directory, Path.GetFileName(item.Index), profileId, fingerprint);
                     if (history is not null && history.Context.AssignmentId != item.Assignment) throw new InvalidDataException("История и имя персональной копии не совпадают. Исходники сохранены.");
+                    if(history is not null&&(history.Context.FreeProjectId!=item.Free?.ProjectId||item.Free is not null&&history.Context.LessonId!=item.Free.LessonId))
+                        throw new InvalidDataException("История свободного проекта не совпадает с исходной копией занятия. Исходники сохранены.");
                     if (history is null) { Directory.CreateDirectory(item.Directory); Regular(item.Directory); }
                     using var legacyLease = history is null ? new FileStream(Path.Combine(item.Directory, "open.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None) : null;
                     ElectronicsSync? sync = null;
                     using (sync = new ElectronicsSync(api, outbox, _ => { }, startTimer: false, assignmentId: item.Assignment,
-                        journalDelivery: history is null ? null : token => { Bound(); return history.Deliver(api, sync!.ClientId, token); }, journalPending: history is null ? null : () => history.Pending, requireExisting: true))
+                        journalDelivery: history is null ? null : token => { Bound(); return history.Deliver(api, sync!.ClientId, token); }, journalPending: history is null ? null : () => history.Pending, requireExisting: true,freeContext:item.Free))
                     {
                         if (history?.DeliveryState is { } binding && binding.ClientId != sync.ClientId)
                             throw new InvalidDataException("Очередь копии изменилась. История сохранена; требуется восстановить её исходную привязку.");

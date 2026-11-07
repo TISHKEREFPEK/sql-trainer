@@ -22,8 +22,9 @@ public static class ElectronicsOutboxRecovery
     static void BoundPath(string project, ElectronicsHistoryContext context)
     {
         if (!Guid.TryParseExact(context.ProfileId, "N", out _) || context.Fingerprint.Length != 64 || !context.Fingerprint.All(Uri.IsHexDigit) ||
-            !Guid.TryParseExact(context.LessonId, "N", out _) || context.AssignmentId is { } assigned && !Guid.TryParseExact(assigned, "N", out _)) throw new InvalidDataException("Некорректный контекст восстановления.");
-        var name = SqlSyncHash.Text(context.Fingerprint + ":" + context.ProfileId) + (context.AssignmentId is { } id ? "-" + id : "") + ".json";
+            !Guid.TryParseExact(context.LessonId, "N", out _) || context.AssignmentId is { } assigned && !Guid.TryParseExact(assigned, "N", out _) ||
+            context.FreeProjectId is { } free&&(context.AssignmentId is not null||!Guid.TryParseExact(free,"N",out _))) throw new InvalidDataException("Некорректный контекст восстановления.");
+        var name = context.ProjectFileName;
         if (Path.GetFileName(project) != name || Path.GetFileName(Path.GetDirectoryName(project)) != "electronics") throw new InvalidDataException("Восстановление доступно для исходной персональной копии ученика.");
         Regular(Path.GetDirectoryName(project)!); Regular(Path.GetDirectoryName(Path.GetDirectoryName(project)!)!);
     }
@@ -44,7 +45,7 @@ public static class ElectronicsOutboxRecovery
         var source = project + ".sync.json"; var folder = project + ".history";
         var known = File.Exists(source) || File.Exists(source + ".backup") || Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any(p => Path.GetFileName(p) != "open.lock");
         if (!known) return false; // A genuinely new work has no prior identity to recover.
-        try { ElectronicsSync.ReadOutbox(source, context.AssignmentId); }
+        try { ElectronicsSync.ReadOutbox(source, context.AssignmentId,freeContext:context.FreeContext()); }
         catch (Exception e) when (Expected(e)) { throw new ElectronicsOutboxRecoveryException(Inspect(project, context, e.Message), taskId); }
         return true;
     }
@@ -57,7 +58,7 @@ public static class ElectronicsOutboxRecovery
             sourceHash = Hash(source); var bindings = ElectronicsHistoryStore.InspectBindings(project + ".history", context);
             bindingsHash = bindings.Hash; client = bindings.ClientId;
             backupHash = Hash(source + ".backup");
-            if (backupHash is not null) backup = ElectronicsSync.ReadOutbox(source + ".backup", context.AssignmentId, client);
+            if (backupHash is not null) backup = ElectronicsSync.ReadOutbox(source + ".backup", context.AssignmentId, client,context.FreeContext());
         }
         catch (Exception e) when (Expected(e)) { backup = null; problem += " Резервную копию нельзя применить: " + e.Message; }
         return new(project, context, sourceHash, backupHash, bindingsHash, client, backup, problem);
@@ -73,7 +74,7 @@ public static class ElectronicsOutboxRecovery
                 throw new IOException("Файлы изменились после просмотра. Откройте восстановление заново.");
         }
         if (candidate.Backup is null || candidate.BackupHash is null || candidate.BindingsHash is null) throw new InvalidDataException("Проверенной резервной копии нет.");
-        Unchanged(); var restored = ElectronicsSync.ReadOutbox(backupFile, candidate.Context.AssignmentId, candidate.ClientId); restored.Dirty = true;
+        Unchanged(); var restored = ElectronicsSync.ReadOutbox(backupFile, candidate.Context.AssignmentId, candidate.ClientId,candidate.Context.FreeContext()); restored.Dirty = true;
         var bytes = System.Text.Encoding.UTF8.GetBytes(Wire.Write(restored));
         if (bytes.Length > 64_000_000) throw new InvalidDataException("Восстановленная очередь превышает допустимый размер. Исходники сохранены.");
         var temporary = source + ".restore-" + Guid.NewGuid().ToString("N"); string? archive = null;

@@ -2,7 +2,13 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public sealed record ElectronicsHistoryContext(string ProfileId, string Fingerprint, string LessonId, string? AssignmentId);
+public sealed record ElectronicsHistoryContext(string ProfileId, string Fingerprint, string LessonId, string? AssignmentId,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? FreeProjectId = null)
+{
+    public ElectronicsFreeContext? FreeContext(int revision = 0) => FreeProjectId is null ? null : new(FreeProjectId, LessonId, revision);
+    [System.Text.Json.Serialization.JsonIgnore] public string ProjectFileName => SqlSyncHash.Text(Fingerprint + ":" + ProfileId) +
+        (FreeProjectId is { } project ? "-free-" + project + "-" + LessonId : AssignmentId is { } assigned ? "-" + assigned : "") + ".json";
+}
 
 // Learning data only: no API instance, passwords, tokens or teacher solutions.
 public sealed partial class ElectronicsHistoryStore : IDisposable
@@ -28,7 +34,8 @@ public sealed partial class ElectronicsHistoryStore : IDisposable
     public ElectronicsHistoryStore(string directory, ElectronicsHistoryContext context, string? initialJson)
     {
         if (!Guid.TryParseExact(context.ProfileId, "N", out _) || context.Fingerprint.Length != 64 || !context.Fingerprint.All(Uri.IsHexDigit) ||
-            !Guid.TryParseExact(context.LessonId, "N", out _) || context.AssignmentId is { } assignment && !Guid.TryParseExact(assignment, "N", out _))
+            !Guid.TryParseExact(context.LessonId, "N", out _) || context.AssignmentId is { } assignment && !Guid.TryParseExact(assignment, "N", out _) ||
+            context.FreeProjectId is { } free && (context.AssignmentId is not null || !Guid.TryParseExact(free, "N", out _)))
             throw new InvalidDataException("Некорректный владелец истории схемы.");
         this.directory = Path.GetFullPath(directory); this.context = context;
         Directory.CreateDirectory(this.directory); Regular(this.directory);
@@ -74,7 +81,7 @@ public sealed partial class ElectronicsHistoryStore : IDisposable
             var text = File.ReadAllText(source); var envelope = Wire.Read<Envelope>(text);
             if (envelope.Version != 1 || envelope.Payload is null || SqlSyncHash.Text(envelope.Payload) != envelope.Hash) throw new InvalidDataException("Повреждён индекс истории; сначала требуется восстановить журнал.");
             var index = Wire.Read<Index>(envelope.Payload);
-            if (index.Version != 1 || index.Context is null || index.Context.ProfileId != context.ProfileId || index.Context.Fingerprint != context.Fingerprint || index.Context.AssignmentId != context.AssignmentId ||
+            if (index.Version != 1 || index.Context is null || index.Context.ProfileId != context.ProfileId || index.Context.Fingerprint != context.Fingerprint || index.Context.AssignmentId != context.AssignmentId || index.Context.FreeProjectId != context.FreeProjectId || context.FreeProjectId is not null && index.Context.LessonId != context.LessonId ||
                 Path.GetFileName(source) != "c-" + SqlSyncHash.Text(Wire.Write(index.Context)) + ".json" || index.Pages is null || index.Tail is null) throw new InvalidDataException("Не удалось подтвердить владельца и контекст истории.");
             if (index.Delivery is { } delivery)
             {

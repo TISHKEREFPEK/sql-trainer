@@ -14,6 +14,8 @@ public sealed class ElectronicsSync : IDisposable
         public bool Dirty { get; set; }
         [JsonRequired] public List<ElectronicsReportRequest> Reports { get; set; }=[];
         public string? AssignmentId { get; set; }
+        [JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public ElectronicsFreeContext? FreeContext { get; set; }
+        [JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public ElectronicsSyncRequest? InFlight { get; set; }
     }
     readonly ClassroomApi api;
     readonly string path;
@@ -29,10 +31,11 @@ public sealed class ElectronicsSync : IDisposable
     volatile bool busy,disposed,lastFailure;
     bool durable;
     internal string? DeliveryError {get;private set;}
-    bool DraftPending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0;}}
+    bool DraftPending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0||state.InFlight is not null;}}
     bool StoragePending {get{lock(stateGate)return !durable;}}
     public bool Pending => StoragePending || DraftPending || journalPending?.Invoke() == true;
     public string ClientId {get{lock(stateGate)return state.ClientId;}}
+    public ElectronicsFreeContext? FreeContext {get{lock(stateGate)return state.FreeContext;}}
     public bool PendingSubmission {get{lock(stateGate)return state.Reports.Any(r=>r.Kind=="submitted");}}
     public bool HasStaleSubmission(int currentVersion)
     {
@@ -46,16 +49,20 @@ public sealed class ElectronicsSync : IDisposable
         {
             var stale = state.Reports.Where(r => r.Kind == "submitted" && (r.ExpectedAssignmentVersion ?? 1) != currentVersion).ToArray();
             if (stale.Length == 0) return;
-            File.WriteAllText(path + ".superseded-" + Guid.NewGuid().ToString("N") + ".json", Wire.Write(new { state.ClientId, state.AssignmentId, Reports = stale }));
+            if(busy)throw new IOException("Дождитесь завершения текущей передачи перед созданием новой сдачи.");
+            File.WriteAllText(path + ".superseded-" + Guid.NewGuid().ToString("N") + ".json", Wire.Write(new { state.ClientId, state.AssignmentId, state.FreeContext,state.InFlight, Reports = stale }));
+            if(state.InFlight?.Reports.Any(r=>stale.Any(s=>s.Id==r.Id))==true)state.InFlight=null;
             state.Reports.RemoveAll(r => stale.Any(s => s.Id == r.Id)); Persist();
         }
     }
     public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null,
-        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false,string? expectedClientId=null)
+        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false,string? expectedClientId=null,ElectronicsFreeContext? freeContext=null)
     {
         this.api=api; this.path=path; this.status=status; this.receipt=receipt; this.journalDelivery=journalDelivery; this.journalPending=journalPending;
-        if(File.Exists(path)) { state=ReadOutbox(path,assignmentId,expectedClientId); durable=true; }
+        ValidateContext(assignmentId,freeContext);
+        if(File.Exists(path)) { state=ReadOutbox(path,assignmentId,expectedClientId,freeContext); durable=true; }
         else if(requireExisting || expectedClientId is not null) throw new InvalidDataException("Отсутствует исходная очередь схемы. История сохранена; требуется восстановление привязки.");
+        else state.FreeContext=freeContext;
         state.AssignmentId=assignmentId;
         // Re-send the local draft once after login, including after server restore.
         state.Dirty=true;
@@ -63,11 +70,19 @@ public sealed class ElectronicsSync : IDisposable
         if(startTimer) Start();
     }
     internal void Start() { ObjectDisposedException.ThrowIf(disposed,this); timer.Start(); }
-    internal static Outbox ReadOutbox(string path,string? assignmentId,string? expectedClientId=null)
+    static void ValidateContext(string? assignmentId,ElectronicsFreeContext? free)
+    {
+        if(free is not null&&(assignmentId is not null||free.ExpectedRevision<0||!Guid.TryParseExact(free.ProjectId,"N",out _)||!Guid.TryParseExact(free.LessonId,"N",out _)))
+            throw new InvalidDataException("Некорректная привязка свободной схемы.");
+    }
+    internal static Outbox ReadOutbox(string path,string? assignmentId,string? expectedClientId=null,ElectronicsFreeContext? freeContext=null)
     {
         if(File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("Очередь через файловую ссылку не поддерживается.");
         if(new FileInfo(path).Length>64_000_000) throw new InvalidDataException("Слишком большая очередь.");
         var value=Wire.Read<Outbox>(File.ReadAllText(path));
+        ValidateContext(assignmentId,value.FreeContext);ValidateContext(assignmentId,freeContext);
+        if(value.FreeContext?.ProjectId!=freeContext?.ProjectId||value.FreeContext?.LessonId!=freeContext?.LessonId)
+            throw new InvalidDataException("Очередь относится к другому свободному проекту или исходному занятию. Исходный файл сохранён.");
         if(value.AssignmentId!=assignmentId) throw new InvalidDataException("Очередь относится к другой работе. Исходный файл сохранён.");
         if(!Guid.TryParseExact(value.ClientId,"N",out _)||value.Sequence<1||value.Reports is null||value.Reports.Count>100||string.IsNullOrEmpty(value.ProjectJson)) throw new InvalidDataException("Некорректная очередь результатов.");
         if(expectedClientId is not null && value.ClientId!=expectedClientId) throw new InvalidDataException("Очередь не соответствует исходной ClientId-привязке истории.");
@@ -78,6 +93,15 @@ public sealed class ElectronicsSync : IDisposable
             if(report is null || report.ProjectJson is null || report.Detail is null || !Guid.TryParseExact(report.Id,"N",out _) || !ids.Add(report.Id) ||
                 !ElectronicsProjectFormat.ReportKinds.Contains(report.Kind)||report.Detail.Length>16000||report.ExpectedAssignmentVersion is < 1) throw new InvalidDataException("Некорректный отчёт.");
             CircuitProject.Parse(report.ProjectJson);
+        }
+        if(value.InFlight is { } pending)
+        {
+            if(value.FreeContext is null||pending.FreeContext!=value.FreeContext||pending.AssignmentId!=assignmentId||pending.ClientId!=value.ClientId||
+                pending.Sequence<1||pending.Sequence>value.Sequence||string.IsNullOrEmpty(pending.ProjectJson)||pending.Reports is null||pending.Reports.Length>10||
+                pending.Reports.Any(r=>!value.Reports.Contains(r))||pending.Reports.Select(r=>r.Id).Distinct().Count()!=pending.Reports.Length||
+                pending.Sequence==value.Sequence&&pending.ProjectJson!=value.ProjectJson)
+                throw new InvalidDataException("Не совпадает исходный пакет передачи свободной схемы. Очередь сохранена.");
+            CircuitProject.Parse(pending.ProjectJson);
         }
         return value;
     }
@@ -98,7 +122,7 @@ public sealed class ElectronicsSync : IDisposable
         if(disposed) return;
         if(!ElectronicsProjectFormat.ReportKinds.Contains(kind)) throw new InvalidDataException("Неизвестный вид результата.");
         if(reportId is not null && !Guid.TryParseExact(reportId,"N",out _)) throw new InvalidDataException("Некорректный номер результата.");
-        if(state.AssignmentId is not null && kind=="submitted" && state.Reports.Any(r=>r.Kind=="submitted")) return;
+        if((state.AssignmentId is not null||state.FreeContext is not null) && kind=="submitted" && state.Reports.Any(r=>r.Kind=="submitted")) return;
         if(state.Reports.Count>=100 || state.Reports.Sum(r=>r.ProjectJson.Length)+(long)json.Length>16_000_000) throw new InvalidDataException("Очередь результатов заполнена. Подключитесь к преподавателю и повторите отправку; локальная схема сохранена.");
         var explanation = detail.Length>16000 ? detail[..15900]+"\n[Сообщение сокращено. Полный текст сохранён в приложении ученика.]" : detail;
         state.Reports.Add(new(reportId??Guid.NewGuid().ToString("N"),kind,json,explanation,expectedAssignmentVersion)); Persist(); status("Результат сохранён локально и ожидает передачи.");
@@ -106,7 +130,7 @@ public sealed class ElectronicsSync : IDisposable
     }
     async Task<bool> FlushDraft(CancellationToken cancellation)
     {
-        ElectronicsReportRequest[] reports;long sequence;string json,client;string? assignmentId;
+        ElectronicsReportRequest[] reports;long sequence;string json,client;string? assignmentId;ElectronicsFreeContext? freeContext;
         lock(stateGate)
         {
             if(!durable && !disposed && !busy && state.ProjectJson.Length>0)
@@ -116,15 +140,31 @@ public sealed class ElectronicsSync : IDisposable
                 { lastFailure=true; DeliveryError="Очередь передачи не записана на ПК: " + e.Message; status(DeliveryError); return false; }
             }
             if(disposed||busy||!DraftPending||state.ProjectJson.Length==0) return !DraftPending;
-            busy=true;reports=state.Reports.Take(10).ToArray();sequence=state.Sequence;json=state.ProjectJson;client=state.ClientId;assignmentId=state.AssignmentId;
+            var request=state.InFlight??new ElectronicsSyncRequest(state.ClientId,state.Sequence,state.ProjectJson,state.Reports.Take(10).ToArray(),state.AssignmentId,state.FreeContext);
+            if(state.FreeContext is not null&&state.InFlight is null)
+            {
+                state.InFlight=request;
+                try{Persist();}
+                catch(Exception e)when(e is IOException or InvalidDataException or UnauthorizedAccessException)
+                {lastFailure=true;DeliveryError="Исходный пакет передачи не записан на ПК: "+e.Message;status(DeliveryError);return false;}
+            }
+            busy=true;reports=request.Reports;sequence=request.Sequence;json=request.ProjectJson;client=request.ClientId;assignmentId=request.AssignmentId;freeContext=request.FreeContext;
         }
         try
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token,cancellation); timeout.CancelAfter(TimeSpan.FromSeconds(5));
-            var ack=await api.Send<ElectronicsSyncReceipt>(HttpMethod.Put,"electronics/work",new ElectronicsSyncRequest(client,sequence,json,reports,assignmentId),timeout.Token);
+            var ack=await api.Send<ElectronicsSyncReceipt>(HttpMethod.Put,"electronics/work",new ElectronicsSyncRequest(client,sequence,json,reports,assignmentId,freeContext),timeout.Token);
             lock(stateGate)
             {
             if(disposed) return false;
+            if(freeContext is not null)
+            {
+                if(ack.Sequence!=sequence||ack.ProjectRevision is null||ack.ProjectRevision<freeContext.ExpectedRevision||
+                    (long)ack.ProjectRevision>1L+freeContext.ExpectedRevision||ack.ReportIds is null||!ack.ReportIds.ToHashSet().SetEquals(reports.Select(r=>r.Id)))
+                    throw new InvalidDataException("Сервер не подтвердил исходную версию свободной схемы. Очередь сохранена.");
+                state.FreeContext=freeContext with { ExpectedRevision=ack.ProjectRevision.Value };
+                state.InFlight=null;
+            }
             lastFailure=false;
             if(state.Sequence==sequence && state.ProjectJson==json) state.Dirty=false;
             var ids=ack.ReportIds.ToHashSet(); state.Reports.RemoveAll(r=>ids.Contains(r.Id)); Persist();

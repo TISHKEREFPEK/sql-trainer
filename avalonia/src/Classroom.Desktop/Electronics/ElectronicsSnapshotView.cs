@@ -18,7 +18,7 @@ public sealed class ElectronicsSnapshotView : UserControl
     readonly Canvas canvas=new(){Background=Brushes.WhiteSmoke};
     readonly CircuitViewport viewport;
     double zoom=1;
-    public ElectronicsSnapshotView(ElectronicsSnapshot snapshot)
+    public ElectronicsSnapshotView(ElectronicsSnapshot snapshot,string? caption=null)
     {
         project=CircuitProject.Parse(snapshot.ProjectJson);
         var scroll=viewport=new CircuitViewport(canvas);viewport.ZoomRequested=(anchor,scale)=>{var world=viewport.ToWorld(anchor);zoom=scale;viewport.SetView(zoom,new(anchor.X-world.X*zoom,anchor.Y-world.Y*zoom));Draw();};
@@ -29,10 +29,12 @@ public sealed class ElectronicsSnapshotView : UserControl
         Ui.BindBrush(code,TextEditor.BackgroundProperty,"Editor");Ui.BindBrush(code,TextEditor.ForegroundProperty,"EditorInk");code.Padding=new Thickness(16,20);code.SyntaxHighlighting=CodeAppearance.CppForTheme();
         void ApplyTheme()=>code.SyntaxHighlighting=CodeAppearance.CppForTheme();AttachedToVisualTree+=(_,_)=>{ThemeManager.Changed+=ApplyTheme;ApplyTheme();};DetachedFromVisualTree+=(_,_)=>ThemeManager.Changed-=ApplyTheme;
         var detail=Ui.Input(snapshot.Detail.Length==0?"Подробных сообщений нет.":snapshot.Detail,true); detail.IsReadOnly=true;
-        var tabs=new TabControl{ItemsSource=new[]{new TabItem{Header="Схема · снимок",Content=scene},new TabItem{Header="Код ученика",Content=code},new TabItem{Header="Сообщение запуска",Content=detail}}};
+        var panels=new List<TabItem>{new(){Header="Схема · снимок",Content=scene},new(){Header=caption is null?"Код ученика":"Код",Content=code}};
+        if(caption is null)panels.Add(new(){Header="Сообщение запуска",Content=detail});
+        var tabs=new TabControl{ItemsSource=panels};
         var root=new Grid{RowDefinitions=new("Auto,Auto,*"),RowSpacing=8};
         root.Children.Add(Ui.Text(project.Name.Length==0?"Без названия":project.Name,20));
-        var description=Ui.Text(ElectronicsLabels.Kind(snapshot.Kind)+" · получено "+ElectronicsLabels.Date(snapshot.At)+(snapshot.Kind=="history"?"\nВосстановленный снимок истории. Просмотр не меняет работу ученика.":"\nПросмотр без редактирования. Состояние запуска сообщено приложением ученика; это не оценка задания."),12); Grid.SetRow(description,1);root.Children.Add(description); Grid.SetRow(tabs,2);root.Children.Add(tabs); Content=root;
+        var description=Ui.Text(caption??(ElectronicsLabels.Kind(snapshot.Kind)+" · получено "+ElectronicsLabels.Date(snapshot.At)+(snapshot.Kind=="history"?"\nВосстановленный снимок истории. Просмотр не меняет работу ученика.":"\nПросмотр без редактирования. Состояние запуска сообщено приложением ученика; это не оценка задания.")),12); Grid.SetRow(description,1);root.Children.Add(description); Grid.SetRow(tabs,2);root.Children.Add(tabs); Content=root;
         Draw(); var first=true; scroll.LayoutUpdated+=(_,_)=>{if(first&&scroll.Bounds.Width>150){first=false;Fit(scroll);}};
     }
     Task Change(double delta){var anchor=new Point(viewport.Bounds.Width/2,viewport.Bounds.Height/2);var world=viewport.ToWorld(anchor);zoom=Math.Clamp(zoom+delta,0.1,3);viewport.SetView(zoom,new(anchor.X-world.X*zoom,anchor.Y-world.Y*zoom));Draw();return Task.CompletedTask;}

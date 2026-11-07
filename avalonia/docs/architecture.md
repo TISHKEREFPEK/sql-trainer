@@ -1,5 +1,11 @@
 # Архитектура Avalonia Classroom
 
+## Выбор локального поколения свободного проекта · 7 ноября 2026
+
+ElectronicsCopySelection управляет проверяемым `.active.json` для базового контекста ученика/проекта/занятия. SelectServer создаёт отдельные mirror/outbox/history с LocalCopyId, новой ClientId и CAS-ревизией сервера; старые файлы не перемещаются и не удаляются. Указатель меняется только после записи нового состояния, под отдельным selection lease и lease исходной/новой истории. ReadArchives валидирует и воспроизводит неактивные истории без отправки. Nullable LocalCopyId исключается из JSON при null, сохраняя старые индексы.
+
+ElectronicsVersionChoiceView использует readonly ElectronicsSnapshotView с корректной подписью локального/серверного снимка. MainWindow останавливает source.Sync, повторно проверяет сервер/сеанс, освобождает source до выбора и открывает результат по durable Resolve. Закрытие страницы возобновляет source; поздние callbacks игнорируются. BackgroundDelivery и активный Sync не доставляют невыбранные копии; Recovery.Restore не может восстановить архив как активную очередь. Потерянный/невалидный указатель не активирует старую сдачу. Архив UI пока внутри текущего занятия, восстановление указателя остаётся отдельным открытым сценарием. Модель БД/контракты сервера прежние.
+
 ## Свободная электроника в Results · 7 ноября 2026
 
 ClassroomResults.FreeElectronics агрегирует metadata-only проекции Projects/Practice/Reports/Works без больших JSON в сводке. В lesson берутся имя/даты/черновик из конкретной Practice и отчёты с тем же LessonId; в course — одна строка на logical project. Required=false исключает их из mandatory Total/Completed/AveragePercent и Difficulties. Unknown active/hints/violations остаются null. Создание/первое известное сохранение — известный старт, а не придуманное открытие редактора.

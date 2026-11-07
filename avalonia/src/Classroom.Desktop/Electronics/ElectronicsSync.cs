@@ -23,13 +23,14 @@ public sealed class ElectronicsSync : IDisposable
     readonly Action<ElectronicsSyncReceipt>? receipt;
     readonly Func<CancellationToken, Task<bool>>? journalDelivery;
     readonly Func<bool>? journalPending;
+    readonly Func<bool>? canDeliver;
     volatile bool historyBusy;
     readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(2)};
     readonly CancellationTokenSource lifetime=new();
     readonly object stateGate=new();
     Outbox state=new();
-    volatile bool busy,disposed,lastFailure;
-    bool durable;
+    volatile bool busy,disposed,lastFailure,paused;
+    bool durable,automatic;
     internal string? DeliveryError {get;private set;}
     bool DraftPending {get{lock(stateGate)return state.Dirty||state.Reports.Count>0||state.InFlight is not null;}}
     bool StoragePending {get{lock(stateGate)return !durable;}}
@@ -56,9 +57,9 @@ public sealed class ElectronicsSync : IDisposable
         }
     }
     public ElectronicsSync(ClassroomApi api,string path,Action<string> status,bool startTimer=true,string? assignmentId=null,Action<ElectronicsSyncReceipt>? receipt=null,
-        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false,string? expectedClientId=null,ElectronicsFreeContext? freeContext=null)
+        Func<CancellationToken, Task<bool>>? journalDelivery=null,Func<bool>? journalPending=null,bool requireExisting=false,string? expectedClientId=null,ElectronicsFreeContext? freeContext=null,Func<bool>? canDeliver=null)
     {
-        this.api=api; this.path=path; this.status=status; this.receipt=receipt; this.journalDelivery=journalDelivery; this.journalPending=journalPending;
+        this.api=api; this.path=path; this.status=status; this.receipt=receipt; this.journalDelivery=journalDelivery; this.journalPending=journalPending;this.canDeliver=canDeliver;
         ValidateContext(assignmentId,freeContext);
         if(File.Exists(path)) { state=ReadOutbox(path,assignmentId,expectedClientId,freeContext); durable=true; }
         else if(requireExisting || expectedClientId is not null) throw new InvalidDataException("Отсутствует исходная очередь схемы. История сохранена; требуется восстановление привязки.");
@@ -69,7 +70,14 @@ public sealed class ElectronicsSync : IDisposable
         timer.Tick+=async(_,_)=>await Flush();
         if(startTimer) Start();
     }
-    internal void Start() { ObjectDisposedException.ThrowIf(disposed,this); timer.Start(); }
+    internal void Start() { ObjectDisposedException.ThrowIf(disposed,this);automatic=true;if(!paused)timer.Start(); }
+    internal async Task<bool> PauseDelivery()
+    {
+        lock(stateGate){if(disposed)return false;paused=true;timer.Stop();}
+        for(var i=0;(busy||historyBusy)&&!disposed&&i<400;i++)await Task.Delay(25);
+        return !disposed&&!busy&&!historyBusy;
+    }
+    internal void ResumeDelivery(){lock(stateGate){if(disposed)return;paused=false;if(automatic)timer.Start();}}
     static void ValidateContext(string? assignmentId,ElectronicsFreeContext? free)
     {
         if(free is not null&&(assignmentId is not null||free.ExpectedRevision<0||!Guid.TryParseExact(free.ProjectId,"N",out _)||!Guid.TryParseExact(free.LessonId,"N",out _)))
@@ -139,7 +147,7 @@ public sealed class ElectronicsSync : IDisposable
                 catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException)
                 { lastFailure=true; DeliveryError="Очередь передачи не записана на ПК: " + e.Message; status(DeliveryError); return false; }
             }
-            if(disposed||busy||!DraftPending||state.ProjectJson.Length==0) return !DraftPending;
+            if(disposed||paused||busy||!DraftPending||state.ProjectJson.Length==0) return !DraftPending;
             var request=state.InFlight??new ElectronicsSyncRequest(state.ClientId,state.Sequence,state.ProjectJson,state.Reports.Take(10).ToArray(),state.AssignmentId,state.FreeContext);
             if(state.FreeContext is not null&&state.InFlight is null)
             {
@@ -186,11 +194,18 @@ public sealed class ElectronicsSync : IDisposable
     public async Task<bool> Flush(CancellationToken cancellation=default)
     {
         DeliveryError=null;
+        try
+        {if(canDeliver?.Invoke()==false)throw new InvalidDataException("Выбрана другая локальная копия. Эта очередь и история сохранены без отправки.");}
+        catch(Exception e)when(e is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {lastFailure=true;DeliveryError=e.Message;if(!disposed)status(DeliveryError);return false;}
         var draft = await FlushDraft(cancellation);
-        lock(stateGate) { if(!durable) return false; }
-        if (disposed || journalDelivery is null) return draft;
-        if (historyBusy) return false;
-        historyBusy = true;
+        lock(stateGate)
+        {
+            if(!durable||disposed||paused)return false;
+            if(journalDelivery is null)return draft;
+            if(historyBusy)return false;
+            historyBusy=true;
+        }
         try
         {
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token,cancellation); limit.CancelAfter(TimeSpan.FromSeconds(8));
@@ -213,8 +228,8 @@ public sealed class ElectronicsSync : IDisposable
         async Task<bool> Idle()
         {
             var waited=busy||historyBusy;
-            for(var i=0;(busy||historyBusy)&&!disposed&&i<400;i++)await Task.Delay(25);
-            return !disposed&&!busy&&!historyBusy&&!(waited&&(lastFailure||DeliveryError is not null));
+            for(var i=0;(busy||historyBusy)&&!disposed&&!paused&&i<400;i++)await Task.Delay(25);
+            return !disposed&&!paused&&!busy&&!historyBusy&&!(waited&&(lastFailure||DeliveryError is not null));
         }
         if(!await Idle())return false;
         for(var batch=0;Pending&&!disposed&&batch<11;batch++)

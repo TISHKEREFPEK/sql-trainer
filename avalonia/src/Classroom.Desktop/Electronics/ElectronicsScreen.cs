@@ -32,6 +32,15 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     bool MaySubmit => assignment?.CanSubmit ?? freeProject?.CanSubmit ?? true;
     int? PermissionVersion => assignment?.StateVersion ?? freeProject?.StateVersion;
     internal string SavePath => savePath;
+    internal bool IsDisposed => disposed;
+    internal ElectronicsHistoryContext? HistoryContext => history?.Context;
+    internal string CurrentProjectJson => project.Serialize();
+    internal async Task PauseDelivery()
+    {
+        ObjectDisposedException.ThrowIf(disposed,this);Suspend();
+        if(sync is not null&&!await sync.PauseDelivery())throw new IOException("Не удалось дождаться завершения передачи. Повторите сравнение версий позже.");
+    }
+    internal void ResumeDelivery(){if(!disposed)sync?.ResumeDelivery();}
     public bool AssignmentAvailable => assignment?.Available ?? true;
     readonly ElectronicsResultsView? resultsView;
     readonly TextBlock syncStatus = Ui.Text("",12);
@@ -68,7 +77,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     CancellationTokenSource? compilation;
     PinDrive[]? outputs;
 
-    public ElectronicsScreen(MainWindow owner, string path, ClassroomApi? classroom = null, bool teacher = false, ElectronicsAssignmentDto? assignment = null,ElectronicsProjectDto? freeProject=null)
+    public ElectronicsScreen(MainWindow owner, string path, ClassroomApi? classroom = null, bool teacher = false, ElectronicsAssignmentDto? assignment = null,ElectronicsProjectDto? freeProject=null,string? localCopyId=null)
     {
         this.owner = owner; savePath = path;
         this.assignment = assignment;
@@ -78,7 +87,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
         if (assignment is not null) project = CircuitProject.Parse(assignment.ProjectJson);
         if(freeProject is not null)project=CircuitProject.Parse(freeProject.ProjectJson);
-        ElectronicsHistoryContext? recoveryContext = classroom?.ProfileId is { } studentId && !teacher ? new(studentId, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id,freeProject?.Id) : null;
+        ElectronicsHistoryContext? recoveryContext = classroom?.ProfileId is { } studentId && !teacher ? new(studentId, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id,freeProject?.Id,localCopyId) : null;
         var priorQueue = recoveryContext is not null && ElectronicsOutboxRecovery.Ensure(path, recoveryContext, assignment?.TaskId);
         string? expectedClientId = null;
         if (priorQueue && !File.Exists(path)) project = CircuitProject.Parse(ElectronicsSync.ReadOutbox(path + ".sync.json", assignment?.Id,freeContext:recoveryContext?.FreeContext()).ProjectJson);
@@ -92,7 +101,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         if (classroom?.ProfileId is { } profile && !teacher)
         {
-            history = new ElectronicsHistoryStore(path + ".history", new(profile, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id,freeProject?.Id), loadError is null ? project.Serialize() : null);
+            history = new ElectronicsHistoryStore(path + ".history", new(profile, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id,freeProject?.Id,localCopyId), loadError is null ? project.Serialize() : null);
             try
             {
                 try
@@ -118,7 +127,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             {
                 sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,startTimer:false,assignmentId:assignment?.Id,receipt:OnReceipt,
                     journalDelivery:history is null ? null : token=>history.Deliver(classroom,sync!.ClientId,token),journalPending:history is null ? null : ()=>history.Pending,
-                    requireExisting:priorQueue,expectedClientId:expectedClientId,freeContext:recoveryContext?.FreeContext(freeProject?.Revision??0));
+                    requireExisting:priorQueue,expectedClientId:expectedClientId,freeContext:recoveryContext?.FreeContext(freeProject?.Revision??0),
+                    canDeliver:freeProject is null?null:()=>string.Equals(ElectronicsCopySelection.Resolve(Path.GetDirectoryName(savePath)!,recoveryContext!).Path,savePath,StringComparison.OrdinalIgnoreCase));
             }
             catch (Exception e) when (recoveryContext is not null && (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException))
             { history?.Dispose(); throw new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(path,recoveryContext,e.Message),assignment?.TaskId); }
@@ -209,6 +219,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             var review = Ui.Scroll(reviewStatus); review.MaxHeight = 110;
             var condition = Ui.Card(assignment is not null?Ui.Stack(Ui.Text(assignment.Title, 20), statement, review):
                 Ui.Stack(Ui.Row(Ui.Button("Мои схемы",()=>owner.Safe(()=>owner.EnterLesson(new("electronics")))),
+                    Ui.Button("Версии и копии",()=>owner.Safe(()=>owner.CompareFreeProject(this))),
                     Ui.Button("Сохранить отдельную схему",()=>owner.Safe(async()=>{Save();await owner.CopyFreeProject(project.Serialize());}))),review));
             root.Children.Add(condition);
             Grid.SetRow(projectBar, 1); Grid.SetRow(body, 2); Grid.SetRow(footer, 3);

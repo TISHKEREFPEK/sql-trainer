@@ -597,37 +597,88 @@ public sealed class MainWindow : Window
     async Task OpenFreeProject(string id,bool restoreLocal)
     {
         if(api?.ProfileId is null||api.LessonId is null)throw new InvalidDataException("Сначала войдите в занятие.");
-        var client=api;var token=client.Token;var lesson=client.LessonId;
+        var client=api;var token=client.Token;var lesson=client.LessonId;var origin=body.Content;
         await StopElectronicsDelivery();
         try
         {
+            if(!ReferenceEquals(body.Content,origin))return;
             var work=restoreLocal?await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}"):
                 await client.Post<ElectronicsProjectDto>($"electronics/projects/{id}/open",new ElectronicsProjectOpen(lesson));
-            if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson)return;
+            if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||!ReferenceEquals(body.Content,origin))return;
             var context=new ElectronicsHistoryContext(client.ProfileId!,client.Connection.Fingerprint,lesson,null,id);
+            var selected=ElectronicsCopySelection.Resolve(Path.Combine(StudentDataDirectory,"electronics"),context);
             var key=id+":"+lesson;
             electronics?.Suspend();
             if(screen is ElectronicsProjectPicker picker)picker.Dispose();
+            if(freeElectronics.TryGetValue(key,out var previous)&&!string.Equals(previous.SavePath,selected.Path,StringComparison.OrdinalIgnoreCase))
+            {previous.Dispose();freeElectronics.Remove(key);}
             if(!freeElectronics.TryGetValue(key,out var editor))
             {
-                editor=new ElectronicsScreen(this,Path.Combine(StudentDataDirectory,"electronics",context.ProjectFileName),client,freeProject:work);
+                editor=new ElectronicsScreen(this,selected.Path,client,freeProject:work,localCopyId:selected.Context.LocalCopyId);
                 freeElectronics.Add(key,editor);
             }
             else editor.UpdateFreeProject(work);
-            electronics=editor;screen=editor;body.Content=editor;Protect(false);
+            ClosePage(false);electronics=editor;screen=editor;body.Content=editor;Protect(false);
         }
         finally{StartElectronicsDelivery();}
         await RefreshLessonPermission();
     }
-    internal async Task CopyFreeProject(string json)
+    internal async Task CopyFreeProject(string json,Func<bool>? stillCurrent=null)
     {
         if(api is null)throw new InvalidDataException("Сначала войдите в занятие.");
+        if(stillCurrent?.Invoke()==false)return;
         var client=api;var token=client.Token;var lesson=client.LessonId;
         var project=CircuitProject.Parse(json);var name=project.Name+" (копия)";project.Name=name[..Math.Min(name.Length,120)];
         var id=Guid.NewGuid().ToString("N");
         await client.Put<ElectronicsProjectDto>("electronics/projects/"+id,new ElectronicsProjectCreate(project.Serialize()));
-        if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson)return;
+        if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||stillCurrent?.Invoke()==false)return;
         await OpenFreeProject(id);
+    }
+    internal async Task CompareFreeProject(ElectronicsScreen source)
+    {
+        if(api?.ProfileId is null||source.FreeProjectId is not { }id||source.HistoryContext is not { }context||source.IsDisposed)return;
+        var client=api;var token=client.Token;var lesson=client.LessonId;
+        bool Current()=>ReferenceEquals(api,client)&&client.Token==token&&client.LessonId==lesson&&ReferenceEquals(screen,source)&&!source.IsDisposed;
+        ElectronicsVersionChoiceView? view=null;
+        await StopElectronicsDelivery();
+        try
+        {
+            await source.PauseDelivery();
+            var server=await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}");
+            if(!Current()||!ReferenceEquals(body.Content,source)){source.ResumeDelivery();return;}
+            var directory=Path.GetDirectoryName(source.SavePath)!;
+            var archives=ElectronicsCopySelection.ReadArchives(directory,context,source.SavePath);
+            view=new ElectronicsVersionChoiceView(this,source.CurrentProjectJson,server,async shown=>
+            {
+                if(!Current()||view!.IsDisposed)return;
+                var fresh=await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}");
+                if(!Current()||view.IsDisposed)return;
+                if(fresh.ProjectJson!=shown.ProjectJson)
+                {view.UpdateServer(fresh);Message("Серверная версия изменилась. Просмотрите её перед выбором.");return;}
+                await StopElectronicsDelivery();
+                if(!Current()||view.IsDisposed){StartElectronicsDelivery();return;}
+                // Pause completed before showing this view. Release the old
+                // history lease only after the explicit choice and fresh read.
+                source.Dispose();freeElectronics.Remove(id+":"+lesson);electronics=null;ClosePage(false);
+                body.Content=Ui.Text("Открываем выбранную версию…");
+                try{ElectronicsCopySelection.SelectServer(directory,context,source.SavePath,fresh,client);}
+                catch
+                {
+                    // Resolve the durable pointer, including a commit whose
+                    // final journal write failed. Never restore a disposed view.
+                    try{await OpenFreeProject(id,restoreLocal:true);}finally{StartElectronicsDelivery();}throw;
+                }
+                await OpenFreeProject(id,restoreLocal:true);
+            },async json=>
+            {
+                if(!Current()||view!.IsDisposed)return;
+                await CopyFreeProject(json,()=>Current()&&!view.IsDisposed);
+            },()=>ClosePage(),archives);
+            ShowPage("Версии и копии схемы",view,()=>{view.Dispose();source.ResumeDelivery();});
+            await RefreshLessonPermission();
+        }
+        catch{view?.Dispose();source.ResumeDelivery();throw;}
+        finally{StartElectronicsDelivery();}
     }
 
     async Task SwitchStudentSubject(string subject, string? taskId = null)
@@ -677,7 +728,8 @@ public sealed class MainWindow : Window
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
         if (electronicsRecoveryOpen) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
-        var currentAllowed = body.Content is ElectronicsScreen or ElectronicsProjectPicker ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
+        var currentAllowed = body.Content is ElectronicsScreen or ElectronicsProjectPicker || pageOpen&&pageReturnContent is ElectronicsScreen
+            ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
         if (body.Content is ElectronicsScreen circuit && circuit.AssignmentId is { } workId)
         {
             circuit.UpdateAssignmentStatus(await api.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + workId + "/status"));

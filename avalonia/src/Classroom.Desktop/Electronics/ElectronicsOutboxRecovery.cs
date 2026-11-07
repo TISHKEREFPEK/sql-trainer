@@ -21,9 +21,7 @@ public static class ElectronicsOutboxRecovery
     }
     static void BoundPath(string project, ElectronicsHistoryContext context)
     {
-        if (!Guid.TryParseExact(context.ProfileId, "N", out _) || context.Fingerprint.Length != 64 || !context.Fingerprint.All(Uri.IsHexDigit) ||
-            !Guid.TryParseExact(context.LessonId, "N", out _) || context.AssignmentId is { } assigned && !Guid.TryParseExact(assigned, "N", out _) ||
-            context.FreeProjectId is { } free&&(context.AssignmentId is not null||!Guid.TryParseExact(free,"N",out _))) throw new InvalidDataException("Некорректный контекст восстановления.");
+        context.Validate();
         var name = context.ProjectFileName;
         if (Path.GetFileName(project) != name || Path.GetFileName(Path.GetDirectoryName(project)) != "electronics") throw new InvalidDataException("Восстановление доступно для исходной персональной копии ученика.");
         Regular(Path.GetDirectoryName(project)!); Regular(Path.GetDirectoryName(Path.GetDirectoryName(project)!)!);
@@ -43,9 +41,14 @@ public static class ElectronicsOutboxRecovery
     internal static bool Ensure(string project, ElectronicsHistoryContext context, string? taskId)
     {
         var source = project + ".sync.json"; var folder = project + ".history";
-        var known = File.Exists(source) || File.Exists(source + ".backup") || Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any(p => Path.GetFileName(p) != "open.lock");
+        var known = context.FreeProjectId is not null&&File.Exists(project)||File.Exists(source) || File.Exists(source + ".backup") || Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any(p => Path.GetFileName(p) != "open.lock");
         if (!known) return false; // A genuinely new work has no prior identity to recover.
-        try { ElectronicsSync.ReadOutbox(source, context.AssignmentId,freeContext:context.FreeContext()); }
+        try
+        {
+            if(context.FreeProjectId is not null&&(!Directory.Exists(folder)||!Directory.EnumerateFiles(folder,"c-*.json").Any()))
+                throw new InvalidDataException("У свободного проекта отсутствует исходный индекс истории. Исходные файлы сохранены.");
+            ElectronicsSync.ReadOutbox(source, context.AssignmentId,freeContext:context.FreeContext());
+        }
         catch (Exception e) when (Expected(e)) { throw new ElectronicsOutboxRecoveryException(Inspect(project, context, e.Message), taskId); }
         return true;
     }
@@ -55,6 +58,8 @@ public static class ElectronicsOutboxRecovery
         try
         {
             BoundPath(project, context); using var lease = Lease(project); var source = project + ".sync.json";
+            if(context.FreeProjectId is not null&&!Directory.EnumerateFiles(project+".history","c-*.json").Any())
+                throw new InvalidDataException("Исходная история свободного проекта отсутствует; одной копии очереди недостаточно для восстановления.");
             sourceHash = Hash(source); var bindings = ElectronicsHistoryStore.InspectBindings(project + ".history", context);
             bindingsHash = bindings.Hash; client = bindings.ClientId;
             backupHash = Hash(source + ".backup");
@@ -65,7 +70,11 @@ public static class ElectronicsOutboxRecovery
     }
     public static string? Restore(ElectronicsOutboxCandidate candidate)
     {
-        var project = Path.GetFullPath(candidate.ProjectFile); BoundPath(project, candidate.Context); using var lease = Lease(project);
+        var project = Path.GetFullPath(candidate.ProjectFile); BoundPath(project, candidate.Context);
+        using var selectionLease=candidate.Context.FreeProjectId is null?null:ElectronicsCopySelection.Lock(Path.GetDirectoryName(project)!,candidate.Context);
+        if(candidate.Context.FreeProjectId is not null&&!string.Equals(ElectronicsCopySelection.Resolve(Path.GetDirectoryName(project)!,candidate.Context).Path,project,StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Выбрана другая локальная копия. Обновите страницу восстановления.");
+        using var lease = Lease(project);
         var source = project + ".sync.json"; var backupFile = source + ".backup";
         void Unchanged()
         {

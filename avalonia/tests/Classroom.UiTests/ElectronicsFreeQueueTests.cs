@@ -78,6 +78,7 @@ public sealed class ElectronicsFreeQueueTests
         Assert.Equal(Wire.Write(new{legacy.ProfileId,legacy.Fingerprint,legacy.LessonId,legacy.AssignmentId}),Wire.Write(legacy));
         Assert.Equal(SqlSyncHash.Text(legacy.Fingerprint+":"+legacy.ProfileId)+".json",legacy.ProjectFileName);
         var free=legacy with{FreeProjectId=Guid.NewGuid().ToString("N")};
+        Assert.Equal(Wire.Write(new{free.ProfileId,free.Fingerprint,free.LessonId,free.AssignmentId,free.FreeProjectId}),Wire.Write(free));
         Assert.NotEqual(free.ProjectFileName,(free with{LessonId=Guid.NewGuid().ToString("N")}).ProjectFileName);
     }
 

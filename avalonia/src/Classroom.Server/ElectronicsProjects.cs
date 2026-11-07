@@ -40,7 +40,8 @@ public static class ElectronicsProjects
             return state.Write(async db=>
             {
                 await LessonRoutes.RequireWork(state,db,session,"electronics");var project=await Own(db,session,id);var snapshot=await db.ElectronicsPractice.FindAsync(session.ProfileId,id,lesson);
-                if(snapshot is null)db.ElectronicsPractice.Add(Snapshot(project,lesson,ServerState.Now));else snapshot.OpenedAt??=ServerState.Now;
+                if(snapshot is null)db.ElectronicsPractice.Add(Snapshot(project,lesson,ServerState.Now));
+                else if(snapshot.OpenedAt is null){snapshot.OpenedAt=ServerState.Now;snapshot.UpdatedAt=Math.Max(snapshot.UpdatedAt,snapshot.OpenedAt.Value);}
                 return Dto(project);
             });
         });

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Classroom.Storage;
 
-public static class DatabaseHealth
+public static partial class DatabaseHealth
 {
     // Validation reads metadata/JSON only. Student SQL is never executed here.
     public static void Validate(ClassroomDb db)
@@ -265,6 +265,7 @@ public static class DatabaseHealth
                 previous = review.Id;
             }
         }
+        ValidateFreeElectronics(db, profiles);
     }
 
     static TaskDefinition Task(string id, string json)

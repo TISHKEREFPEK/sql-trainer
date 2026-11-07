@@ -7,8 +7,9 @@ public record ElectronicsSyncRequest(string ClientId,long Sequence,string Projec
 public record ElectronicsSyncReceipt(long Sequence,long UpdatedAt,string[] ReportIds,string? AssignmentState=null,bool? CanSubmit=null,int? AssignmentVersion=null,int? ProjectRevision=null);
 public record ElectronicsProjectCreate(string ProjectJson);
 public record ElectronicsProjectOpen(string LessonId);
-public record ElectronicsProjectDto(string Id,string Name,string ProjectJson,int Revision,string State,bool CanSubmit,int StateVersion,long CreatedAt,long UpdatedAt);
+public record ElectronicsProjectDto(string Id,string Name,string ProjectJson,int Revision,string State,bool CanSubmit,int StateVersion,long CreatedAt,long UpdatedAt,ElectronicsReviewDecision? LatestReview=null);
 public record ElectronicsProjectSummary(string Id,string Name,int Revision,string State,bool CanSubmit,int StateVersion,long UpdatedAt);
+public record ElectronicsProjectStatus(string Id,string State,bool CanSubmit,int StateVersion,ElectronicsReviewDecision? LatestReview=null);
 public record ElectronicsProjectList(ElectronicsProjectSummary[] Projects,bool HasMore,int NextOffset);
 public record ElectronicsStudentResult(string StudentId,string Login,string? GroupId,int WorkCount,int Submitted,int Compiled,int Errors,long? LastAt,string? LastKind);
 public record ElectronicsOverview(GroupDto[] Groups,ElectronicsStudentResult[] Students);

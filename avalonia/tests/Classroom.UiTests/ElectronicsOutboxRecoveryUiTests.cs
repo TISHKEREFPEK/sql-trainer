@@ -35,7 +35,7 @@ public sealed class ElectronicsOutboxRecoveryUiTests
         var header = File.ReadAllBytes(w.Header); var backup = File.ReadAllBytes(w.Queue + ".backup"); var window = await Window(f, w, width);
         try
         {
-            await window.Safe(() => window.EnterLesson(new("electronics"))); window.UpdateLayout();
+            await window.Safe(() => window.EnterLesson(new("electronics"),legacyElectronics:true)); window.UpdateLayout();
             Assert.Single(window.GetVisualDescendants().OfType<ElectronicsOutboxRecoveryView>()); Assert.Equal("broken", File.ReadAllText(w.Queue));
             Assert.Equal(header, File.ReadAllBytes(w.Header)); Assert.Equal(backup, File.ReadAllBytes(w.Queue + ".backup"));
             Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(w.Queue)!, "*.damaged-*"));
@@ -64,7 +64,7 @@ public sealed class ElectronicsOutboxRecoveryUiTests
         try
         {
             var sql = window.GetVisualDescendants().OfType<TextEditor>().Single(); sql.Text = "SELECT 29 AS retained;";
-            await window.Safe(() => window.EnterLesson(new("electronics"))); window.UpdateLayout();
+            await window.Safe(() => window.EnterLesson(new("electronics"),legacyElectronics:true)); window.UpdateLayout();
             await f.Student.Login(new("student", "ui-test", "synthetic-student-password")); Click(window, "Восстановить предыдущую очередь"); await Task.Delay(100);
             Assert.Equal("broken", File.ReadAllText(w.Queue)); Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(w.Queue)!, "*.damaged-*"));
             Click(window, "Назад"); window.UpdateLayout();
@@ -81,7 +81,7 @@ public sealed class ElectronicsOutboxRecoveryUiTests
         try
         {
             await f.Admin.Post<LessonView>($"teacher/lessons/{w.Context.LessonId}/pause");
-            await window.Safe(()=>window.EnterLesson(new("electronics"))); await Permission(window); window.UpdateLayout();
+            await window.Safe(()=>window.EnterLesson(new("electronics"),legacyElectronics:true)); await Permission(window); window.UpdateLayout();
             var button=window.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()=="Восстановить предыдущую очередь"); Assert.True(button.IsEffectivelyEnabled);
             Click(window,"Восстановить предыдущую очередь"); await Wait(()=>typeof(MainWindow).GetField("electronics",Flags)!.GetValue(window) is ElectronicsScreen);
             await Permission(window); window.UpdateLayout(); Assert.False(window.GetVisualDescendants().OfType<ElectronicsScreen>().Single().IsEffectivelyEnabled);
@@ -100,7 +100,7 @@ public sealed class ElectronicsOutboxRecoveryUiTests
         var window=await Window(f,w,900);
         try
         {
-            await window.EnterLesson(new("electronics")); window.UpdateLayout(); var circuit=window.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
+            await window.EnterLesson(new("electronics"),legacyElectronics:true); window.UpdateLayout(); var circuit=window.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
             Assert.Equal(CircuitProject.Parse(old.ProjectJson).Code,circuit.GetVisualDescendants().OfType<TextEditor>().Single().Text);
             Assert.Equal(old.ProjectJson,File.ReadAllText(file)); Assert.True(await circuit.Synchronize());
             var teacher=await f.Admin.Get<ElectronicsStudentDetail>($"teacher/electronics/{f.StudentId}"); Assert.Equal(old.ClientId,Assert.Single(teacher.Works).ClientId); Assert.Equal(report,Assert.Single(teacher.Reports).Id);

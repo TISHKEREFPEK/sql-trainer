@@ -32,6 +32,7 @@ public sealed class MainWindow : Window
     ElectronicsScreen? electronics;
     ElectronicsScreen? practiceElectronics;
     readonly Dictionary<string, ElectronicsScreen> assignedElectronics = new();
+    readonly Dictionary<string, ElectronicsScreen> freeElectronics = new();
     StudentHomeControl? studentHome;
     object? pageReturnContent;
     Action? pageCleanup;
@@ -64,7 +65,7 @@ public sealed class MainWindow : Window
     {
         if (teacher || api?.ProfileId is null || login?.Role != "student") return;
         electronicsDelivery ??= new ElectronicsBackgroundDelivery(StudentDataDirectory, api, path =>
-            assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Any(editor => editor is not null && string.Equals(editor.SavePath, path, StringComparison.OrdinalIgnoreCase)));
+            assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Any(editor => editor is not null && string.Equals(editor.SavePath, path, StringComparison.OrdinalIgnoreCase)));
         electronicsDeliveryPoll.Start();
     }
     async Task StopElectronicsDelivery()
@@ -221,7 +222,10 @@ public sealed class MainWindow : Window
             {
                 Bound(); ElectronicsOutboxRecovery.Restore(candidate);
                 Message("Очередь восстановлена с прежними номерами результатов. Исходный файл сохранён отдельно, если он существовал.");
-                ClosePage(); await EnterLesson(new("electronics"), e.TaskId);
+                ClosePage();
+                if(candidate.Context.FreeProjectId is { } project)
+                {if(client.LessonId!=candidate.Context.LessonId)await EnterLesson(new("electronics"));else await OpenFreeProject(project,restoreLocal:true);}
+                else await EnterLesson(new("electronics"), e.TaskId,legacyElectronics:e.TaskId is null);
             }), () => Safe(() =>
             {
                 Bound(); return Task.FromException(new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(candidate.ProjectFile, candidate.Context, "Повторная проверка файлов."), e.TaskId));
@@ -353,8 +357,8 @@ public sealed class MainWindow : Window
         body.IsEnabled = true; lessonBlock.IsVisible = false;
         screen?.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
-        foreach (var editor in assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
-        assignedElectronics.Clear(); practiceElectronics = null;
+        foreach (var editor in assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
+        assignedElectronics.Clear(); freeElectronics.Clear(); practiceElectronics = null;
         electronics = null;
         screen = null;
         student = null;
@@ -540,8 +544,9 @@ public sealed class MainWindow : Window
         };
     }
 
-    internal async Task EnterLesson(LessonDestination? destination, string? taskId = null)
+    internal async Task EnterLesson(LessonDestination? destination, string? taskId = null,bool legacyElectronics=false)
     {
+        if(screen is ElectronicsProjectPicker previousPicker)previousPicker.Dispose();
         if (destination?.StandId == "electronics")
         {
             await StopElectronicsDelivery();
@@ -561,10 +566,16 @@ public sealed class MainWindow : Window
                     else editor.UpdateAssignment(work);
                     electronics = editor;
                 }
-                else
+                else if(legacyElectronics)
                 {
                     practiceElectronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"), api);
                     electronics = practiceElectronics;
+                }
+                else
+                {
+                    electronics?.Suspend();
+                    var picker=new ElectronicsProjectPicker(this,api,OpenFreeProject,()=>EnterLesson(new("electronics"),legacyElectronics:true));
+                    screen=picker;body.Content=picker;await picker.Refresh();return;
                 }
                 screen = electronics;
                 body.Content = electronics;
@@ -582,6 +593,43 @@ public sealed class MainWindow : Window
         Protect(student.Restricted);
     }
 
+    internal Task OpenFreeProject(string id)=>OpenFreeProject(id,restoreLocal:false);
+    async Task OpenFreeProject(string id,bool restoreLocal)
+    {
+        if(api?.ProfileId is null||api.LessonId is null)throw new InvalidDataException("Сначала войдите в занятие.");
+        var client=api;var token=client.Token;var lesson=client.LessonId;
+        await StopElectronicsDelivery();
+        try
+        {
+            var work=restoreLocal?await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}"):
+                await client.Post<ElectronicsProjectDto>($"electronics/projects/{id}/open",new ElectronicsProjectOpen(lesson));
+            if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson)return;
+            var context=new ElectronicsHistoryContext(client.ProfileId!,client.Connection.Fingerprint,lesson,null,id);
+            var key=id+":"+lesson;
+            electronics?.Suspend();
+            if(screen is ElectronicsProjectPicker picker)picker.Dispose();
+            if(!freeElectronics.TryGetValue(key,out var editor))
+            {
+                editor=new ElectronicsScreen(this,Path.Combine(StudentDataDirectory,"electronics",context.ProjectFileName),client,freeProject:work);
+                freeElectronics.Add(key,editor);
+            }
+            else editor.UpdateFreeProject(work);
+            electronics=editor;screen=editor;body.Content=editor;Protect(false);
+        }
+        finally{StartElectronicsDelivery();}
+        await RefreshLessonPermission();
+    }
+    internal async Task CopyFreeProject(string json)
+    {
+        if(api is null)throw new InvalidDataException("Сначала войдите в занятие.");
+        var client=api;var token=client.Token;var lesson=client.LessonId;
+        var project=CircuitProject.Parse(json);var name=project.Name+" (копия)";project.Name=name[..Math.Min(name.Length,120)];
+        var id=Guid.NewGuid().ToString("N");
+        await client.Put<ElectronicsProjectDto>("electronics/projects/"+id,new ElectronicsProjectCreate(project.Serialize()));
+        if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson)return;
+        await OpenFreeProject(id);
+    }
+
     async Task SwitchStudentSubject(string subject, string? taskId = null)
     {
         if (api is null) return;
@@ -597,6 +645,7 @@ public sealed class MainWindow : Window
     internal async Task ShowStudentHome()
     {
         if (api is null) return;
+        if(screen is ElectronicsProjectPicker picker)picker.Dispose();
         if (student is not null) await student.SaveDraft();
         electronics?.Suspend(); ClosePage(false); Protect(false);
         studentHome ??= new(this, api, (subject, id) => SwitchStudentSubject(subject, id));
@@ -628,12 +677,14 @@ public sealed class MainWindow : Window
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
         if (electronicsRecoveryOpen) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
-        var currentAllowed = screen is ElectronicsScreen ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
+        var currentAllowed = body.Content is ElectronicsScreen or ElectronicsProjectPicker ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
         if (body.Content is ElectronicsScreen circuit && circuit.AssignmentId is { } workId)
         {
             circuit.UpdateAssignmentStatus(await api.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + workId + "/status"));
             currentAllowed &= circuit.AssignmentAvailable;
         }
+        if(body.Content is ElectronicsScreen free&&free.FreeProjectId is { } projectId)
+            free.UpdateFreeProjectStatus(await api.Get<ElectronicsProjectStatus>($"electronics/projects/{projectId}/status"));
         var canWork = lesson.CanWork && currentAllowed;
         if (body.Content is StudentHomeControl home)
         {
@@ -797,7 +848,7 @@ public sealed class MainWindow : Window
         await StopElectronicsDelivery();
         ClosePage(false);
         screen?.Dispose();
-        foreach (var editor in assignedElectronics.Values.Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
+        foreach (var editor in assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
         if (host is not null)
             await host.Stop(api);

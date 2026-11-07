@@ -53,7 +53,9 @@ public sealed class LessonRoutingTests
             var homeOutput=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??AppContext.BaseDirectory; Directory.CreateDirectory(homeOutput);
             using(var frame=student.CaptureRenderedFrame()) frame!.Save(Path.Combine(homeOutput,"student-home-1320.png"));
             Click(student,"SQL"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentScreen>().Any());
-            Click(student,"Электроника"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
+            Click(student,"Электроника"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsProjectPicker>().Any());student.UpdateLayout();
+            student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Name=="FreeProjectName").Text="Схема маршрутизации";
+            Click(student,"Создать схему");await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
             Assert.DoesNotContain(student.GetVisualDescendants(),v=>v is StudentScreen);
             var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
             var poll=(Avalonia.Threading.DispatcherTimer)typeof(MainWindow).GetField("lessonPoll",flags)!.GetValue(student)!;

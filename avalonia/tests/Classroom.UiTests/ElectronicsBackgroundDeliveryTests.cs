@@ -165,7 +165,7 @@ public sealed class ElectronicsBackgroundDeliveryTests
             Assert.Empty(window.GetType().GetField("assignedElectronics", flags)!.GetValue(window) as System.Collections.IDictionary ?? throw new InvalidOperationException());
             Assert.Null(typeof(MainWindow).GetField("electronics", flags)!.GetValue(window));
             var expectedCode = CircuitProject.Parse(File.ReadAllText(path)).Code;
-            await window.EnterLesson(new("electronics"));
+            await window.EnterLesson(new("electronics"),legacyElectronics:true);
             window.UpdateLayout();
             var circuit = Assert.IsType<ElectronicsScreen>(typeof(MainWindow).GetField("electronics", flags)!.GetValue(window));
             Assert.Equal(expectedCode, circuit.GetVisualDescendants().OfType<TextEditor>().Single().Text);

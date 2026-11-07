@@ -25,8 +25,12 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     readonly ElectronicsSync? sync;
     readonly ElectronicsHistoryStore? history;
     ElectronicsAssignmentDto? assignment;
+    ElectronicsProjectDto? freeProject;
     readonly Button? submitButton;
     public string? AssignmentId => assignment?.Id;
+    public string? FreeProjectId => freeProject?.Id;
+    bool MaySubmit => assignment?.CanSubmit ?? freeProject?.CanSubmit ?? true;
+    int? PermissionVersion => assignment?.StateVersion ?? freeProject?.StateVersion;
     internal string SavePath => savePath;
     public bool AssignmentAvailable => assignment?.Available ?? true;
     readonly ElectronicsResultsView? resultsView;
@@ -64,17 +68,20 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     CancellationTokenSource? compilation;
     PinDrive[]? outputs;
 
-    public ElectronicsScreen(MainWindow owner, string path, ClassroomApi? classroom = null, bool teacher = false, ElectronicsAssignmentDto? assignment = null)
+    public ElectronicsScreen(MainWindow owner, string path, ClassroomApi? classroom = null, bool teacher = false, ElectronicsAssignmentDto? assignment = null,ElectronicsProjectDto? freeProject=null)
     {
         this.owner = owner; savePath = path;
         this.assignment = assignment;
+        this.freeProject=freeProject;
+        if(freeProject is not null&&(assignment is not null||teacher||classroom?.LessonId is null))throw new InvalidDataException("Некорректный контекст свободного проекта.");
         try
         {
         if (assignment is not null) project = CircuitProject.Parse(assignment.ProjectJson);
-        ElectronicsHistoryContext? recoveryContext = classroom?.ProfileId is { } studentId && !teacher ? new(studentId, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id) : null;
+        if(freeProject is not null)project=CircuitProject.Parse(freeProject.ProjectJson);
+        ElectronicsHistoryContext? recoveryContext = classroom?.ProfileId is { } studentId && !teacher ? new(studentId, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id,freeProject?.Id) : null;
         var priorQueue = recoveryContext is not null && ElectronicsOutboxRecovery.Ensure(path, recoveryContext, assignment?.TaskId);
         string? expectedClientId = null;
-        if (priorQueue && !File.Exists(path)) project = CircuitProject.Parse(ElectronicsSync.ReadOutbox(path + ".sync.json", assignment?.Id).ProjectJson);
+        if (priorQueue && !File.Exists(path)) project = CircuitProject.Parse(ElectronicsSync.ReadOutbox(path + ".sync.json", assignment?.Id,freeContext:recoveryContext?.FreeContext()).ProjectJson);
         InitializeManipulation();
         string? loadError = null;
         try { if (File.Exists(path)) project = CircuitProject.Parse(File.ReadAllText(path)); }
@@ -85,13 +92,13 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         if (classroom?.ProfileId is { } profile && !teacher)
         {
-            history = new ElectronicsHistoryStore(path + ".history", new(profile, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id), loadError is null ? project.Serialize() : null);
+            history = new ElectronicsHistoryStore(path + ".history", new(profile, classroom.Connection.Fingerprint, classroom.LessonId!, assignment?.Id,freeProject?.Id), loadError is null ? project.Serialize() : null);
             try
             {
                 try
                 {
                     expectedClientId = ElectronicsHistoryStore.InspectBindings(path + ".history", recoveryContext!).ClientId;
-                    if (File.Exists(savePath + ".sync.json")) ElectronicsSync.ReadOutbox(savePath + ".sync.json", assignment?.Id, expectedClientId);
+                    if (File.Exists(savePath + ".sync.json")) ElectronicsSync.ReadOutbox(savePath + ".sync.json", assignment?.Id, expectedClientId,recoveryContext?.FreeContext());
                 }
                 catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
                 { history.Dispose(); throw new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(path, recoveryContext!, e.Message), assignment?.TaskId); }
@@ -111,7 +118,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             {
                 sync = new ElectronicsSync(classroom,savePath+".sync.json",text => syncStatus.Text=text,startTimer:false,assignmentId:assignment?.Id,receipt:OnReceipt,
                     journalDelivery:history is null ? null : token=>history.Deliver(classroom,sync!.ClientId,token),journalPending:history is null ? null : ()=>history.Pending,
-                    requireExisting:priorQueue,expectedClientId:expectedClientId);
+                    requireExisting:priorQueue,expectedClientId:expectedClientId,freeContext:recoveryContext?.FreeContext(freeProject?.Revision??0));
             }
             catch (Exception e) when (recoveryContext is not null && (e is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException))
             { history?.Dispose(); throw new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(path,recoveryContext,e.Message),assignment?.TaskId); }
@@ -156,21 +163,21 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var mainActions=Ui.Row();
         if (classroom is not null && !teacher)
         {
-            submitButton = Ui.Button(assignment is null ? "Отправить преподавателю" : "Отправить на проверку", () => owner.Safe(async () =>
+            submitButton = Ui.Button(assignment is null&&freeProject is null ? "Отправить преподавателю" : "Отправить на проверку", () => owner.Safe(async () =>
             {
-            if (this.assignment?.CanSubmit == false) { owner.Message("Работа уже отправлена на проверку."); return; }
-            if (this.assignment is { } current && sync?.HasStaleSubmission(current.StateVersion) == true)
+            if (!MaySubmit) { owner.Message("Работа уже отправлена на проверку."); return; }
+            if (PermissionVersion is { } current && sync?.HasStaleSubmission(current) == true)
             {
                 if (!await owner.Confirm("Преподаватель разрешил новую сдачу. Предыдущая неподтверждённая отправка останется в локальном архиве. Отправить текущую версию?")) return;
-                sync.ArchiveStaleSubmissions(current.StateVersion);
+                sync.ArchiveStaleSubmissions(current);
             }
             Save(); if (!Report("submitted",project.Serialize())) return;
-            if (this.assignment is not null) submitButton!.IsEnabled = false;
+            if (this.assignment is not null||this.freeProject is not null) submitButton!.IsEnabled = false;
             if (await Synchronize()) owner.Message("Работа отправлена преподавателю.");
             else if (sync?.PendingSubmission == false) owner.Message("Работа отправлена преподавателю. История ещё передаётся.");
             else owner.Error("Работа сохранена локально, но передача пока не завершена. "+syncStatus.Text);
             }), CanSend);
-            submitButton.IsEnabled = assignment?.CanSubmit ?? true;
+            submitButton.IsEnabled = MaySubmit;
             mainActions.Children.Add(submitButton);
         }
         mainActions.Children.Add(Ui.Button("Проверить код",()=>Compile(false)));mainActions.Children.Add(Ui.Primary(Ui.Button("Запустить",()=>Compile(true))));
@@ -191,18 +198,21 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         status.IsVisible=false;status.PropertyChanged+=(_,e)=>{if(e.Property==TextBlock.TextProperty)status.IsVisible=!string.IsNullOrWhiteSpace(status.Text);};
         syncStatus.PropertyChanged+=(_,e)=>{if(e.Property==TextBlock.TextProperty)syncStatus.IsVisible=classroom is not null&&!teacher&&!string.IsNullOrWhiteSpace(syncStatus.Text);};
         Grid.SetRow(body, 1); root.Children.Add(body);
-        syncStatus.IsVisible = false;
+        syncStatus.IsVisible = freeProject is not null;
         var footer = Ui.Stack(status,syncStatus);footer.Spacing=2; Grid.SetRow(footer, 2); root.Children.Add(footer);
-        if (assignment is not null)
+        if (assignment is not null||freeProject is not null)
         {
             root.RowDefinitions = new("Auto,Auto,*,Auto");
-            var statement = Ui.Scroll(Ui.Text(assignment.Prompt)); statement.MaxHeight = 100;
+            var statement = Ui.Scroll(Ui.Text(assignment?.Prompt??"Свободный проект")); statement.MaxHeight = 100;
             reviewStatus.IsVisible = false;
             reviewStatus.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) reviewStatus.IsVisible = !string.IsNullOrWhiteSpace(reviewStatus.Text); };
             var review = Ui.Scroll(reviewStatus); review.MaxHeight = 110;
-            var condition = Ui.Card(Ui.Stack(Ui.Text(assignment.Title, 20), statement, review));
+            var condition = Ui.Card(assignment is not null?Ui.Stack(Ui.Text(assignment.Title, 20), statement, review):
+                Ui.Stack(Ui.Row(Ui.Button("Мои схемы",()=>owner.Safe(()=>owner.EnterLesson(new("electronics")))),
+                    Ui.Button("Сохранить отдельную схему",()=>owner.Safe(async()=>{Save();await owner.CopyFreeProject(project.Serialize());}))),review));
             root.Children.Add(condition);
             Grid.SetRow(projectBar, 1); Grid.SetRow(body, 2); Grid.SetRow(footer, 3);
+            if(freeProject is not null)UpdateFreeProject(freeProject);
         }
         if (tabs is not null) tabs.SelectionChanged += (_,e) =>
         {
@@ -237,12 +247,15 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
 
     void OnReceipt(ElectronicsSyncReceipt receipt)
     {
+        if(disposed)return;
         if (history is not null) foreach (var id in receipt.ReportIds)
         {
             var reference = history.Journal.Changes.LastOrDefault(c => c.ReportId == id);
             if (reference?.ReportHash is { } hash && reference.Kind != "report-received")
                 _ = Perform(() => RecordHistory("report-received", true, reportId: id, reportHash: hash));
         }
+        if(freeProject is not null&&receipt.CanSubmit is not null&&receipt.AssignmentVersion>=freeProject.StateVersion)
+        {freeProject=freeProject with{State=receipt.AssignmentState??freeProject.State,CanSubmit=receipt.CanSubmit.Value,StateVersion=receipt.AssignmentVersion??freeProject.StateVersion};UpdateSubmit();}
         if (assignment is null || receipt.CanSubmit is null || receipt.AssignmentVersion < assignment.StateVersion) return;
         assignment = assignment with { State = receipt.AssignmentState ?? assignment.State, CanSubmit = receipt.CanSubmit.Value, StateVersion = receipt.AssignmentVersion ?? assignment.StateVersion };
         UpdateSubmit();
@@ -263,12 +276,27 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     }
     void UpdateSubmit()
     {
-        if (submitButton is null || assignment is null) return;
-        var stale = assignment.CanSubmit && sync?.HasStaleSubmission(assignment.StateVersion) == true;
+        if (submitButton is null || assignment is null&&freeProject is null) return;
+        var stale = MaySubmit && PermissionVersion is { } current && sync?.HasStaleSubmission(current) == true;
         submitButton.IsEnabled = CanSend();
-        submitButton.Content = stale ? "Отправить новую сдачу" : sync?.PendingSubmission == true ? "Ожидает передачи" : assignment.CanSubmit ? "Отправить на проверку" : ElectronicsReviewLabels.State(assignment.State);
+        submitButton.Content = stale ? "Отправить новую сдачу" : sync?.PendingSubmission == true ? "Ожидает передачи" : MaySubmit ? "Отправить на проверку" : ElectronicsReviewLabels.State(assignment?.State??freeProject!.State);
     }
-    bool CanSend() => assignment?.CanSubmit != false && (sync?.PendingSubmission != true || assignment is { } current && sync.HasStaleSubmission(current.StateVersion));
+    bool CanSend() => MaySubmit && (sync?.PendingSubmission != true || PermissionVersion is { } current && sync.HasStaleSubmission(current));
+    public void UpdateFreeProject(ElectronicsProjectDto value)
+    {
+        if(freeProject?.Id!=value.Id)throw new InvalidDataException("Это другой свободный проект.");
+        if(value.StateVersion<freeProject.StateVersion)return;
+        freeProject=value;
+        reviewStatus.Text=ElectronicsReviewLabels.State(value.State)+(value.LatestReview is { } review?
+            $"{(review.Grade is { } grade?$" · {(value.State=="awaiting-review"?"Предыдущая оценка":"Оценка")}: {grade}":"")}\n{review.Comment}":"");
+        UpdateSubmit();
+    }
+    public void UpdateFreeProjectStatus(ElectronicsProjectStatus value)
+    {
+        if(disposed)return;
+        if(freeProject?.Id!=value.Id||value.StateVersion<freeProject.StateVersion)return;
+        UpdateFreeProject(freeProject with{State=value.State,CanSubmit=value.CanSubmit,StateVersion=value.StateVersion,LatestReview=value.LatestReview});
+    }
 
     Task Perform(Action action)
     {
@@ -285,10 +313,11 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         if (from.Count == 0) return;
         Stop(); to.Add(project.Serialize()); project = CircuitProject.Parse(from[^1]); from.RemoveAt(from.Count - 1); selected = null; selectedWire = null; startPin = null; Refresh(); Save(kind, true);
     }
-    void QueueSave() { autosave.Stop(); autosave.Start(); }
+    void QueueSave() { if(disposed)return;autosave.Stop(); autosave.Start(); }
     void Save() => Save("scheme-edit");
     void Save(string kind, bool force = false, string? gestureId = null)
     {
+        if(disposed)return;
         project.Validate(); Directory.CreateDirectory(Path.GetDirectoryName(savePath)!);
         var json = project.Serialize(); history?.Record(json, kind, force, gestureId); ElectronicsHistoryStore.Mirror(savePath, json);
         try { sync?.QueueDraft(project.Serialize()); }
@@ -297,10 +326,10 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     bool Report(string kind,string json,string detail="")
     {
         if(sync is null) return false;
-        try { var id=Guid.NewGuid().ToString("N"); RecordHistory("report-"+kind,true,reportId:id,reportHash:SqlSyncHash.Text(json)); sync.Record(kind,json,detail,kind == "submitted" ? assignment?.StateVersion : null,id); return true; }
+        try { var id=Guid.NewGuid().ToString("N"); RecordHistory("report-"+kind,true,reportId:id,reportHash:SqlSyncHash.Text(json)); sync.Record(kind,json,detail,kind == "submitted" ? PermissionVersion : null,id); return true; }
         catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error(e.Message); return false; }
     }
-    public async Task<bool> Synchronize() { Save(); return sync is null || await sync.Drain(); }
+    public async Task<bool> Synchronize() { if(disposed)return false;Save(); return sync is null || await sync.Drain(); }
     void Refresh()
     {
         loading = true; name.Text = project.Name; editor.Text = project.Code; loading = false;

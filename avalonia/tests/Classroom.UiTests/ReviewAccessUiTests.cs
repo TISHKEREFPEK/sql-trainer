@@ -73,7 +73,7 @@ public sealed class ReviewAccessUiTests
             window.GetVisualDescendants().OfType<ComboBox>().Single(c => c.Items.OfType<StudentChoice>().Any()).SelectedIndex = 0;
             Click(window, "Войти");
             await WaitFor(() => Task.FromResult(window.GetVisualDescendants().OfType<StudentHomeControl>().Any()));
-            await window.EnterLesson(new LessonDestination("electronics")); window.UpdateLayout();
+            await window.EnterLesson(new LessonDestination("electronics"),legacyElectronics:true); window.UpdateLayout();
             var original = window.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
             window.UpdateLayout();
             var draft = "// несданный черновик ученика\nvoid setup(){} void loop(){}";

@@ -234,6 +234,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         };
         Content = root;
         ConfigureHistory();
+        ConfigureActivity();
         Ui.BindBrush(editor,TextEditor.BackgroundProperty,"Editor");Ui.BindBrush(editor,TextEditor.ForegroundProperty,"EditorInk");editor.Padding=new Thickness(16,20);ThemeManager.Changed+=ApplyEditorTheme;ApplyEditorTheme();
         Refresh();
         var initialFit = true;
@@ -251,7 +252,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         catch
         {
-            disposed = true; autosave.Stop(); timer.Stop(); ReleaseHistory(); sync?.Dispose(); history?.Dispose();
+            disposed = true; autosave.Stop(); timer.Stop(); activityTimer.Stop();ReleaseHistory(); sync?.Dispose(); history?.Dispose();
             ThemeManager.Changed -= ApplyEditorTheme; firmware.Dispose(); throw;
         }
     }
@@ -743,7 +744,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         { if (generation == runId && !disposed) { Report("run-error",project.Serialize(),e.Message); Stop(); status.Text = e.Message; owner.Error(e.Message); } }
         finally { ticking = false;UpdateSerialControls(); }
     }
-    public void Suspend() { Stop(); Save(); }
+    public void Suspend() { SampleActivity(false,true); Stop(); Save(); }
     void Stop()
     {
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
@@ -777,7 +778,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return; Stop(); autosave.Stop();
-        try { Save(); } catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error("Не удалось сохранить схему: " + e.Message); }
-        ReleaseHistory(); disposed = true; history?.Dispose(); ThemeManager.Changed-=ApplyEditorTheme;sync?.Dispose(); resultsView?.Dispose();
+        try { SampleActivity(false,true);Save(); } catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error("Не удалось сохранить схему: " + e.Message); }
+        activityTimer.Stop();ReleaseHistory(); disposed = true; history?.Dispose(); ThemeManager.Changed-=ApplyEditorTheme;sync?.Dispose(); resultsView?.Dispose();
     }
 }

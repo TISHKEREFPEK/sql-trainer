@@ -185,6 +185,7 @@ public static class ClassroomResults
         if (groupKey is not null) people = people.Where(p => p.GroupKey == groupKey).ToList();
         if (studentId is not null) people = people.Where(p => p.Id == studentId).ToList();
         var selectedIds = people.Select(p => p.Id).ToHashSet(); works = works.Where(w => selectedIds.Contains(w.StudentId) && (subject is null || w.Subject == subject)).ToList();
+        await ElectronicsActivityResults.Add(db,works);
         var students = people.Select(p => new ResultsStudent(p.Id, p.Name, p.GroupKey, p.GroupName, p.Joined,
             Summarize(works.Where(w => w.StudentId == p.Id), [(p.Id, p.Joined)]), works.Where(w => w.StudentId == p.Id).Select(w => w.LastActivityAt).Max())).OrderBy(p => p.Name).ToArray();
         var difficulty = works.Where(w => w.Required).GroupBy(w => new { w.Subject, w.TaskId }).Select(g =>

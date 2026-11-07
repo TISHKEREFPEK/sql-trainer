@@ -145,7 +145,8 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         if(work.FreeProjectId is not null)page.Children.Add(Ui.Text(work.LessonId is null?"Свободный проект. Не входит в обязательный прогресс.":"Свободная схема: снимок и действия выбранного занятия. Не входит в обязательный прогресс.",12));
         if(work.FreeProjectId is not null&&work.Reused)page.Children.Add(Ui.Text("До нового решения сохранены зачёт и оценка предыдущей сдачи. Дата завершения относится к ней.",12));
         if(work.Partial)page.Children.Add(Ui.Text("История неполная: показаны известные записи; пропущенные даты и длительность не восстановлены догадками.",12));
-        page.Children.Add(Ui.Text($"Открыто: {Date(work.StartedAt)} · Завершено: {Date(work.CompletedAt)}\nПроверок или сдач: {work.Checks} · Ошибок: {work.Errors} · Подсказок: {work.Hints?.ToString()??"не записывалось"} · Обнаруженных ограничений: {work.Violations?.ToString()??"не записывалось"}\nАктивная длительность: {(work.ActiveSeconds is { }seconds?$"{seconds} с":"не записывалась")}",13));
+        page.Children.Add(Ui.Text($"Открыто: {Date(work.StartedAt)} · Завершено: {Date(work.CompletedAt)}\nПроверок или сдач: {work.Checks} · Ошибок: {work.Errors} · Подсказок: {work.Hints?.ToString()??"не записывалось"} · Обнаруженных ограничений: {work.Violations?.ToString()??"не записывалось"}\nЗафиксированная активная длительность: {(work.ActiveSeconds is { }seconds?$"{seconds} с":"не записывалась")}",13));
+        if(work.Subject=="electronics"&&work.ActiveSeconds is not null)page.Children.Add(Ui.Muted("Учитываются только переданные интервалы активного окна. Работа до начала записи сюда не входит."));
         page.Children.Add(Ui.Text("Ограничения — обнаруженные события, а не доказательство списывания.",12));
         if(work.Subject=="electronics")
         {

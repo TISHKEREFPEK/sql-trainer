@@ -17,6 +17,8 @@ public sealed class ElectronicsJournalStreamEntity
 }
 public sealed class ElectronicsJournalChangeEntity
 {
+    public long? ActivityStartedAt { get; set; }
+    public long? ActivityEndedAt { get; set; }
     public string StudentId { get; set; } = "";
     public string StreamId { get; set; } = "";
     public long Sequence { get; set; }

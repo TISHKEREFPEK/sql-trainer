@@ -183,12 +183,12 @@ public sealed partial class ElectronicsHistoryStore : IDisposable
         if (System.Text.Encoding.UTF8.GetByteCount(envelope) > 64 * 1024 * 1024) throw new IOException("Индекс истории схемы заполнен. Новое изменение не записано; сохраните работу отдельно.");
         Atomic(file, envelope, true);
     }
-    public void Record(string nextJson, string kind, bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, ElectronicsSerialIo? serialIo = null,ElectronicsI2cIo[]? i2cIo = null)
+    public void Record(string nextJson, string kind, bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, ElectronicsSerialIo? serialIo = null,ElectronicsI2cIo[]? i2cIo = null,ElectronicsActiveSpan? activeSpan=null)
     {
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            var next = ElectronicsJournal.Record(journal, json, nextJson, kind, Now, force: force, gestureId: gestureId, reportId: reportId, reportHash: reportHash,serialIo:serialIo,i2cIo:i2cIo);
+            var next = ElectronicsJournal.Record(journal, json, nextJson, kind, Now, force: force, gestureId: gestureId, reportId: reportId, reportHash: reportHash,serialIo:serialIo,i2cIo:i2cIo,activeSpan:activeSpan);
             if (ReferenceEquals(next, journal)) return;
             Persist(next, cursor); journal = next; json = nextJson;
         }

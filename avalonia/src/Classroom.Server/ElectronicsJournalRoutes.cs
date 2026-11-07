@@ -61,7 +61,8 @@ public static class ElectronicsJournalRoutes
                     if (change.Sequence != sequence + 1) throw new HttpFault(409, "Сначала передайте предыдущие шаги схемы.");
                     if (await db.ElectronicsJournalChanges.AnyAsync(c => c.StudentId == session.ProfileId && c.StreamId == row.Id && c.EventId == change.Id)) throw new HttpFault(409, "Номер шага уже использован.");
                     json = Replay(row, json, change); sequence = change.Sequence;
-                    additions.Add(new() { StudentId = session.ProfileId, StreamId = row.Id, Sequence = sequence, EventId = change.Id, ChangeJson = Wire.Write(change), ReceivedAt = ServerState.Now, Actor = "student", Checkpoint = sequence % 64 == 0 ? json : null });
+                    additions.Add(new() { StudentId = session.ProfileId, StreamId = row.Id, Sequence = sequence, EventId = change.Id, ChangeJson = Wire.Write(change), ReceivedAt = ServerState.Now, Actor = "student", Checkpoint = sequence % 64 == 0 ? json : null,
+                        ActivityStartedAt=change.ActiveSpan?.StartedAt,ActivityEndedAt=change.ActiveSpan?.EndedAt });
                 }
                 // Track mutations only after every step is valid.
                 if (db.Entry(row).State == EntityState.Detached) db.ElectronicsJournalStreams.Add(row);

@@ -44,6 +44,7 @@ public static partial class DatabaseHealth
             foreach (var step in db.ElectronicsJournalChanges.AsNoTracking().Where(c => c.StudentId == stream.StudentId && c.StreamId == stream.Id).OrderBy(c => c.Sequence))
             {
                 var change = Wire.Read<ElectronicsChange>(step.ChangeJson);
+                if(step.ActivityStartedAt!=change.ActiveSpan?.StartedAt||step.ActivityEndedAt!=change.ActiveSpan?.EndedAt)throw new InvalidDataException("Не совпадает записанный интервал активности схемы.");
                 if (step.Sequence != ++sequence || change.Sequence != sequence || step.EventId != change.Id || step.Actor != "student" || step.ReceivedAt <= 0 || step.ReceivedAt > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()) throw new InvalidDataException("Нарушена последовательность истории электроники.");
                 json = new ElectronicsJournal(1, stream.Id, stream.StartedAt, json, [change with { Sequence = 1 }]).Replay();
                 if (step.Checkpoint != (sequence % 64 == 0 ? json : null)) throw new InvalidDataException("Неверная контрольная схема.");

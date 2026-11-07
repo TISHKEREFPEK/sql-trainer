@@ -32,11 +32,12 @@ public sealed partial class ElectronicsScreen
         DetachedFromVisualTree += (_, _) => { if (!disposed && historyVisible) _ = Perform(() => RecordHistory("work-leave", true)); historyVisible = false; };
         owner.Activated += HistoryActivated; owner.Deactivated += HistoryDeactivated; owner.PropertyChanged += HistoryWindowState;
     }
-    void HistoryActivated(object? sender, EventArgs e) { if (historyVisible) _ = Perform(() => RecordHistory("window-focus", true)); }
-    void HistoryDeactivated(object? sender, EventArgs e) { if (historyVisible) _ = Perform(() => RecordHistory("window-blur", true)); }
+    void HistoryActivated(object? sender, EventArgs e) { if (historyVisible) _ = Perform(() => {SampleActivity();RecordHistory("window-focus", true);}); }
+    void HistoryDeactivated(object? sender, EventArgs e) { if (historyVisible) _ = Perform(() => {SampleActivity(false,true);RecordHistory("window-blur", true);}); }
     void HistoryWindowState(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
         if (!historyVisible || e.Property != Window.WindowStateProperty) return;
+        _ = Perform(()=>SampleActivity(flush:owner.WindowState==WindowState.Minimized));
         if (owner.WindowState == WindowState.Minimized) _ = Perform(() => RecordHistory("window-minimize", true));
         else if (e.OldValue is WindowState.Minimized) _ = Perform(() => RecordHistory("window-restore", true));
     }

@@ -178,6 +178,12 @@ namespace Classroom.Storage.Migrations
                     b.Property<long>("Sequence")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long?>("ActivityEndedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("ActivityStartedAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Actor")
                         .IsRequired()
                         .HasColumnType("TEXT");

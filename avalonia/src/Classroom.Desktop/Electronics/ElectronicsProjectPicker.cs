@@ -48,9 +48,11 @@ internal sealed class ElectronicsProjectPicker : UserControl,IDisposable
         {
             var title=string.IsNullOrWhiteSpace(p.Name)?"Без названия":p.Name;
             var button=Ui.Button("Открыть",()=>owner.Safe(async()=>{if(Current)await open(p.Id);}));
+            var copies=Ui.Button("Копии на этом ПК",()=>owner.Safe(async()=>{if(Current)await owner.ShowFreeLocalCopies(p.Id);}));
+            Avalonia.Automation.AutomationProperties.SetName(copies,"Копии «"+title+"»");
             Avalonia.Automation.AutomationProperties.SetName(button,"Открыть «"+title+"»");
             var description=Ui.Stack(Ui.Text(title,18),Ui.Muted(ElectronicsReviewLabels.State(p.State)+" · "+ElectronicsLabels.Date(p.UpdatedAt)));description.Spacing=2;
-            var row=new Grid{ColumnDefinitions=new("*,Auto"),ColumnSpacing=18};row.Children.Add(description);Grid.SetColumn(button,1);row.Children.Add(button);
+            var row=new Grid{ColumnDefinitions=new("*,Auto"),ColumnSpacing=18};row.Children.Add(description);var tools=Ui.Row(button,copies);Grid.SetColumn(tools,1);row.Children.Add(tools);
             button.VerticalAlignment=Avalonia.Layout.VerticalAlignment.Center;
             var card=Ui.Card(row);card.Padding=new Thickness(18,12);rows.Children.Add(card);
         }

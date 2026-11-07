@@ -20,7 +20,7 @@ public sealed class NotificationState : ObservableObject
     public string Status { get => status; set => SetProperty(ref status, value); }
 }
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     readonly bool teacher;
     readonly string? studentDataRoot;
@@ -63,7 +63,7 @@ public sealed class MainWindow : Window
     string StudentDataDirectory => studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
     void StartElectronicsDelivery()
     {
-        if (teacher || api?.ProfileId is null || login?.Role != "student") return;
+        if (teacher || electronicsRecoveryOpen || api?.ProfileId is null || login?.Role != "student") return;
         electronicsDelivery ??= new ElectronicsBackgroundDelivery(StudentDataDirectory, api, path =>
             assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Any(editor => editor is not null && string.Equals(editor.SavePath, path, StringComparison.OrdinalIgnoreCase)));
         electronicsDeliveryPoll.Start();
@@ -601,12 +601,15 @@ public sealed class MainWindow : Window
         await StopElectronicsDelivery();
         try
         {
-            if(!ReferenceEquals(body.Content,origin))return;
+            if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||!ReferenceEquals(body.Content,origin))return;
             var work=restoreLocal?await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}"):
                 await client.Post<ElectronicsProjectDto>($"electronics/projects/{id}/open",new ElectronicsProjectOpen(lesson));
             if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||!ReferenceEquals(body.Content,origin))return;
             var context=new ElectronicsHistoryContext(client.ProfileId!,client.Connection.Fingerprint,lesson,null,id);
-            var selected=ElectronicsCopySelection.Resolve(Path.Combine(StudentDataDirectory,"electronics"),context);
+            ElectronicsCopyLocation selected;
+            try{selected=ElectronicsCopySelection.Resolve(Path.Combine(StudentDataDirectory,"electronics"),context);}
+            catch(Exception e)when(e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            {await ShowFreeLocalCopies(id,context,e.Message);return;}
             var key=id+":"+lesson;
             electronics?.Suspend();
             if(screen is ElectronicsProjectPicker picker)picker.Dispose();
@@ -643,6 +646,7 @@ public sealed class MainWindow : Window
         await StopElectronicsDelivery();
         try
         {
+            if(!Current())return;
             await source.PauseDelivery();
             var server=await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}");
             if(!Current()||!ReferenceEquals(body.Content,source)){source.ResumeDelivery();return;}
@@ -673,7 +677,7 @@ public sealed class MainWindow : Window
             {
                 if(!Current()||view!.IsDisposed)return;
                 await CopyFreeProject(json,()=>Current()&&!view.IsDisposed);
-            },()=>ClosePage(),archives);
+            },()=>ClosePage(),archives,()=>ShowFreeLocalCopies(id));
             ShowPage("Версии и копии схемы",view,()=>{view.Dispose();source.ResumeDelivery();});
             await RefreshLessonPermission();
         }

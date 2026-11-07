@@ -20,7 +20,7 @@ internal sealed class ElectronicsVersionChoiceView : UserControl,IDisposable
     bool busy;
     public ElectronicsVersionChoiceView(MainWindow owner,string localJson,ElectronicsProjectDto server,
         Func<ElectronicsProjectDto,Task> selectServer,Func<string,Task> copy,Action keepLocal,
-        ElectronicsLocalCopy[] archives)
+        ElectronicsLocalCopy[] archives,Func<Task>? allCopies=null)
     {
         this.owner=owner;this.localJson=localJson;this.server=server;this.selectServer=selectServer;this.copy=copy;
         var actions=Ui.Stack(Ui.Row(Ui.Button("Продолжить локальную",()=>Act(()=>{keepLocal();return Task.CompletedTask;})),
@@ -30,16 +30,19 @@ internal sealed class ElectronicsVersionChoiceView : UserControl,IDisposable
         var tabs=new TabControl{ItemsSource=new[]{
             new TabItem{Header="Локальная версия",Content=new ElectronicsSnapshotView(new(localJson,"draft",0,""),"Сохранённая версия на этом компьютере. Просмотр без редактирования.")},
             new TabItem{Header="Серверная версия",Content=serverPreview},
-            new TabItem{Header="Локальные копии",Content=ArchivePanel(archives)}}};
+            new TabItem{Header="Локальные копии",Content=ArchivePanel(archives,allCopies)}}};
         root=new Grid{RowDefinitions=new("Auto,Auto,Auto,*"),RowSpacing=10};
         root.Children.Add(actions);Grid.SetRow(warning,1);root.Children.Add(warning);Grid.SetRow(message,2);root.Children.Add(message);Grid.SetRow(tabs,3);root.Children.Add(tabs);
         Content=root;UpdateServer(server);
     }
-    Control ArchivePanel(ElectronicsLocalCopy[] archives)
+    Control ArchivePanel(ElectronicsLocalCopy[] archives,Func<Task>? allCopies)
     {
+        if(allCopies is not null)archiveRows.Children.Add(Ui.Button("Копии со всех занятий",()=>Act(allCopies)));
         if(archives.Length==0)archiveRows.Children.Add(Ui.Muted("Других локальных копий этого проекта в занятии нет."));
         foreach(var item in archives)
         {
+            if(item.Problem is not null)archiveRows.Children.Add(Ui.Card(Ui.Text(item.Problem)));
+            if(item.ProjectJson.Length==0)continue;
             var label=(item.Context.LocalCopyId is null?"Исходная копия":"Отдельная копия")+" · "+Ui.Time(item.UpdatedAt);
             archiveRows.Children.Add(Ui.Card(Ui.Stack(Ui.Text(item.Title,16),Ui.Muted(label),
                 Ui.Stack(Ui.Button("Просмотреть",()=>Act(()=>{archivePreview.Content=new ElectronicsSnapshotView(new(item.ProjectJson,"draft",0,""),"Сохранённая локальная копия. Она не отправляется автоматически.");return Task.CompletedTask;})),

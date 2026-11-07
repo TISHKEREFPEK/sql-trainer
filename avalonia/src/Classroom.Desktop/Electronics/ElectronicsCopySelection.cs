@@ -4,11 +4,11 @@ using Classroom.Contracts;
 namespace Classroom.Desktop.Electronics;
 
 internal sealed record ElectronicsCopyLocation(string Path,ElectronicsHistoryContext Context,long? SelectedAt=null,int? ServerRevision=null);
-internal sealed record ElectronicsLocalCopy(ElectronicsHistoryContext Context,string ProjectJson,string Title,long UpdatedAt);
+internal sealed record ElectronicsLocalCopy(ElectronicsHistoryContext Context,string ProjectJson,string Title,long UpdatedAt,string? Problem=null);
 
 // A pointer changes only after a complete new copy is durable. Old copies are
 // retained byte-for-byte and are never automatically uploaded once inactive.
-internal static class ElectronicsCopySelection
+internal static partial class ElectronicsCopySelection
 {
     sealed record Selection(int Version,ElectronicsHistoryContext Context,string? PreviousCopyId,long At,int? ServerRevision);
     sealed record Envelope(string Payload,string Hash);
@@ -62,29 +62,8 @@ internal static class ElectronicsCopySelection
     }
     public static ElectronicsLocalCopy[] ReadArchives(string directory,ElectronicsHistoryContext context,string activePath)
     {
-        var binding=Binding(context);directory=DirectoryPath(directory);
-        if(!Directory.Exists(directory))return [];
-        var prefix=System.IO.Path.GetFileNameWithoutExtension(binding.ProjectFileName);
-        var copies=new List<ElectronicsLocalCopy>();
-        foreach(var candidate in Directory.EnumerateDirectories(directory,prefix+"*.json.history").Order(StringComparer.Ordinal))
-        {
-            var file=candidate[..^8];if(string.Equals(file,activePath,StringComparison.OrdinalIgnoreCase))continue;
-            var name=System.IO.Path.GetFileName(file);string? copyId=null;
-            if(name!=binding.ProjectFileName)
-            {
-                var start=prefix+"-copy-";
-                if(!name.StartsWith(start,StringComparison.Ordinal)||!Guid.TryParseExact(name[start.Length..^5],"N",out _))continue;
-                copyId=name[start.Length..^5];
-            }
-            var expected=binding with{LocalCopyId=copyId};Regular(candidate);
-            var indexes=Directory.EnumerateFiles(candidate,"c-*.json").ToArray();
-            if(indexes.Length!=1)throw new InvalidDataException("Не удалось прочитать локальные копии: отсутствует однозначный индекс истории. Исходники сохранены.");
-            using var history=ElectronicsHistoryStore.OpenExisting(candidate,System.IO.Path.GetFileName(indexes[0]),binding.ProfileId,binding.Fingerprint);
-            if(history.Context!=expected)throw new InvalidDataException("Контекст локальной копии не совпадает с её именем. Исходники сохранены.");
-            var project=CircuitProject.Parse(history.ProjectJson);var journal=history.Journal;
-            copies.Add(new(expected,history.ProjectJson,project.Name,journal.Changes.LastOrDefault()?.At??journal.StartedAt));
-        }
-        return copies.OrderByDescending(c=>c.UpdatedAt).ToArray();
+        return Discover(directory,context).Where(e=>e.Context.LessonId==context.LessonId&&!string.Equals(e.ProjectFile,activePath,StringComparison.OrdinalIgnoreCase))
+            .Take(20).Select(e=>{var snapshot=InspectLocal(e);return new ElectronicsLocalCopy(e.Context,snapshot.ProjectJson??"",snapshot.ProjectJson is null?"Не удалось прочитать копию":CircuitProject.Parse(snapshot.ProjectJson).Name,e.UpdatedAt,snapshot.Problem);}).ToArray();
     }
     public static ElectronicsCopyLocation SelectServer(string directory,ElectronicsHistoryContext context,string expectedActivePath,ElectronicsProjectDto server,ClassroomApi api)
     {

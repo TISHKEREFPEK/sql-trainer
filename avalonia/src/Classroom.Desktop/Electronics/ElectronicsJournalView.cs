@@ -30,7 +30,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
     long generation, selection;
     bool binding, disposed;
     static string Label(string kind) => kind switch {
-        "code-edit" => "Правка кода", "code-undo" => "Отмена кода", "code-redo" => "Повтор кода", "rename" => "Название", "scheme-edit" => "Изменение схемы", "server-version-prepared"=>"Подготовлена серверная копия", "server-version-selected"=>"Выбрана серверная версия",
+        "code-edit" => "Правка кода", "code-undo" => "Отмена кода", "code-redo" => "Повтор кода", "rename" => "Название", "scheme-edit" => "Изменение схемы", "server-version-prepared"=>"Подготовлена серверная копия", "server-version-selected"=>"Выбрана серверная версия", "local-selection-restored"=>"Восстановлен выбор локальной копии",
         "move-start" => "Начало перемещения", "move" => "Перемещение", "move-end" or "move-capture-lost" => "Конец перемещения", "resize-start" => "Начало изменения размера", "resize" => "Размер", "resize-end" => "Размер изменён",
         "rotate-start" => "Начало поворота", "rotate" => "Поворот", "rotate-end" => "Поворот завершён", "gesture-cancel" => "Отмена жеста", "undo" => "Отмена изменения", "redo" => "Повтор изменения",
         "work-open" => "Открыта работа", "work-leave" => "Переход из работы", "work-close" => "Работа закрыта", "window-focus" => "Возврат в окно", "window-blur" => "Переход в другое окно", "window-minimize" => "Окно свёрнуто", "window-restore" => "Окно восстановлено",

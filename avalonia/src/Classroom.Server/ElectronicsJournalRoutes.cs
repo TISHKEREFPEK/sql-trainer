@@ -68,7 +68,7 @@ public static class ElectronicsJournalRoutes
                 db.ElectronicsJournalChanges.AddRange(additions); row.Sequence = sequence; row.TipJson = json; return Ack("accepted");
             });
         });
-        api.MapGet("/teacher/electronics-journal/{studentId}", (HttpContext ctx, string studentId, string? lessonId, string? assignmentId, int? offset) =>
+        api.MapGet("/teacher/electronics-journal/{studentId}", (HttpContext ctx, string studentId, string? lessonId, string? assignmentId,string? projectId, int? offset) =>
         {
             state.Authorize(ctx, "teacher"); var start = offset ?? 0; if (start is < 0 or > 1000000) throw new HttpFault(400, "Некорректная страница истории.");
             return state.Read(async db =>
@@ -76,6 +76,7 @@ public static class ElectronicsJournalRoutes
                 var query = db.ElectronicsJournalStreams.AsNoTracking().Where(s => s.StudentId == studentId);
                 if (lessonId is not null) query = query.Where(s => s.LessonId == lessonId);
                 if (assignmentId is not null) query = query.Where(s => s.AssignmentId == assignmentId);
+                if(projectId is not null)query=query.Where(s=>db.ElectronicsWorks.Any(w=>w.StudentId==s.StudentId&&w.ClientId==s.ClientId&&w.FreeProjectId==projectId));
                 return (await query.OrderByDescending(s => s.ReceivedAt).ThenBy(s => s.Id).Skip(start).Take(30).ToArrayAsync()).Select(s => new ElectronicsJournalInfo(s.Id, s.ClientId, s.LessonId, s.AssignmentId, s.Title, s.StartedAt, s.ReceivedAt, s.Sequence, s.ForkedFrom)).ToArray();
             });
         });
@@ -110,9 +111,12 @@ public static class ElectronicsJournalRoutes
                 var change = Wire.Read<ElectronicsChange>(step.ChangeJson); if (change.ReportId is not { } id) throw new HttpFault(404, "У шага нет ссылки на отчёт.");
                 var report = await db.ElectronicsReports.FindAsync(studentId, id); if (report is null) return new ElectronicsJournalReportLink("unconfirmed");
                 if (report.ClientId != row.ClientId || report.AssignmentId != row.AssignmentId || report.ProjectHash != change.ReportHash || change.Kind != "report-received" && change.Kind != "report-" + report.Kind) return new ElectronicsJournalReportLink("mismatch");
+                var copy=await db.ElectronicsWorks.FindAsync(studentId,row.ClientId);
+                if(copy is null||copy.FreeProjectId!=report.FreeProjectId||copy.LessonId!=report.LessonId||report.FreeProjectId is not null&&report.LessonId!=row.LessonId)
+                    return new ElectronicsJournalReportLink("mismatch");
                 // Legacy free-editor reports identify a copy, but have no lesson ID.
                 // Preserve the exact reference without inventing lesson attribution.
-                return new ElectronicsJournalReportLink(row.AssignmentId is null ? "legacy-context" : "available", report.Id, report.Kind);
+                return new ElectronicsJournalReportLink(row.AssignmentId is null&&report.FreeProjectId is null ? "legacy-context" : "available", report.Id, report.Kind);
             });
         });
     }

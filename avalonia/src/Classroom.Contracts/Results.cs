@@ -6,7 +6,8 @@ public record ResultsGroup(string Key, string Name, ResultsSummary Summary);
 public record ResultsStudent(string Id, string Name, string GroupKey, string GroupName, bool Joined, ResultsSummary Summary, long? LastActivityAt);
 public record ResultsWork(string StudentId, string Subject, string TaskId, string? AssignmentId, string? LessonId, string Title, string State,
     bool Required, bool Started, bool Completed, bool Reused, long? StartedAt, long? CompletedAt, long? LastActivityAt,
-    int Checks, int Errors, int? Hints, int? Violations, int? ActiveSeconds, int? Grade, string? ReportId, long? ReviewedAt, int? FirstCheckFailed = null, string? WorkScope = null, bool Partial = false);
+    int Checks, int Errors, int? Hints, int? Violations, int? ActiveSeconds, int? Grade, string? ReportId, long? ReviewedAt, int? FirstCheckFailed = null, string? WorkScope = null, bool Partial = false,string? FreeProjectId=null);
+public record ResultsElectronicsDetail(string ProjectId,string Title,string ProjectJson,int Revision,string? LessonId,long? OpenedAt,long? FirstSavedAt,long UpdatedAt);
 public record ResultsDifficulty(string Subject, string TaskId, string Title, int Assigned, int Started, int Checked, int Unsolved, double? UnsolvedPercent, int FirstChecksKnown, int FirstChecksFailed, bool SmallSample);
 public record ResultsOverview(string Mode, string? LessonId, string Title, string Note, long GeneratedAt, ResultsSummary Summary,
     ResultsGroup[] Groups, ResultsStudent[] Students, ResultsWork[] Works, ResultsDifficulty[] Difficulties);

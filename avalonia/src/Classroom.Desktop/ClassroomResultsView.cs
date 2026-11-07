@@ -22,6 +22,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     string mode = "lesson"; string? lessonId, group, studentId, subject; bool allStudents, initialized, loading, refreshPending, disposed;
     ResultsWork? selectedWork; ResultsSqlDetail? sqlDetail;
     ElectronicsReviewQueue? submissions;
+    ResultsElectronicsDetail? electronicsDetail;
     int generation; string Location => $"{mode}/{lessonId}/{group}/{studentId}/{selectedWork?.Subject}:{selectedWork?.TaskId}:{selectedWork?.LessonId}:{selectedWork?.WorkScope}";
     public ClassroomResultsView(MainWindow owner, ClassroomApi api) { this.owner=owner;this.api=api;scroll=Ui.Scroll(page);Content=scroll; }
     static string Percent(double? value) => value is null ? "—" : value.Value.ToString("F1") + "%";
@@ -49,7 +50,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
             var result=await api.Get<ResultsOverview>("teacher/results"+Query());
             if(disposed||stamp!=generation)return;data=result;
             if(studentId is not null&&data.Students.All(p=>p.Id!=studentId)){studentId=null;selectedWork=null;}
-            if(selectedWork is { } previous){selectedWork=data.Works.SingleOrDefault(w=>w.StudentId==previous.StudentId&&w.Subject==previous.Subject&&w.TaskId==previous.TaskId&&w.LessonId==previous.LessonId&&w.WorkScope==previous.WorkScope);sqlDetail=null;submissions=null;}
+            if(selectedWork is { } previous){selectedWork=data.Works.SingleOrDefault(w=>w.StudentId==previous.StudentId&&w.Subject==previous.Subject&&w.TaskId==previous.TaskId&&w.LessonId==previous.LessonId&&w.WorkScope==previous.WorkScope);sqlDetail=null;submissions=null;electronicsDetail=null;}
             Render();if(selectedWork is not null)await LoadWork();
         }
         finally{loading=false;if(refreshPending&&!disposed){refreshPending=false;await Refresh(true);}}
@@ -114,16 +115,22 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     void RestorePosition(int stamp){var key=Location;Dispatcher.UIThread.Post(()=>{if(!disposed&&generation==stamp&&Location==key)scroll.Offset=positions.GetValueOrDefault(key);},DispatcherPriority.Loaded);}
     void RenderStudent(ResultsStudent pupil)
     {
-        var table=Table(data!.Works.Where(w=>w.StudentId==pupil.Id).Select(w=>new Row(w.Subject+":"+w.TaskId,w.Title+(w.WorkScope=="course"&&w.LessonId is not null?" · свободная практика":w.Required?"":" · вне выдачи"),State(w),w.Grade is { }grade?grade.ToString():"—",Date(w.CompletedAt??w.LastActivityAt),w)),("Задание","Name"),("Состояние","Progress"),("Оценка","State"),("Дата","Last"));
+        var table=Table(data!.Works.Where(w=>w.StudentId==pupil.Id).Select(w=>new Row(w.Subject+":"+w.TaskId+":"+w.WorkScope+":"+w.LessonId,w.Title+(w.FreeProjectId is not null?" · свободная схема":w.WorkScope=="course"&&w.LessonId is not null?" · свободная практика":w.Required?"":" · вне выдачи"),State(w),w.Grade is { }grade?grade.ToString():"—",Date(w.CompletedAt??w.LastActivityAt),w)),("Задание","Name"),("Состояние","Progress"),("Оценка","State"),("Дата","Last"));
         page.Children.Add(table);async Task Open(){if(table.SelectedItem is Row{Work:{ }work}){positions[Location]=scroll.Offset;selectedWork=work;sqlDetail=null;submissions=null;generation++;Render();await LoadWork();}}
         table.DoubleTapped+=async(_,_)=>await owner.Safe(Open);page.Children.Add(Ui.Button("Открыть работу",()=>owner.Safe(Open)));
     }
     async Task LoadWork(bool more=false)
     {
-        if(selectedWork is {Subject:"electronics",AssignmentId:{ }assignment}scheme)
+        if(selectedWork is {Subject:"electronics"}scheme&&(scheme.AssignmentId is not null||scheme.FreeProjectId is not null))
         {
-            var version=generation;var result=await api.Get<ElectronicsReviewQueue>($"teacher/reviews/electronics?status=all&studentId={scheme.StudentId}&assignmentId={assignment}&offset="+(more?submissions?.NextOffset??0:0));
-            if(disposed||version!=generation)return;positions[Location]=scroll.Offset;submissions=more&&submissions is not null?result with{Items=submissions.Items.Concat(result.Items).ToArray()}:result;Render();return;
+            var version=generation;
+            var filter=scheme.FreeProjectId is { }project?"&projectId="+project+(scheme.LessonId is null?"":"&lessonId="+scheme.LessonId):"&assignmentId="+scheme.AssignmentId;
+            var queue=api.Get<ElectronicsReviewQueue>($"teacher/reviews/electronics?status=all&studentId={scheme.StudentId}"+filter+"&offset="+(more?submissions?.NextOffset??0:0));
+            var snapshot=!more&&scheme.FreeProjectId is { }snapshotId?api.Get<ResultsElectronicsDetail>($"teacher/results/electronics/{scheme.StudentId}/{snapshotId}"+(scheme.LessonId is null?"":"?lessonId="+scheme.LessonId)):null;
+            if(snapshot is not null)await Task.WhenAll(queue,snapshot);else await queue;
+            var result=await queue;
+            if(disposed||version!=generation)return;positions[Location]=scroll.Offset;submissions=more&&submissions is not null?result with{Items=submissions.Items.Concat(result.Items).ToArray()}:result;
+            if(snapshot is not null)electronicsDetail=await snapshot;Render();return;
         }
         if(selectedWork is not {Subject:"sql"}work)return;var stamp=generation;
         var route=$"teacher/results/sql/{work.StudentId}/{Uri.EscapeDataString(work.TaskId)}?offset="+(more?sqlDetail?.NextOffset??0:0)+(work.LessonId is { }id?"&lessonId="+id:"");
@@ -133,16 +140,20 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     }
     void RenderWork(ResultsStudent pupil)
     {
-        var work=selectedWork!;page.Children.Add(Ui.Text(work.Title,20));page.Children.Add(Ui.Text(State(work)+(work.Grade is { }grade?$" · Оценка: {grade}":"")));
+        var work=selectedWork!;page.Children.Add(Ui.Text(work.Title,20));page.Children.Add(Ui.Text(State(work)+(work.Grade is { }grade?$" · {(work.State=="awaiting-review"?"Предыдущая оценка":"Оценка")}: {grade}":"")));
         if(work.WorkScope=="course"&&work.LessonId is not null)page.Children.Add(Ui.Text("Свободная практика этого занятия. Не входит в обязательный прогресс.",12));
+        if(work.FreeProjectId is not null)page.Children.Add(Ui.Text(work.LessonId is null?"Свободный проект. Не входит в обязательный прогресс.":"Свободная схема: снимок и действия выбранного занятия. Не входит в обязательный прогресс.",12));
+        if(work.FreeProjectId is not null&&work.Reused)page.Children.Add(Ui.Text("До нового решения сохранены зачёт и оценка предыдущей сдачи. Дата завершения относится к ней.",12));
         if(work.Partial)page.Children.Add(Ui.Text("История неполная: показаны известные записи; пропущенные даты и длительность не восстановлены догадками.",12));
         page.Children.Add(Ui.Text($"Открыто: {Date(work.StartedAt)} · Завершено: {Date(work.CompletedAt)}\nПроверок или сдач: {work.Checks} · Ошибок: {work.Errors} · Подсказок: {work.Hints?.ToString()??"не записывалось"} · Обнаруженных ограничений: {work.Violations?.ToString()??"не записывалось"}\nАктивная длительность: {(work.ActiveSeconds is { }seconds?$"{seconds} с":"не записывалась")}",13));
         page.Children.Add(Ui.Text("Ограничения — обнаруженные события, а не доказательство списывания.",12));
         if(work.Subject=="electronics")
         {
+            if(electronicsDetail is { }saved)page.Children.Add(Ui.Button("Открыть сохранённую схему",()=>owner.Safe(()=>
+            {var view=new ElectronicsReviewWorkspace(owner,saved,pupil.Name);owner.ShowPage("Снимок свободной схемы",view,view.Dispose);return Task.CompletedTask;})));
             if(work.ReportId is { } report)page.Children.Add(Ui.Primary(Ui.Button("Открыть сданную версию и проверку",()=>owner.Safe(async()=>{var view=new ElectronicsReviewQueueView(owner,api);owner.ShowPage("Сданная схема",view,view.Dispose);await view.OpenReport(pupil.Id,report);}))));
             else page.Children.Add(Ui.Text("Сданной версии пока нет. Работа может быть сохранена как черновик."));
-            if(work.AssignmentId is not null)page.Children.Add(Ui.Button("Пошаговая история схемы",()=>owner.Safe(async()=>{var view=new ElectronicsJournalView(owner,api,pupil.Id,pupil.Name,work.AssignmentId,work.LessonId);owner.ShowPage("История схемы",view,view.Dispose);await view.Load();})));
+            if(work.AssignmentId is not null||work.FreeProjectId is not null)page.Children.Add(Ui.Button("Пошаговая история схемы",()=>owner.Safe(async()=>{var view=new ElectronicsJournalView(owner,api,pupil.Id,pupil.Name,work.AssignmentId,work.LessonId,work.FreeProjectId);owner.ShowPage("История схемы",view,view.Dispose);await view.Load();})));
             if(submissions is not null)
             {
                 page.Children.Add(Ui.Text("История сдач",18));

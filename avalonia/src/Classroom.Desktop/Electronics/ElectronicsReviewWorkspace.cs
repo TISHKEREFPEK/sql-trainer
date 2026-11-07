@@ -8,22 +8,26 @@ namespace Classroom.Desktop.Electronics;
 public sealed class ElectronicsReviewWorkspace : UserControl, IDisposable
 {
     readonly MainWindow owner;
-    readonly ElectronicsReviewDetail submission;
+    readonly string originalJson;
     readonly string directory = Path.Combine(Path.GetTempPath(), "classroom-review-" + Guid.NewGuid().ToString("N"));
     readonly ContentControl body = new();
     ElectronicsScreen? editor;
     bool disposed;
 
     public ElectronicsReviewWorkspace(MainWindow owner, ElectronicsReviewDetail submission)
+        :this(owner,submission.Item.StudentName+" · "+submission.Item.Title,submission.Prompt,submission.ProjectJson,true) { }
+    public ElectronicsReviewWorkspace(MainWindow owner,ResultsElectronicsDetail snapshot,string studentName)
+        :this(owner,studentName+" · "+snapshot.Title,snapshot.LessonId is null?"Текущий черновик свободного проекта.":"Снимок занятия. Сохранено: "+Ui.Time(snapshot.UpdatedAt),snapshot.ProjectJson,false) { }
+    ElectronicsReviewWorkspace(MainWindow owner,string title,string condition,string json,bool submitted)
     {
-        this.owner = owner; this.submission = submission;
-        CircuitProject.Parse(submission.ProjectJson);
-        var prompt = Ui.Scroll(Ui.Text(submission.Prompt)); prompt.MaxHeight = 80;
+        this.owner = owner; originalJson=json;
+        CircuitProject.Parse(json);
+        var prompt = Ui.Scroll(Ui.Text(condition)); prompt.MaxHeight = 80;
         var tools = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 12 };
-        tools.Children.Add(Ui.Text("Проверочная копия. Сданная версия и результаты ученика сохраняются отдельно.", 12));
-        var reset = Ui.Button("Восстановить сданную версию", () => owner.Safe(() => { Reset(); return Task.CompletedTask; }));
+        tools.Children.Add(Ui.Text(submitted?"Проверочная копия. Сданная версия и результаты ученика сохраняются отдельно.":"Изменения в проверочной копии не меняют сохранённую схему ученика.", 12));
+        var reset = Ui.Button(submitted?"Восстановить сданную версию":"Восстановить снимок", () => owner.Safe(() => { Reset(); return Task.CompletedTask; }));
         Grid.SetColumn(reset, 1); tools.Children.Add(reset);
-        var header = Ui.Stack(Ui.Text(submission.Item.StudentName + " · " + submission.Item.Title, 20), prompt, tools);
+        var header = Ui.Stack(Ui.Text(title, 20), prompt, tools);
         var root = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 8 };
         root.Children.Add(header); Grid.SetRow(body, 1); root.Children.Add(body); Content = root;
         Reset();
@@ -36,7 +40,7 @@ public sealed class ElectronicsReviewWorkspace : UserControl, IDisposable
         editor?.Dispose();
         Directory.CreateDirectory(directory);
         var file = Path.Combine(directory, "review.json");
-        File.WriteAllText(file, submission.ProjectJson);
+        File.WriteAllText(file, originalJson);
         editor = new ElectronicsScreen(owner, file, teacher: true);
         body.Content = editor;
     }

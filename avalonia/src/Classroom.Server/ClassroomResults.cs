@@ -59,6 +59,27 @@ public static class ClassroomResults
             row.Partial?null:Wire.Read<long[]>(row.HintsJson).Length,events.Count(e=>e.Kind is "clipboard" or "capture"),row.Partial?null:row.ActiveSeconds,null,null,null,
             !row.Partial&&checks.Length==row.Checks&&checks.Length>0?checks[0].Kind=="correct"?0:1:null,"course",row.Partial);
     }
+    static ResultsWork FreeElectronics(ElectronicsProjectEntity project,ElectronicsPracticeEntity? snapshot,
+        ElectronicsReportEntity[] reports,ElectronicsReviewEntity[] reviews,ElectronicsWorkEntity[] drafts,long? firstOpened=null)
+    {
+        var all=reports.Where(r=>r.StudentId==project.StudentId&&r.FreeProjectId==project.Id).ToArray();
+        var own=snapshot is null?all:all.Where(r=>r.LessonId==snapshot.LessonId).ToArray();
+        var submitted=own.Where(r=>r.Kind=="submitted").OrderByDescending(r=>r.At).ThenByDescending(r=>r.Id).ToArray();
+        ElectronicsReviewEntity? Decision(ElectronicsReportEntity r)=>reviews.Where(v=>v.StudentId==r.StudentId&&v.ReportId==r.Id&&v.Action!="allow-resubmit").OrderByDescending(v=>v.Sequence).FirstOrDefault();
+        var latest=submitted.FirstOrDefault();var decision=latest is null?null:Decision(latest);
+        var previous=latest is null?null:all.Where(r=>r.Kind=="submitted"&&r.At<latest.At).OrderByDescending(r=>r.At).ThenByDescending(r=>r.Id)
+            .Select(r=>new{Report=r,Review=Decision(r)}).FirstOrDefault(r=>r.Review is not null);
+        var effective=decision??previous?.Review;
+        var ownDrafts=drafts.Where(w=>w.StudentId==project.StudentId&&w.FreeProjectId==project.Id&&(snapshot is null||w.LessonId==snapshot.LessonId)).ToArray();
+        var opened=snapshot is null?firstOpened:snapshot.OpenedAt;
+        var started=snapshot is null||opened is not null||snapshot.FirstSavedAt is not null||ownDrafts.Length>0||own.Length>0;
+        var last=own.Select(r=>(long?)r.At).Concat(ownDrafts.Select(w=>(long?)w.UpdatedAt)).Append(snapshot?.UpdatedAt??project.UpdatedAt).Append(effective?.At).Max();
+        return new(project.StudentId,"electronics",project.Id,null,snapshot?.LessonId,snapshot?.Name??project.Name,
+            latest is null?started?"working":"not-started":decision?.Action??"awaiting-review",false,started,effective?.Action=="accepted",
+            snapshot is not null&&decision is null&&effective?.Action=="accepted"&&previous?.Report.LessonId!=snapshot.LessonId,
+            opened,effective?.Action=="accepted"?effective.At:null,last,submitted.Length,own.Count(r=>r.Kind is "compile-error" or "run-error"),
+            null,null,null,effective?.Grade,latest?.Id,effective?.At,null,"free-project",false,project.Id);
+    }
     public static async Task<ResultsOverview> Build(ServerState state, ClassroomDb db, string mode, string? lessonId, string? groupKey = null, string? subject = null, string? studentId = null)
     {
         if (mode is not ("lesson" or "course") || subject is not (null or "sql" or "electronics")) throw new HttpFault(400, "Некорректный вид результатов.");
@@ -69,10 +90,12 @@ public static class ClassroomResults
         var allEvents = await db.Attempts.AsNoTracking().Select(a => new { a.Id, a.StudentId, a.TaskId, a.LessonId, a.WorkScope, a.At, a.Action, a.Kind }).ToArrayAsync();
         var events = allEvents.Select(a => new AttemptEntity { Id = a.Id, StudentId = a.StudentId, TaskId = a.TaskId, LessonId = a.LessonId, WorkScope = a.WorkScope, At = a.At, Action = a.Action, Kind = a.Kind }).ToArray();
         var electronicAssignments = await db.ElectronicsAssignments.AsNoTracking().ToArrayAsync();
-        var reports = await db.ElectronicsReports.AsNoTracking().Select(r => new { r.StudentId, r.Id, r.AssignmentId, r.Kind, r.At }).ToArrayAsync();
-        var lightReports = reports.Select(r => new ElectronicsReportEntity { StudentId = r.StudentId, Id = r.Id, AssignmentId = r.AssignmentId, Kind = r.Kind, At = r.At }).ToArray();
+        var reports = await db.ElectronicsReports.AsNoTracking().Select(r => new { r.StudentId, r.Id, r.AssignmentId,r.FreeProjectId,r.LessonId, r.Kind, r.At }).ToArrayAsync();
+        var lightReports = reports.Select(r => new ElectronicsReportEntity { StudentId = r.StudentId, Id = r.Id, AssignmentId = r.AssignmentId,FreeProjectId=r.FreeProjectId,LessonId=r.LessonId, Kind = r.Kind, At = r.At }).ToArray();
         var reviews = await db.ElectronicsReviews.AsNoTracking().ToArrayAsync();
-        var drafts = await db.ElectronicsWorks.AsNoTracking().Select(w => new ElectronicsWorkEntity { StudentId = w.StudentId, ClientId = w.ClientId, AssignmentId = w.AssignmentId, UpdatedAt = w.UpdatedAt }).ToArrayAsync();
+        var drafts = await db.ElectronicsWorks.AsNoTracking().Select(w => new ElectronicsWorkEntity { StudentId = w.StudentId, ClientId = w.ClientId, AssignmentId = w.AssignmentId,FreeProjectId=w.FreeProjectId,LessonId=w.LessonId, UpdatedAt = w.UpdatedAt }).ToArrayAsync();
+        var freeProjects=await db.ElectronicsProjects.AsNoTracking().Select(p=>new ElectronicsProjectEntity{StudentId=p.StudentId,Id=p.Id,Name=p.Name,CreatedAt=p.CreatedAt,UpdatedAt=p.UpdatedAt}).ToArrayAsync();
+        var freePractice=await db.ElectronicsPractice.AsNoTracking().Select(p=>new ElectronicsPracticeEntity{StudentId=p.StudentId,ProjectId=p.ProjectId,LessonId=p.LessonId,Name=p.Name,OpenedAt=p.OpenedAt,FirstSavedAt=p.FirstSavedAt,UpdatedAt=p.UpdatedAt}).ToArrayAsync();
         var electronicsTasks = await db.LessonElectronicsTasks.AsNoTracking().ToArrayAsync();
         if (mode == "lesson")
         {
@@ -123,11 +146,13 @@ public static class ClassroomResults
                     var assignment = electronicAssignments.SingleOrDefault(a => a.LessonId == lesson.Id && a.TaskId == task.TaskId && a.StudentId == pupil.Id);
                     works.Add(Electronics(pupil.Id, task, assignment, lightReports.Where(r => assignment is not null && r.AssignmentId == assignment.Id).ToArray(), reviews, drafts));
                 }
+                foreach(var snapshot in freePractice.Where(p=>p.StudentId==pupil.Id&&p.LessonId==lesson.Id))
+                    works.Add(FreeElectronics(freeProjects.Single(p=>p.StudentId==pupil.Id&&p.Id==snapshot.ProjectId),snapshot,lightReports,reviews,drafts));
             }
         }
         else
         {
-            title = "Прогресс курса и выданных работ"; note = "SQL — доступные задания курса; электроника — выданные работы известных занятий. Свободные старые схемы без назначения доступны в архиве электроники и не входят в обязательный прогресс.";
+            title = "Прогресс курса и выданных работ"; note = "SQL — доступные задания курса; электроника — выданные работы и свободные проекты. Свободный проект показан один раз и не входит в обязательный прогресс. Прежние схемы без записанного контекста доступны в архиве электроники.";
             var catalogue = (await state.Tasks(db)).Select(ServerState.Item).ToArray(); var assignments = await db.Assignments.AsNoTracking().ToArrayAsync();
             var roster = await db.LessonRoster.AsNoTracking().ToArrayAsync(); var participants = await db.LessonParticipants.AsNoTracking().ToArrayAsync();
             foreach (var profile in profiles)
@@ -147,6 +172,8 @@ public static class ClassroomResults
                     var assignment = electronicAssignments.SingleOrDefault(a => a.StudentId == profile.Id && a.LessonId == task.LessonId && a.TaskId == task.TaskId);
                     works.Add(Electronics(profile.Id, task, assignment, lightReports.Where(r => assignment is not null && r.AssignmentId == assignment.Id).ToArray(), reviews, drafts));
                 }
+                foreach(var project in freeProjects.Where(p=>p.StudentId==profile.Id))works.Add(FreeElectronics(project,null,lightReports,reviews,drafts,
+                    freePractice.Where(p=>p.StudentId==profile.Id&&p.ProjectId==project.Id).Select(p=>p.OpenedAt).Min()));
             }
         }
         var canonicalNames = people.GroupBy(p => p.GroupKey).ToDictionary(g => g.Key, g => g.First().GroupName);
@@ -193,14 +220,14 @@ public static class ClassroomResults
     }
     public static string Export(ResultsOverview data)
     {
-        var b = new StringBuilder("Ученик;Группа;Направление;Задание;Занятие;Обязательное;Состояние;Завершено;Открыто UTC;Завершено UTC;Проверок или сдач;Ошибок;Подсказок;Обнаруженных ограничений;Активных секунд;Оценка;Контекст;Полнота\r\n");
+        var b = new StringBuilder("Ученик;Группа;Направление;Задание;Занятие;Обязательное;Состояние;Завершено;Открыто UTC;Завершено UTC;Проверок или сдач;Ошибок;Подсказок;Обнаруженных ограничений;Активных секунд;Оценка;Контекст;Полнота;ID свободного проекта\r\n");
         foreach (var row in data.Works)
         {
             var pupil = data.Students.Single(p => p.Id == row.StudentId);
-            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, row.Subject, row.Title, row.LessonId ?? "", row.Required ? "1" : "0", row.State, row.Completed ? "1" : "0", At(row.StartedAt), At(row.CompletedAt), row.Checks.ToString(CultureInfo.InvariantCulture), row.Errors.ToString(CultureInfo.InvariantCulture), row.Hints?.ToString(CultureInfo.InvariantCulture) ?? "", row.Violations?.ToString(CultureInfo.InvariantCulture) ?? "", row.ActiveSeconds?.ToString(CultureInfo.InvariantCulture) ?? "", row.Grade?.ToString(CultureInfo.InvariantCulture) ?? "", row.WorkScope=="course"&&row.LessonId is not null?"free-practice":row.LessonId is null?"course":"lesson",row.Partial?"partial":"recorded" }.Select(Csv)));
+            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, row.Subject, row.Title, row.LessonId ?? "", row.Required ? "1" : "0", row.State, row.Completed ? "1" : "0", At(row.StartedAt), At(row.CompletedAt), row.Checks.ToString(CultureInfo.InvariantCulture), row.Errors.ToString(CultureInfo.InvariantCulture), row.Hints?.ToString(CultureInfo.InvariantCulture) ?? "", row.Violations?.ToString(CultureInfo.InvariantCulture) ?? "", row.ActiveSeconds?.ToString(CultureInfo.InvariantCulture) ?? "", row.Grade?.ToString(CultureInfo.InvariantCulture) ?? "", row.FreeProjectId is not null?"free-project":row.WorkScope=="course"&&row.LessonId is not null?"free-practice":row.LessonId is null?"course":"lesson",row.Partial?"partial":"recorded",row.FreeProjectId??"" }.Select(Csv)));
         }
         foreach (var pupil in data.Students.Where(p => data.Works.All(w => w.StudentId != p.Id)))
-            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, "", "Нет выданных работ", data.LessonId ?? "", "0", "", "0", "", "", "", "", "", "", "", "", "", "" }.Select(Csv)));
+            b.AppendLine(string.Join(';', new[] { pupil.Name, pupil.GroupName, "", "Нет выданных работ", data.LessonId ?? "", "0", "", "0", "", "", "", "", "", "", "", "", "", "", "" }.Select(Csv)));
         return b.ToString();
     }
     public static void Map(RouteGroupBuilder api, ServerState state)
@@ -213,6 +240,22 @@ public static class ClassroomResults
         });
         api.MapGet("/teacher/results", (HttpContext ctx, string? mode, string? lessonId, string? group, string? subject) =>
         { state.Authorize(ctx, "teacher"); return state.Read(db => Build(state, db, mode ?? "lesson", lessonId, group, subject)); });
+        api.MapGet("/teacher/results/electronics/{studentId}/{projectId}",(HttpContext ctx,string studentId,string projectId,string? lessonId)=>
+        {
+            state.Authorize(ctx,"teacher");var id=ElectronicsProjects.Id(projectId);
+            var lesson=lessonId is null?null:ElectronicsProjects.Id(lessonId);
+            return state.Read(async db=>
+            {
+                var project=await db.ElectronicsProjects.FindAsync(studentId,id)??throw new HttpFault(404,"Свободный проект не найден.");
+                if(lesson is not null)
+                {
+                    var snapshot=await db.ElectronicsPractice.FindAsync(studentId,id,lesson)??throw new HttpFault(404,"Снимок проекта этого занятия не записан.");
+                    return new ResultsElectronicsDetail(id,snapshot.Name,snapshot.ProjectJson,snapshot.Revision,lesson,snapshot.OpenedAt,snapshot.FirstSavedAt,snapshot.UpdatedAt);
+                }
+                var opened=await db.ElectronicsPractice.Where(p=>p.StudentId==studentId&&p.ProjectId==id).MinAsync(p=>p.OpenedAt);
+                return new ResultsElectronicsDetail(id,project.Name,project.ProjectJson,project.Revision,null,opened,project.CreatedAt,project.UpdatedAt);
+            });
+        });
         api.MapGet("/teacher/results/sql/{studentId}/{taskId}", (HttpContext ctx, string studentId, string taskId, string? lessonId, string? workScope, int? offset) =>
         {
             state.Authorize(ctx, "teacher"); var start = offset ?? 0; if (start is < 0 or > 1000000) throw new HttpFault(400, "Некорректная страница попыток.");

@@ -11,6 +11,52 @@ namespace Classroom.Tests;
 public sealed class LessonStorageTests
 {
     [Fact]
+    public async Task FreeProjectMigrationPreservesLegacyCopiesWithoutInventingContext()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new ClassroomDb(new DbContextOptionsBuilder<ClassroomDb>().UseSqlite(connection).Options);
+        Assert.False(db.Database.HasPendingModelChanges());
+        await db.Database.MigrateAsync();
+        Seed(db);
+        const string json = """{"version":1,"name":"Legacy","code":"void setup() {} void loop() {}","parts":[],"wires":[]}""";
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)));
+        var client = Guid.NewGuid().ToString("N"); var report = Guid.NewGuid().ToString("N");
+        db.ElectronicsWorks.Add(new() { StudentId="s", ClientId=client, Sequence=7, ProjectJson=json, ProjectHash=hash, Name="Legacy", UpdatedAt=100 });
+        db.ElectronicsReports.Add(new() { StudentId="s", Id=report, ClientId=client, Kind="submitted", ProjectJson=json, ProjectHash=hash, Name="Legacy", At=100, Detail="Original submission" });
+        await db.SaveChangesAsync();
+        await db.GetService<IMigrator>().MigrateAsync("20261106155053_SqlPracticeCoverage");
+        db.ChangeTracker.Clear();
+        var before = await LegacyRows();
+        await db.Database.MigrateAsync();
+        Assert.Equal(before, await LegacyRows());
+        var work = await db.ElectronicsWorks.SingleAsync();
+        Assert.Equal(7L, work.Sequence); Assert.Null(work.FreeProjectId); Assert.Null(work.LessonId); Assert.Null(work.ProjectRevision);
+        var submission = await db.ElectronicsReports.SingleAsync();
+        Assert.Equal(report, submission.Id); Assert.Null(submission.FreeProjectId); Assert.Null(submission.LessonId);
+        Assert.Empty(await db.ElectronicsProjects.ToArrayAsync());
+        Assert.Empty(await db.ElectronicsPractice.ToArrayAsync());
+        Assert.Empty(await db.Database.GetPendingMigrationsAsync());
+        DatabaseHealth.Validate(db);
+
+        async Task<string[]> LegacyRows()
+        {
+            var rows = new List<string>();
+            foreach (var sql in new[] {
+                "SELECT Id,Login,PasswordHash,GroupId,Slot,FullName FROM Profiles ORDER BY Id",
+                "SELECT StudentId,ClientId,Sequence,ProjectJson,ProjectHash,Name,Parts,Wires,UpdatedAt,AssignmentId FROM ElectronicsWorks",
+                "SELECT StudentId,Id,ClientId,Kind,ProjectJson,ProjectHash,Name,At,Detail,AssignmentId,ExpectedAssignmentVersion FROM ElectronicsReports" })
+            {
+                await using var command = connection.CreateCommand(); command.CommandText=sql;
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    rows.Add(System.Text.Json.JsonSerializer.Serialize(Enumerable.Range(0,reader.FieldCount).Select(i=>reader.IsDBNull(i)?null:reader.GetValue(i)).ToArray()));
+            }
+            return rows.ToArray();
+        }
+    }
+
+    [Fact]
     public async Task MigrationKeepsLegacyIdentityPasswordAssignmentAndSourceBackup()
     {
         var dir = Path.Combine(Path.GetTempPath(), "classroom-lesson-migration-" + Guid.NewGuid().ToString("N"));

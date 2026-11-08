@@ -1,5 +1,16 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## ROM memory/flash и Arduino startup Pico · 8 ноября 2026
+
+После `1cc2d46` добавлены собственные pico-rom/pico-flash и USB/SIO/PHY adapters, vendor неизменён. Первоначальный общий ROM-отказ снят для memory/bits/lookup/flash; первые Arduino-скетчи исполняются. ROM read-only bus semantics и bare compiler `-fno-delete-null-pointer-checks` учитывают легальное чтение адреса 0, в том числе TinyUSB EP0. Unknown instructions теперь не проходят как NOP. Модель БД/схем/установка/личные данные не изменены; GitHub отложен, цель активна.
+
+- `pico-rom-usb-memory`: **2 passed / 0 skipped** — настоящие ROM lookup/memory/bits и USB enumeration/эхо UTF-8.
+- `pico-rom-flash-usb-bulk`: **2 passed / 0 skipped** — SDK erase/program/readback 2 МиБ NOR, AND при повторном program, erase→FF; USB многопакетный UTF-8 без смешивания UART.
+- `pico-rom-block`: **13 passed / 0 skipped**, 1 м 50 с — все PicoFoundationTests + PicoRomTests. Включены настоящие Arduino setup/loop, GPIO2→25/ADC0 1,65 В, UART0→UART1 UTF-8, virtual flash UID, memory/bits, USB и NOR, неверные диапазоны памяти/запись XIP/неподдержанный float/add, остановка после ошибки до reload, fresh reload, прежние UF2/изоляция/drive-alias/лимит шага. Исходник первого startup-теста сам устанавливает GPIO, первый смешанный по времени кадр проверяется следующим устойчивым кадром.
+- `pico-rom-aligned-tail`: **1 passed / 0 skipped** после уточнения word memory variants — выровненные указатели с длиной 35 байт, хвост не выходит за requested range; прежние memory/bits/ROM immutability также прошли. Это повтор одного сценария, не 14 уникальных тестов.
+
+Проверено в изолированном `.codex` SDK/кэше и GUID scratch. Полная solution/Win10/LAN в этом блоке не повторялись. Нельзя считать готовыми весь ROM, analogWrite/PWM, USB всех режимов, PIO/DMA/RTC/watchdog, точные задержки ROM/NOR/PHY или native circuit integration. Float/double сейчас явно отвергается, в том числе необходимый для analogWrite; ближайший шаг — корректная арифметика и её эталоны. Исходный ROM не включён; Pico остаётся Visual, SDK не поставляется пользователю как готовая плата. Импорт/учебная редактура/GitHub отложены.
+
 ## Основание Pico/RP2040 · 8 ноября 2026
 
 Добавлены PicoCompiler/Core, PicoFirmwareRunner, pico-worker/pico-uf2, неизменённый MIT RP2040js 1.4.1 и prepare-pico.ps1. Источники, закреплённые версии, разделение trusted core и pupil compile, лицензии и незавершённые части — [Pico foundation](pico-foundation-2026-11-08.md). Модель SQLite/сохранений не менялась. Рабочие приложения/БД и remote не обновлялись, цель активна.

@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Arduino startup и ROM ABI Pico · 8 ноября 2026
+
+Первые Arduino-скетчи теперь работают через собственные ROM memory/bits/flash-вызовы. USB CDC, GPIO/ADC/UART и SDK erase/program подтверждены исполняемыми скетчами. Для проверки после подготовки SDK: `dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests'`. Pico пока Visual: арифметика ROM и native-связка не готовы. Подробности — [описание](docs/pico-foundation-2026-11-08.md); рабочая установка и GitHub не обновлялись.
+
 ## Основание Pico для разработки · 8 ноября 2026
 
 После `./scripts/prepare-electronics.ps1` выполнить `./scripts/prepare-pico.ps1`: это отдельный закреплённый SDK для новых PicoFoundationTests. Подготовка требует сети, сама компиляция — нет. `build-windows.ps1` готовит его перед тестами, но пока не включает в пользовательские приложения. Проверены настоящий bare-metal ARM/GPIO/ADC/UART и Arduino-компиляция в AppContainer. Обычный Arduino-скетч пока явно упирается в отсутствующий BootROM ABI; Pico остаётся Visual. Шаги, зависимости/лицензии и оставшиеся границы — [Pico foundation](docs/pico-foundation-2026-11-08.md). Установленные приложения и БД не обновлены, GitHub отложен.

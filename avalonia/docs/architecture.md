@@ -1,5 +1,13 @@
 # Архитектура Avalonia Classroom
 
+## Частичный ROM ABI / NOR / USB Pico · 8 ноября 2026
+
+pico-rom.cjs создаёт собственные mapped ROM-таблицы, векторы и Thumb BKPT/BX LR entry points. Host-реализации lookup/memcpy/memset/word variants/CLZ/CTZ/popcount/reverse выполняют операции над реальной памятью MCU и проверяют диапазоны до изменения. Word variants требуют выровненных указателей и обрабатывают хвост байтов. ROM writes игнорируются аппаратно, чтение неизвестной ROM-области и вызов неподдержанного float/double дают явную ошибку. Bare compiler добавил -fno-delete-null-pointer-checks для легального MMIO/ROM по адресу 0. Оригинальная библиотека RP2040js не изменена.
+
+pico-flash.cjs подключает QSPI CTRL/STATUS, XIP_CTRL и SSI FIFO к 2 МиБ NOR. SDK вызывает настоящие boot2/flash routines; команды статуса/UID/JEDEC/чтения обслуживаются моделью, неизвестные команды явно отклоняются. UID 53514C4300000001 синтетический, не идентификатор ПК. Erase/program проверяют режим/диапазон/выравнивание; program использует AND и не возвращает нулевой бит в 1. XIP reads при отключённом режиме ошибочны, writes следуют ERR_BADWRITE. Кэш функционально когерентен, аппаратная задержка операций не моделируется точно.
+
+USB enumeration через USBCDC/TinyUSB и IRQ проверена: SETUP отложен на 50 мкс моделируемого времени, чтобы firmware завершил предыдущее событие; OUT без данных ждёт вместо генерации ZLP. PHY-конфигурация, используемая SDK enumeration workaround, хранится с масками; это не аналоговая модель PHY. SIO FIFO допускает single-core startup, попытка исполнения через second-core FIFO явно отвергается. PicoFrame содержит UsbReady. Неизвестная инструкция больше не проходит как NOP с предупреждением. Полная арифметика ROM/PWM/PIO/DMA/RTC/watchdog и native-связка остаются открыты; формат схем/БД не менялся.
+
 ## PicoCompiler / RP2040 foundation · 8 ноября 2026
 
 PicoSourceKind разделяет Arduino и bare-metal C++. Оба пути используют CompilerRuntime с разрешённым `sandbox-arm` и Windows AppContainer; дополнительные package indexes включены в fingerprint. Подготовка core.a сериализована файловым lease и использует только фиксированный app-owned sketch с бюджетом 5 минут, до записи пользовательского кода. Обычный Run сохраняет 60 секунд. Кэш v3 содержит один SHA256-проверенный архив; callback после создания drive aliases помещает его копию в scratch/cache/cores с именем CLI 1.5.1 для текущего runtime alias. Явный build-path не задаётся: CLI иначе отключает core cache. Ученический процесс не получает права менять SDK/общий архив. Старые 1/2 dev-кэши проверяются и переводятся в 3 без удаления прежних каталогов.

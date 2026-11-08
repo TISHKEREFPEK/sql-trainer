@@ -73,13 +73,14 @@ public sealed class PicoFoundationTests
         finally{File.Delete(file);}
     }
     [Fact]
-    public async Task ArduinoCoreCompilesOfflineInTheContainerAndRomDependencyFailsExplicitly()
+    public async Task ArduinoCoreCompilesOfflineInTheContainerAndRunsItsRealSetup()
     {
         using var limit=new CancellationTokenSource(TimeSpan.FromMinutes(6));
         var image=await PicoCompiler.Compile("void setup(){pinMode(25,OUTPUT);digitalWrite(25,HIGH);} void loop(){}",limit.Token);
         using var runner=new PicoFirmwareRunner();await runner.Start(image);
-        var failure=await Assert.ThrowsAsync<InvalidDataException>(async()=>{for(var i=0;i<100;i++)await runner.Step(milliseconds:1);});
-        Assert.Contains("BootROM ABI",failure.Message);
+        PicoFrame? frame=null;
+        for(var i=0;i<300;i++){frame=await runner.Step(milliseconds:10);if(frame.Pins[25].Output&&frame.Pins[25].Voltage>3)break;}
+        Assert.NotNull(frame);Assert.True(frame.Pins[25].Output);frame=await runner.Step(milliseconds:10);Assert.InRange(frame.Pins[25].Voltage,3.2,3.3);
     }
     [Fact]
     public async Task ArduinoCoreCacheUsesTheActualRuntimeAliasWhenAnotherDriveIsOccupied()

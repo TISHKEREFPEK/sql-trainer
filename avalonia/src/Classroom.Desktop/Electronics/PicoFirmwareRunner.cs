@@ -4,7 +4,7 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public sealed record PicoFrame(PinDrive[] Pins,string[] SerialPorts,int[] SerialPending,double Milliseconds,bool Complete,long Instructions,double ClockHz,string[] Diagnostics);
+public sealed record PicoFrame(PinDrive[] Pins,string[] SerialPorts,int[] SerialPending,bool UsbReady,double Milliseconds,bool Complete,long Instructions,double ClockHz,string[] Diagnostics);
 
 // Foundation API, deliberately separate from the supported circuit-board picker.
 public sealed class PicoFirmwareRunner : IDisposable

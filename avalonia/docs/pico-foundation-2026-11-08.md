@@ -4,6 +4,9 @@
 
 ## Что реализовано
 
+- После первого foundation-коммита `1cc2d46` добавлен собственный host ROM ABI: lookup, memcpy/memset/word variants и битовые функции. Это собственные таблицы/Thumb entry points и реальные операции над памятью MCU, без оригинального ROM. Неизвестные функции и инструкции явно останавливают выполнение.
+- Обычные проверенные Arduino setup/loop теперь запускаются: GPIO/ADC/UART, настоящая USB enumeration через TinyUSB/IRQ и UTF-8, в том числе многопакетный ввод/эхо. Отложенная доставка USB SETUP устраняет вызов до завершения предыдущего события; OUT без данных ждёт, а не порождает пустые пакеты. PicoFrame сообщает UsbReady.
+- Добавлена функциональная модель 2 МиБ serial NOR с QSPI/SSI FIFO и командами статуса/UID/JEDEC/чтения. SDK flash erase/program и возврат через настоящий boot2 проверены: байты меняются, program выполняет AND, erase возвращает FF. UID `53514C4300000001` синтетический. ROM игнорирует bus writes без изменения данных, XIP writes по умолчанию ошибочны. Точные циклы ROM/NOR и аналоговый USB PHY не заявлены.
 - Отдельные `PicoCompiler` / `PicoFirmwareRunner` и Node worker выполняют настоящий машинный код ARM Cortex-M0+, без интерпретации строк Arduino. RP2040js 1.4.1 закреплён по upstream commit / npm SHA512; неизменённый CJS-дистрибутив и MIT-лицензия находятся в `electronics/vendor/rp2040js/`.
 - Строгий UF2-декодер проверяет семью RP2040, последовательность блоков, перекрытия, диапазон flash 2 МиБ, загруженные векторы и стек в 264 КиБ RAM. Отказ чужой/повреждённой прошивке происходит до запуска CPU.
 - Проверен bare-metal C++: реальный GPIO2 управляет GPIO25, ADC0 измеряет 1,65 В, UART0 выводит результат и пересылает UTF-8-ввод в независимый UART1. Перезапуск создаёт новое состояние. Один шаг ограничен 50 мс моделируемого времени / 1 000 000 инструкций / объёмом serial; неполный шаг отмечается `Complete=false` и может продолжаться.
@@ -13,9 +16,9 @@
 
 ## Важная незавершённая граница
 
-Обычный Arduino-скетч пока останавливается с явной ошибкой `BootROM ABI is not implemented yet`. Оригинальные байты Raspberry Pi BootROM из demo upstream не включены: лицензия эмулятора MIT не распространяется автоматически на отдельные floating-point routines ROM. Требуется собственная совместимая реализация нужного ROM ABI с реальными результатами, а не заглушки успешного выполнения.
+Общий первоначальный отказ всем ROM-обращениям снят для перечисленных функций. **Float/double ROM ABI пока не реализован**, вызов выдаёт явную ошибку с именем операции. Это, в частности, ещё блокирует обычный analogWrite, где Arduino рассчитывает делитель через float. Reset/BOOTSEL и другие непокрытые ROM-вызовы также не подменяются успехом. Оригинальные байты Raspberry Pi BootROM из demo upstream не включены: лицензия эмулятора MIT не распространяется автоматически на отдельные floating-point routines ROM.
 
-USB CDC, PWM/PIO/DMA/RTC/watchdog, прерывания, частоты и протоколы требуют отдельных эталонов. Внутренние модели библиотеки и объект USB созданы, но их наличие не является доказательством поведения нашего приложения. I2C-связь с circuit solver явно отклоняется до реализации. Не подключены физическая распиновка, новый native PartKind, редактор кода/проверочная копия/история Pico и поставка Pico runtime пользователю. ESP32-S3 и многоплатность также открыты.
+USB CDC подтверждён перечисленными сценариями, не всеми режимами USB. PWM/PIO/DMA/RTC/watchdog, остальные прерывания, частоты и протоколы требуют собственных эталонов. Исполнение второго ядра через SIO FIFO явно не поддержано; начальный single-core сценарий работает. I2C-связь с circuit solver явно отклоняется до реализации. Не подключены физическая распиновка, новый native PartKind, редактор кода/проверочная копия/история Pico и поставка Pico runtime пользователю. ESP32-S3 и многоплатность также открыты.
 
 ## Подготовка на другом ПК
 
@@ -25,7 +28,7 @@ USB CDC, PWM/PIO/DMA/RTC/watchdog, прерывания, частоты и пр�
 ./scripts/prepare-electronics.ps1
 ./scripts/prepare-pico.ps1
 $env:CLASSROOM_PICO_RUNTIME = Join-Path (Get-Location) 'artifacts/pico-runtime'
-dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests'
+dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests'
 ```
 
 Первая подготовка SDK требует интернета и свободного места для обоих наборов инструментов и их изолированного кэша; компиляция скетча сети не требует. Папки Pico/AVR должны быть раздельными и не вложенными. Скрипт сохраняет лицензии/исходники ctags, проверяет SHA256 xPack и не перезаписывает неизвестный ARM-комплект. Короткая временная папка распаковки учитывает ограничения PowerShell 5.1 на длину пути. `build-windows.ps1` подготавливает Pico для тестов, но пока упаковывает пользователям только прежний AVR runtime.
@@ -34,6 +37,7 @@ dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter
 
 ## Первичные источники
 
+- [SDK runtime / ROM API](https://www.raspberrypi.com/documentation/pico-sdk/runtime.html#group_pico_bootrom) и [RP2040 datasheet](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf). Реализация сверялась также с закреплёнными SDK headers / mem_ops_aeabi.S / hardware_flash и boot2 в Arduino-Pico 6.3.2. Оригинальный vendor не изменён.
 - [RP2040js](https://github.com/wokwi/rp2040js/tree/8693315df527adce8bf2bc315aeb4a1ca61c02a3), [npm archive](https://registry.npmjs.org/rp2040js/-/rp2040js-1.4.1.tgz) — точный origin/hash в vendor/ORIGIN.md.
 - [Arduino-Pico 6.3.2](https://github.com/earlephilhower/arduino-pico/tree/6.3.2), [установка](https://arduino-pico.readthedocs.io/en/latest/install.html).
 - [xPack ARM 14.2.1-1.1](https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/tag/v14.2.1-1.1), [исходники](https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/tree/v14.2.1-1.1.1); SHA256 архива зафиксирован в prepare-pico.ps1.

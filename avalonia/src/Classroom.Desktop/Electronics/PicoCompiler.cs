@@ -4,8 +4,8 @@ namespace Classroom.Desktop.Electronics;
 
 public enum PicoSourceKind{Arduino,BareMetal}
 
-// Platform foundation only: a compiled Arduino image still needs the original
-// BootROM ABI implementation before Pico can become a runnable circuit part.
+// Platform foundation only: the remaining ROM math/peripheral ABI and native
+// circuit integration are required before Pico becomes a runnable editor part.
 public static partial class PicoCompiler
 {
     public const string CoreVersion="6.3.2",ToolsVersion="5.0.0-9576866";
@@ -51,7 +51,7 @@ public static partial class PicoCompiler
             var source=Path.Combine(scratch,"firmware.cpp");await File.WriteAllTextAsync(source,code,cancellation);
             var linker=Path.Combine(scratch,"firmware.ld");await File.WriteAllTextAsync(linker,"ENTRY(reset)\nMEMORY { FLASH (rx) : ORIGIN = 0x10000000, LENGTH = 2M RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 264K }\nSECTIONS { .text : { KEEP(*(.vectors)) *(.text*) *(.rodata*) } > FLASH .data : { *(.data*) } > RAM AT> FLASH .bss (NOLOAD) : { *(.bss*) *(COMMON) } > RAM /DISCARD/ : { *(.ARM.exidx*) *(.ARM.extab*) *(.comment*) *(.eh_frame*) } }\n",cancellation);
             var elf=Path.Combine(scratch,"firmware.elf");var binary=Path.Combine(scratch,"firmware.bin");
-            await Run(Tool(runtime,"g++"),new[]{"-mcpu=cortex-m0plus","-mthumb","-mfloat-abi=soft","-std=c++17","-Os","-ffreestanding","-fno-builtin","-fno-exceptions","-fno-rtti","-nostdlib","-Wl,--gc-sections","-Wl,-T,"+linker,source,"-lgcc","-o",elf});
+            await Run(Tool(runtime,"g++"),new[]{"-mcpu=cortex-m0plus","-mthumb","-mfloat-abi=soft","-std=c++17","-Os","-ffreestanding","-fno-builtin","-fno-delete-null-pointer-checks","-fno-exceptions","-fno-rtti","-nostdlib","-Wl,--gc-sections","-Wl,-T,"+linker,source,"-lgcc","-o",elf});
             await Run(Tool(runtime,"objcopy"),new[]{"-Obinary",elf,binary});return ToUf2(await File.ReadAllBytesAsync(binary,cancellation));
         }
         finally

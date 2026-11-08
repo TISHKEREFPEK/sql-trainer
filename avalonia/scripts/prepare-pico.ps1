@@ -58,5 +58,5 @@ if(-not (Test-Path -LiteralPath (Join-Path $source 'bin/arm-none-eabi-g++.exe'))
 Move-Item -LiteralPath $source -Destination $arm
 Remove-Item -LiteralPath $stage
 foreach($name in @('ctags.exe','ctags-COPYING','ctags-source.zip')){Copy-Item -LiteralPath (Join-Path $BaseRuntimePath "sandbox-avr/$name") -Destination (Join-Path $arm $name)}
-@{version=1;core=$coreVersion;arm=$armVersion;armArchiveSha256=$sha;coreIndex=$index;armSources="https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/tree/v14.2.1-1.1.1";coreSources="https://github.com/earlephilhower/arduino-pico/tree/$coreVersion";sandbox='AppContainer';simulation='CPU foundation; Arduino BootROM ABI not yet implemented'} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
+@{version=1;core=$coreVersion;arm=$armVersion;armArchiveSha256=$sha;coreIndex=$index;armSources="https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/tree/v14.2.1-1.1.1";coreSources="https://github.com/earlephilhower/arduino-pico/tree/$coreVersion";sandbox='AppContainer'} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
 Write-Output 'Prepared pinned Pico compiler. Keep all bundled licenses/source references; internet is not used for sketch compilation. Pico circuit integration is still unfinished.'

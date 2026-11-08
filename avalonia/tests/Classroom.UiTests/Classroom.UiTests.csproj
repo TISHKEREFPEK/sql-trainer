@@ -4,6 +4,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="../fixtures/pico-science.json" Link="fixtures/pico-science.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/Classroom.Desktop/Classroom.Desktop.csproj" />
     <ProjectReference Include="../../src/Classroom.Worker/Classroom.Worker.csproj" />
     <ProjectReference Include="../../src/Classroom.Server/Classroom.Server.csproj" ReferenceOutputAssembly="false" />

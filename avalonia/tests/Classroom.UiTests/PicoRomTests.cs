@@ -47,7 +47,7 @@ public sealed class PicoRomTests
     [Theory]
     [InlineData(0,"ROM memory range")]
     [InlineData(1,"read-only through XIP")]
-    [InlineData(2,"float/cos")]
+    [InlineData(2,"float/compare-fast")]
     public async Task InvalidMemoryAndUnsupportedRomCallsFailAndRequireReload(int scenario,string expected)
     {
         var code=$$"""
@@ -59,7 +59,7 @@ public sealed class PicoRomTests
             extern "C" void reset(){
               if({{scenario}}==0)((void(*)(uintptr_t,uint32_t,uint32_t))lookup(0x14,'M','S'))(0x20041ff0,0xaa,32);
               if({{scenario}}==1)*(volatile uint32_t*)0x10001000=0;
-              if({{scenario}}==2){uintptr_t table=lookup(0x16,'S','F');((void(*)())*(uint32_t*)(table+0x3c))();}
+              if({{scenario}}==2){uintptr_t table=lookup(0x16,'S','F');((void(*)())*(uint32_t*)(table+0x10))();}
               while(1){}
             }
             """;

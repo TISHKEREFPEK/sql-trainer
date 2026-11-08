@@ -1,5 +1,11 @@
 # Контекст проекта
 
+## Научные ROM-функции Pico реализованы · 8 ноября 2026
+
+После `c9a2e90` добавлен pico-science.cjs: sin/cos/tan/sincos/exp/log/atan2 обеих точностей, bounded 320-bit fixed-point с вычисляемыми константами. Через ARM проверяются независимые high-precision vectors и оба результата sincos, обычные Arduino wrappers/Print. Зафиксирована граница SDK: большие углы он уменьшает по округлённым 2π (0x40c90fdb / 0x401921fb54442d18), поэтому 1e10f/1e20 не имеют точности sin от математического исходного угла. Это исполняемый алгоритм SDK, его нельзя молча заменять заранее рассчитанным ответом. Доказательства — baseline / Pico foundation.
+
+Открыты некоторые indeterminate infinity combinations, полная периферия/специфические ROM-возможности и native Pico pin mapping/solver/editor/review/history/поставка; ESP32-S3/многоплатность/Win10/LAN также не закрыты. Следующий практический блок — периферийные эталоны и мосты в circuit solver, затем native-связка. Pico остаётся Visual, цель активна; импорт/учебная редактура/GitHub отложены. Установка и личные данные не затронуты.
+
 ## Преобразования, sqrt и первый Arduino PWM Pico · 8 ноября 2026
 
 После `ba121b2` добавлены все int/fixed 32/64-bit conversions двух точностей, float↔double и compare. ROM float→int/fixed использует floor и saturation; SDK обёртки сохраняют собственные C-правила преобразования. Сдвиги ограничены до выделения BigInt даже при INT_MIN/MAX scale. Sqrt вычисляет integer root и сравнивает точную середину, сохраняя signed zero и документированный negative→-Infinity. Реальный analogWrite/1000 Гц/25% с delay на другом выводе прошёл первый эталон. Доказательства/границы — baseline.

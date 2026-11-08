@@ -99,4 +99,4 @@ function invokeArithmetic(registers,width,operation){
   const b=width===32?BigInt(registers[1]):BigInt(registers[2])|(BigInt(registers[3])<<32n);
   const result=operation==='sqrt'?squareRoot(a,width):arithmetic(a,b,width,operation);registers[0]=Number(result&0xffffffffn);if(width===64)registers[1]=Number(result>>32n);
 }
-module.exports={arithmetic,squareRoot,invokeArithmetic,toInteger,fromInteger,convertWidth,compare,invokeConversion};
+module.exports={representation,arithmetic,squareRoot,invokeArithmetic,toInteger,fromInteger,convertWidth,compare,invokeConversion};

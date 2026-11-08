@@ -1,5 +1,11 @@
 # Изменения
 
+## Научные функции ROM Pico · 8 ноября 2026
+
+- Реализованы sin/cos/tan/sincos/exp/log/atan2 binary32/64 через bounded 320-bit fixed-point series и существующий ARM ABI. Оригинальный ROM и host Math для результатов не используются.
+- Добавлены независимые mpmath-эталоны и native/Arduino-проверки, включая два результата sincos и SDK-уменьшение больших углов. Документирована потеря математической точности самого SDK на огромных углах из-за округлённого 2π.
+- Pico пока Visual: отдельные indeterminate cases, периферийная полнота и native-связка ещё открыты. БД/схемы/установка/GitHub не изменялись.
+
 ## Pico conversions, sqrt и analogWrite · 8 ноября 2026
 
 - Реализованы ROM signed/unsigned int/fixed 32/64-bit conversions, float↔double, compare и точный sqrt обеих точностей. Округление и saturation соответствуют этим ROM-вызовам; экстремальный fixed scale не создаёт неограниченный BigInt shift.

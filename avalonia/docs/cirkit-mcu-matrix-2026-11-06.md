@@ -17,6 +17,8 @@ ESP32-сетевые примеры документации включают HT
 
 ## Что подтверждено у нас исходниками и целевым набором
 
+- После `c9a2e90` scientific ROM slots Pico реализованы и имеют независимые эталоны высокой точности + ARM/Arduino checks. Первые GPIO/ADC/UART/USB/NOR/PWM сценарии работают; это ещё не полная периферийная и native-приёмка. SDK-ограничение больших углов зафиксировано отдельно в Pico foundation. Pico остаётся Visual до подключения к circuit solver/editor/review/history; исходный ROM не поставляется.
+
 - Дополнение 8 ноября после первого Pico foundation: собственные ROM memory/bits/lookup/flash-вызовы уже запускают проверенные Arduino-скетчи с GPIO/ADC/UART/USB CDC и NOR erase/program. Float/double ABI пока явно отклоняется; PWM/остальная периферия и native-связка не приняты. Pico остаётся Visual. Подробности — [Pico foundation](pico-foundation-2026-11-08.md); исторический текст ниже об отсутствии всего ROM ABI относится к первому checkpoint.
 
 - `FirmwareRunner.Compile/Start` теперь выбирают отдельный профиль Uno/Mega из avr-boards.json; default остаётся Uno. Настроены их собственные память/контакты/векторы/таймеры/ADC/UART. `avr-profile-block` подтвердил реальные GPIO/PWM/ADC A15, UART TX/RX, EEPROM, watchdog ISR, Servo/Timer5 Mega, чтение far-данных и исполнение/возврат выше 128 КиБ. Границы каждого доказательства — в baseline; вся периферия не считается готовой.

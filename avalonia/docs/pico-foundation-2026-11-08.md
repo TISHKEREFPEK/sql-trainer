@@ -4,6 +4,7 @@
 
 ## Что реализовано
 
+- После `c9a2e90` добавлены sin/cos/tan/sincos/exp/log/atan2 двух точностей: bounded 320-bit fixed-point, вычисляемые π/ln2 и точный общий encoder. Независимые mpmath-fixtures проверяются через настоящий ARM ABI, включая оба результата sincos. Подготовленный fixture не требует Python в приложении или обычном dotnet test.
 - После `ba121b2` добавлены int/fixed 32/64-bit signed/unsigned conversions, compare, float↔double и точно округлённый sqrt. ROM floor/saturation не подменяется C truncation; экстремальный scale ограничен до BigInt allocation. Проверен настоящий Arduino analogWrite: аппаратный PWM около 1000 Гц/25%, delay на другом выводе около 100 Гц. Это первый эталон, не все режимы PWM.
 - После `00b4836` реализованы add/sub/mul/div binary32/64: точные рациональные BigInt, ближайшее чётное округление, знаки нуля, overflow и обнуление input/output denormals по ROM. Значения payload не проходят через Number; это функциональные host-вызовы, не обещание оригинальных циклов ROM. Неподдержанные indeterminate infinity combinations явно отклоняются.
 - После первого foundation-коммита `1cc2d46` добавлен собственный host ROM ABI: lookup, memcpy/memset/word variants и битовые функции. Это собственные таблицы/Thumb entry points и реальные операции над памятью MCU, без оригинального ROM. Неизвестные функции и инструкции явно останавливают выполнение.
@@ -18,7 +19,7 @@
 
 ## Важная незавершённая граница
 
-Общий первоначальный отказ всем ROM-обращениям снят для перечисленных функций. **Scientific slots (sin/cos/tan/sincos/exp/log/atan2) пока не реализованы**, вызов выдаёт явную ошибку с именем операции. Некоторые indeterminate infinity combinations также ещё явно отклоняются. Reset/BOOTSEL и другие непокрытые ROM-вызовы не подменяются успехом. Оригинальные байты Raspberry Pi BootROM из demo upstream не включены: лицензия эмулятора MIT не распространяется автоматически на отдельные floating-point routines ROM.
+Общий первоначальный отказ всем ROM-обращениям снят для перечисленных функций, включая scientific slots. Прямые trig ROM calls требуют |x|<128 для float и |x|<1024 для double; нарушение явно отклоняется. SDK wrappers уменьшают большие углы по rounded 2π, поэтому на огромных углах воспроизводится погрешность самого SDK, а не sin исходного математического значения. Некоторые indeterminate infinity combinations всё ещё явно отклоняются. Reset/BOOTSEL, копирование всей ROM-библиотеки в RAM и другие непокрытые ROM-возможности не объявлены готовыми. Оригинальные байты Raspberry Pi BootROM из demo upstream не включены: лицензия эмулятора MIT не распространяется автоматически на отдельные floating-point routines ROM.
 
 USB CDC подтверждён перечисленными сценариями, не всеми режимами USB. PWM/PIO/DMA/RTC/watchdog, остальные прерывания, частоты и протоколы требуют собственных эталонов. Исполнение второго ядра через SIO FIFO явно не поддержано; начальный single-core сценарий работает. I2C-связь с circuit solver явно отклоняется до реализации. Не подключены физическая распиновка, новый native PartKind, редактор кода/проверочная копия/история Pico и поставка Pico runtime пользователю. ESP32-S3 и многоплатность также открыты.
 
@@ -30,7 +31,7 @@ USB CDC подтверждён перечисленными сценариями
 ./scripts/prepare-electronics.ps1
 ./scripts/prepare-pico.ps1
 $env:CLASSROOM_PICO_RUNTIME = Join-Path (Get-Location) 'artifacts/pico-runtime'
-dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests|FullyQualifiedName~PicoConversionTests'
+dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests|FullyQualifiedName~PicoConversionTests|FullyQualifiedName~PicoScienceTests'
 ```
 
 Первая подготовка SDK требует интернета и свободного места для обоих наборов инструментов и их изолированного кэша; компиляция скетча сети не требует. Папки Pico/AVR должны быть раздельными и не вложенными. Скрипт сохраняет лицензии/исходники ctags, проверяет SHA256 xPack и не перезаписывает неизвестный ARM-комплект. Короткая временная папка распаковки учитывает ограничения PowerShell 5.1 на длину пути. `build-windows.ps1` подготавливает Pico для тестов, но пока упаковывает пользователям только прежний AVR runtime.
@@ -39,6 +40,7 @@ dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter
 
 ## Первичные источники
 
+- Повторение scientific oracle: `node tests/check-pico-science.cjs`. Регенерация fixtures: установить mpmath 1.3.0 в отдельное служебное окружение и выполнить `python scripts/generate-pico-science-vectors.py`; metadata фиксирует Python 3.14.4 и seed. Генератор использует 140 decimal digits и собственное IEEE rounding; mpmath не является runtime dependency. Для SDK range отдельный эталон использует точные encoded period constants из закреплённого float_aeabi_rp2040.S / double_aeabi_rp2040.S.
 - [SDK runtime / ROM API](https://www.raspberrypi.com/documentation/pico-sdk/runtime.html#group_pico_bootrom) и [RP2040 datasheet](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf). Реализация сверялась также с закреплёнными SDK headers / mem_ops_aeabi.S / hardware_flash и boot2 в Arduino-Pico 6.3.2. Оригинальный vendor не изменён.
 - [RP2040js](https://github.com/wokwi/rp2040js/tree/8693315df527adce8bf2bc315aeb4a1ca61c02a3), [npm archive](https://registry.npmjs.org/rp2040js/-/rp2040js-1.4.1.tgz) — точный origin/hash в vendor/ORIGIN.md.
 - [Arduino-Pico 6.3.2](https://github.com/earlephilhower/arduino-pico/tree/6.3.2), [установка](https://arduino-pico.readthedocs.io/en/latest/install.html).

@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Научные функции Pico · 8 ноября 2026
+
+Реализованы sin/cos/tan/sincos/exp/log/atan2 обеих точностей с независимыми эталонами. К текущему test filter добавьте PicoScienceTests; fixtures включены только в тестовый проект, mpmath нужен только для их повторной генерации. Обычные Arduino-скетчи и SDK range reduction проверяются отдельно; очень большие углы имеют ограничение точности SDK. Pico пока Visual; подробности — [описание](docs/pico-foundation-2026-11-08.md). Установка/GitHub не обновлены.
+
 ## Конверсии, корень и PWM Pico · 8 ноября 2026
 
 ROM поддерживает int/fixed/64-bit conversions, compare, float↔double и sqrt. Первый Arduino analogWrite/аппаратный PWM и delay прошёл эталон; научные функции и native-связка ещё не готовы. Для полного текущего набора добавьте `FullyQualifiedName~PicoConversionTests` к фильтру PicoRomTests/PicoFoundationTests. Установка и GitHub не обновлены, Pico остаётся Visual; точные доказательства — в baseline.

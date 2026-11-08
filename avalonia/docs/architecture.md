@@ -1,5 +1,13 @@
 # Архитектура Avalonia Classroom
 
+## Bounded fixed-point scientific ROM Pico · 8 ноября 2026
+
+pico-science использует P=320 и самостоятельно вычисленные π / ln2. Sin/cos: ближайший quadrant, остаток до π/4, Taylor; tan — отношение двух fixed результатов. Exp: k*ln2 + малый остаток, Taylor и общий encoder. Log: нормализованная мантисса и atanh series. Atan2: отношение min/max, atan series/reduction, отдельные знаки нуля/оси/infinities и tiny-ratio branch. Ограничения циклов 128/256/512 исключают бесконечный ряд; tiny normal values не теряются при fixed conversion. Number используется для индексов/малых экспонент, не для значений функций. Экспорт representation из pico-float разделяет единые ROM denormal/rounding rules.
+
+ROM slots 15..20/22 вызываются через существующие BKPT/BX LR; sincos возвращает оба payload в R0/R1 для float, R0/R1 и R2/R3 для double. Прямой trig требует |x|<128 / |x|<1024. SDK wrappers выполняют собственный sincostan_remainder с округлённым 2π: сохраняется его исполняемое поведение, а не подстановка sin от исходного большого аргумента. Отдельный fixture sdk_range_reduction выводится mpmath из точного значения константы SDK. Уменьшение для 1e10f / 1e20 воспроизводится, но не обещает математической точности полного угла.
+
+Fixtures создаёт scripts/generate-pico-science-vectors.py с mpmath 1.3.0 / 140 decimal digits; генератор не нужен установленному приложению и обычному dotnet test. PicoScienceTests компилирует все строки в собственный ARM fixture, явно привязывает R0..R4 и проверяет результаты, включая sincos. Остальные indeterminate arithmetic cases, RAM-copy ROM features/BOOTSEL и полная периферия/native-связка не закрыты; модели SQLite/схем не меняются.
+
 ## Общая numeric representation / conversions / sqrt Pico · 8 ноября 2026
 
 representation(width) выделен в общий helper для binary32/64. invokeConversion обслуживает int/fixed 32/64-bit slots, compare и cross-width: wide аргументы читаются из R0/R1, scale — из R1 для 32-bit integer/float либо R2 для wide, result — R0/R1 при 64-bit. ToInteger делает floor и saturation, не C truncation; FromInteger/CrossWidth — nearest-even с ROM denormal policy. Encoder отсекает крайние exponent до BigInt shifts, ToInteger ограничивает scale до shifts; INT_MIN/MAX scale обрабатываются за ограниченное время.

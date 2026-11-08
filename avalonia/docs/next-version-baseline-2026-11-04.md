@@ -1,5 +1,15 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## Первые четыре арифметические операции Pico · 8 ноября 2026
+
+После `00b4836` добавлен pico-float.cjs: add/sub/mul/div для binary32/64 через рациональные BigInt, точный nearest-even, signed zero / overflow / ROM denormal policy. ARM ROM slots используют существующий механизм вызова. Непокрытые indeterminate infinities явно отвергаются; остальные math/conversions ещё открыты. Источник правил — RP2040 datasheet §2.8.3.2, SDK wrappers; обычная GCC soft-float библиотека без адаптации не даёт нужную политику denormals/conversions. Исходный ROM не включён. Pico остаётся Visual.
+
+- `pico-rational-arithmetic`: **8 passed / 0 skipped**, 1 м 9 с — все PicoRomTests, включая 16 скомпилированных SF/DF bit-vectors через реальные регистры/таблицы. Проверены tie-to-even с чётной/нечётной мантиссой, точные division results, sign zero, cancellation, overflow/underflow и input denormal flush; прошли прежние GPIO/ADC/UART/USB/NOR/invalid-memory/reload. Unsupported-case fixture перенесён с add на ещё не реализованный sqrt.
+- Отдельное детерминированное сравнение (xorshift seed 0x41c6ce57, 3000 пар на точность, четыре операции) дало **23 884 совпадения** конечных входов с IEEE host oracle после ROM denormal normalization. Это вспомогательное сравнение, не 23 884 независимых xUnit-теста и не доказательство всей ROM-математики/всех NaN/Infinity случаев.
+- `pico-arithmetic-sdk`: **1 passed / 0 skipped**, 17 с — обычные выражения volatile float/double в Arduino-скетче проходят реальные SDK wrappers и дают ожидаемые биты; прежние ADC/GPIO/UART/flash UID также проходят. Это расширение одного сценария из набора, не дополнительный уникальный тест. Oracle сохранён как `avalonia/tests/check-pico-arithmetic.cjs` для повторения через закреплённый Node.
+
+БД/схемы/установка/личные данные и GitHub не менялись; цель активна. Следом conversions/compare/sqrt/transcendentals, PWM и остальная периферия/native-связка. Win10/LAN/полная solution в этом блоке не проверялись.
+
 ## ROM memory/flash и Arduino startup Pico · 8 ноября 2026
 
 После `1cc2d46` добавлены собственные pico-rom/pico-flash и USB/SIO/PHY adapters, vendor неизменён. Первоначальный общий ROM-отказ снят для memory/bits/lookup/flash; первые Arduino-скетчи исполняются. ROM read-only bus semantics и bare compiler `-fno-delete-null-pointer-checks` учитывают легальное чтение адреса 0, в том числе TinyUSB EP0. Unknown instructions теперь не проходят как NOP. Модель БД/схем/установка/личные данные не изменены; GitHub отложен, цель активна.

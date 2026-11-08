@@ -5,10 +5,47 @@ namespace Classroom.UiTests;
 
 public sealed class PicoRomTests
 {
+    [Fact]
+    public async Task CompiledRomArithmeticRoundsBothPrecisionsAndFlushesDenormals()
+    {
+        const string code="""
+            #include <stdint.h>
+            typedef uintptr_t (*lookup_t)(uintptr_t,uint32_t);
+            uintptr_t table(char second){return ((lookup_t)(uintptr_t)*(volatile uint16_t*)0x18)(*(volatile uint16_t*)0x16,'S'|((uint32_t)second<<8));}
+            typedef uint32_t (*sf_t)(uint32_t,uint32_t);typedef uint64_t (*df_t)(uint64_t,uint64_t);
+            struct sf_case{uint32_t a,b,result,index;};
+            const sf_case floats[]={
+              {0x3f800000,0x33800000,0x3f800000,0},{0x3f800001,0x33800000,0x3f800002,0},
+              {0x3f800000,0x40400000,0x3eaaaaab,3},{0x7f7fffff,0x40000000,0x7f800000,2},
+              {0x80000000,0x80000000,0x80000000,0},{0x3f800000,0xbf800000,0,0},
+              {0x00800000,0x40000000,0,3},{1,0x3f800000,0x3f800000,0},
+              {0x3fc00000,0x3f000000,0x3f800000,1},{0x3fc00000,0x40000000,0x40400000,2}};
+            struct df_case{uint64_t a,b,result;uint32_t index;};
+            const df_case doubles[]={
+              {0x3ff0000000000000ULL,0x3ca0000000000000ULL,0x3ff0000000000000ULL,0},
+              {0x3ff0000000000001ULL,0x3ca0000000000000ULL,0x3ff0000000000002ULL,0},
+              {0x3ff0000000000000ULL,0x4008000000000000ULL,0x3fd5555555555555ULL,3},
+              {0x7fefffffffffffffULL,0x4000000000000000ULL,0x7ff0000000000000ULL,2},
+              {0x0010000000000000ULL,0x4000000000000000ULL,0,3},
+              {0x3ff8000000000000ULL,0x3fe0000000000000ULL,0x3ff0000000000000ULL,1}};
+            extern "C" void reset();
+            __attribute__((section(".vectors"),used)) const uintptr_t vectors[]={0x20042000,(uintptr_t)reset};
+            extern "C" void reset(){
+              *(volatile uint32_t*)0x40034030=0x301;*(volatile uint32_t*)0x4003402c=0x70;
+              bool ok=true;uint32_t* sf=(uint32_t*)table('F');uint32_t* df=(uint32_t*)table('D');
+              for(const auto& c:floats)ok&=((sf_t)sf[c.index])(c.a,c.b)==c.result;
+              for(const auto& c:doubles)ok&=((df_t)df[c.index])(c.a,c.b)==c.result;
+              const char* text=ok?"math:ok":"math:wrong";while(*text)*(volatile uint32_t*)0x40034000=*text++;
+              while(1){}
+            }
+            """;
+        var image=await PicoCompiler.Compile(code,CancellationToken.None,PicoSourceKind.BareMetal);using var runner=new PicoFirmwareRunner();await runner.Start(image);
+        Assert.Equal("math:ok",(await runner.Step(milliseconds:1)).SerialPorts[1]);
+    }
     [Theory]
     [InlineData(0,"ROM memory range")]
     [InlineData(1,"read-only through XIP")]
-    [InlineData(2,"float/add")]
+    [InlineData(2,"float/sqrt")]
     public async Task InvalidMemoryAndUnsupportedRomCallsFailAndRequireReload(int scenario,string expected)
     {
         var code=$$"""
@@ -20,7 +57,7 @@ public sealed class PicoRomTests
             extern "C" void reset(){
               if({{scenario}}==0)((void(*)(uintptr_t,uint32_t,uint32_t))lookup(0x14,'M','S'))(0x20041ff0,0xaa,32);
               if({{scenario}}==1)*(volatile uint32_t*)0x10001000=0;
-              if({{scenario}}==2){uintptr_t table=lookup(0x16,'S','F');((void(*)())*(uint32_t*)table)();}
+              if({{scenario}}==2){uintptr_t table=lookup(0x16,'S','F');((void(*)())*(uint32_t*)(table+0x18))();}
               while(1){}
             }
             """;
@@ -80,6 +117,9 @@ public sealed class PicoRomTests
               pinMode(2,INPUT); pinMode(25,OUTPUT); analogReadResolution(12);
               Serial1.setTX(0); Serial1.setRX(1); Serial1.begin(115200);
               Serial2.setTX(4); Serial2.setRX(5); Serial2.begin(115200);
+              volatile float a=1.5f,b=0.5f;union{float f;uint32_t bits;} f;f.f=(a+b)*(a-b)/(a-b);
+              volatile double x=1.0,y=3.0;union{double d;uint64_t bits;} d;d.d=x/y;
+              if(f.bits!=0x40000000||d.bits!=0x3fd5555555555555ULL)Serial1.print("math:wrong;");
               Serial1.print("adc:");Serial1.print(analogRead(26));Serial1.print(";uid:");
               uint8_t id[8];flash_get_unique_id(id);
               for(int i=0;i<8;i++){if(id[i]<16)Serial1.print('0');Serial1.print(id[i],HEX);}

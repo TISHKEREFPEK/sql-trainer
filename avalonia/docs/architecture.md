@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## Рациональные float/double операции Pico · 8 ноября 2026
+
+pico-float.cjs декодирует payload как sign/mantissa/exponent, складывает/умножает целые BigInt либо хранит точное отношение при делении, затем округляет nearest-even в binary32/64. Сохраняются signed zero, overflow→infinity, input/output denormals→zero; input NaN преобразуется в signed infinity согласно ROM. Диапазон экспонент ограничен форматами, поэтому сдвиги не зависят от непроверенного int/fixed n. Противоположные infinities при сложении, zero×infinity и indeterminate division пока явно отклоняются. Нормальные вычисления не используют Number как промежуточное float-значение. Registered ROM slots 0x00..0x0c вызывают этот код через существующий BKPT/BX LR ABI. Остальные slots, включая sqrt/conversions/compare, пока явно не реализованы; программа не получает фиктивный результат.
+
 ## Частичный ROM ABI / NOR / USB Pico · 8 ноября 2026
 
 pico-rom.cjs создаёт собственные mapped ROM-таблицы, векторы и Thumb BKPT/BX LR entry points. Host-реализации lookup/memcpy/memset/word variants/CLZ/CTZ/popcount/reverse выполняют операции над реальной памятью MCU и проверяют диапазоны до изменения. Word variants требуют выровненных указателей и обрабатывают хвост байтов. ROM writes игнорируются аппаратно, чтение неизвестной ROM-области и вызов неподдержанного float/double дают явную ошибку. Bare compiler добавил -fno-delete-null-pointer-checks для легального MMIO/ROM по адресу 0. Оригинальная библиотека RP2040js не изменена.

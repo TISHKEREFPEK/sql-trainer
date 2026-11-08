@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Первые операции ROM float/double · 8 ноября 2026
+
+Работают add/sub/mul/div binary32/64 с точным округлением и правилами denormals RP2040. Остальные операции, преобразования, PWM и native-связка ещё требуют реализации/проверки. Для проверки используется тот же набор PicoRomTests; доказательства — в baseline, поведение — в [описании](docs/pico-foundation-2026-11-08.md). Pico остаётся Visual, GitHub отложен.
+
 ## Arduino startup и ROM ABI Pico · 8 ноября 2026
 
 Первые Arduino-скетчи теперь работают через собственные ROM memory/bits/flash-вызовы. USB CDC, GPIO/ADC/UART и SDK erase/program подтверждены исполняемыми скетчами. Для проверки после подготовки SDK: `dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests'`. Pico пока Visual: арифметика ROM и native-связка не готовы. Подробности — [описание](docs/pico-foundation-2026-11-08.md); рабочая установка и GitHub не обновлялись.

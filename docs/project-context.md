@@ -1,5 +1,9 @@
 # Контекст проекта
 
+## Первые четыре операции ROM math Pico · 8 ноября 2026
+
+После `00b4836` добавлены add/sub/mul/div обеих точностей: точные рациональные BigInt, IEEE binary encoding с правилами RP2040 ROM (nearest-even, input/output denormals→signed zero, input NaN→signed infinity). Не используется приближённая арифметика Number для float payload. Неопределённые infinity combinations пока явно отклоняются. Проверен вызов через настоящий ARM ABI/регистры; подробности и фактические проверки — в baseline. Следующий шаг — int/fixed/64-bit conversions и compare, затем sqrt/transcendentals, необходимые для обычного analogWrite эталоны PWM и native-связка. Не объявлять весь float/double готовым по четырём операциям. Pico остаётся Visual, цель активна; импорт/учебная редактура/GitHub отложены.
+
 ## Pico исполняет первые Arduino-сценарии · 8 ноября 2026
 
 После `1cc2d46` добавлены собственный ROM ABI lookup/memory/bits и flash/NOR/SSI, без исходного ROM. Проверены обычные Arduino setup/loop, ADC0/GPIO2→25, UART0→UART1 UTF-8, USB CDC через настоящие дескрипторы/IRQ и SDK flash erase/program. ROM неизменяем, запись XIP запрещена, неизвестные инструкции/вызовы явно завершают работу. Первоначальный общий отказ всем обращениям ROM заменён этими функциями; это не полная совместимость ROM. Точные проверки — в baseline и [описании](../avalonia/docs/pico-foundation-2026-11-08.md).

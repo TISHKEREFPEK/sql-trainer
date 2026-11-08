@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Основание Pico для разработки · 8 ноября 2026
+
+После `./scripts/prepare-electronics.ps1` выполнить `./scripts/prepare-pico.ps1`: это отдельный закреплённый SDK для новых PicoFoundationTests. Подготовка требует сети, сама компиляция — нет. `build-windows.ps1` готовит его перед тестами, но пока не включает в пользовательские приложения. Проверены настоящий bare-metal ARM/GPIO/ADC/UART и Arduino-компиляция в AppContainer. Обычный Arduino-скетч пока явно упирается в отсутствующий BootROM ABI; Pico остаётся Visual. Шаги, зависимости/лицензии и оставшиеся границы — [Pico foundation](docs/pico-foundation-2026-11-08.md). Установленные приложения и БД не обновлены, GitHub отложен.
+
 ## Автономные дисплеи и runtime v4 · 7 ноября 2026
 
 В текущей разработке работают отдельные LCD PCF8574 и OLED SSD1306 на Uno/Mega, в том числе на одной шине; старые Visual-детали не заменены. Для OLED из каталога avalonia подготовить комплект командой `./scripts/prepare-electronics.ps1`: marker v4, закреплённые Adafruit SSD1306 2.5.17/GFX 1.13.0/BusIO 1.17.4 и лицензии. На занятии компиляция идёт автономно в прежнем AppContainer. Роли/Server обновлять вместе из-за новых типов схем, SQLite без новых миграций. Текущие доказательства/границы — [baseline](docs/next-version-baseline-2026-11-04.md) и [архитектура](docs/architecture.md); полный перенос Cirkit/целевая Win10/LAN-поставка ещё не принят.

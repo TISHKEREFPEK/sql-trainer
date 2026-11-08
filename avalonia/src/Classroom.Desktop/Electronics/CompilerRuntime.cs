@@ -6,16 +6,22 @@ namespace Classroom.Desktop.Electronics;
 public static class CompilerRuntime
 {
     static readonly SemaphoreSlim gate = new(1, 1);
-    static IEnumerable<string> Files(string source)
+    static IEnumerable<string> Files(string source,string? extraDirectory)
     {
         static string Regular(string file) => File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint) ? throw new IOException("Ссылки в автономном комплекте компилятора не поддерживаются.") : file;
         if (File.GetAttributes(source).HasFlag(FileAttributes.ReparsePoint)) throw new IOException("Папка комплекта компилятора не должна быть ссылкой.");
         yield return Regular(Path.Combine(source, "arduino-cli.exe"));
-        foreach (var name in new[] { "package_index.json", "package_index.json.sig", "library_index.json", "library_index.json.sig", "inventory.yaml" })
+        var data=Path.Combine(source,"data");
+        var names=new[]{"package_index.json","package_index.json.sig","library_index.json","library_index.json.sig","inventory.yaml"}
+            .Concat(Directory.EnumerateFiles(data,"package*_index.json*").Select(path=>Path.GetFileName(path)!)).Distinct(StringComparer.Ordinal);
+        foreach (var name in names)
         {
             var file = Path.Combine(source, "data", name); if (File.Exists(file)) yield return Regular(file);
         }
-        foreach (var directory in new[] { Path.Combine(source, "data", "packages"), Path.Combine(source, "user", "libraries"), Path.Combine(source, "sandbox-avr") })
+        var directories=new List<string>{Path.Combine(source,"data","packages")};
+        var libraries=Path.Combine(source,"user","libraries");if(Directory.Exists(libraries))directories.Add(libraries);
+        if(extraDirectory is not null)directories.Add(Path.Combine(source,extraDirectory));
+        foreach (var directory in directories)
             foreach (var file in Enumerate(directory)) yield return file;
     }
     static IEnumerable<string> Enumerate(string directory)
@@ -28,8 +34,9 @@ public static class CompilerRuntime
         }
         foreach (var child in Directory.EnumerateDirectories(directory)) foreach (var file in Enumerate(child)) yield return file;
     }
-    public static async Task<string> Prepare(string source, CancellationToken cancellation)
+    public static async Task<string> Prepare(string source, CancellationToken cancellation,string? extraDirectory="sandbox-avr")
     {
+        if(extraDirectory is not(null or "sandbox-avr" or "sandbox-arm"))throw new InvalidDataException("Неизвестный профиль комплекта компилятора.");
         if (!OperatingSystem.IsWindows()) throw new IOException("Изолированная компиляция требует Windows 10 или новее.");
         source = Path.GetFullPath(source);
         var cache = Path.GetFullPath(Environment.GetEnvironmentVariable("CLASSROOM_COMPILER_CACHE") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "compiler-runtime"));
@@ -39,7 +46,7 @@ public static class CompilerRuntime
             Directory.CreateDirectory(cache);
             if (File.GetAttributes(cache).HasFlag(FileAttributes.ReparsePoint)) throw new IOException("Папка комплекта компилятора не должна быть ссылкой.");
             await using var lease = await Lock(Path.Combine(cache, "prepare.lock"), cancellation);
-            var files = Files(source).Select(path => new FileInfo(path)).OrderBy(f => f.FullName, StringComparer.Ordinal).ToArray();
+            var files = Files(source,extraDirectory).Select(path => new FileInfo(path)).OrderBy(f => f.FullName, StringComparer.Ordinal).ToArray();
             var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("v1\n" + source + "\n" + string.Join('\n', files.Select(f => Path.GetRelativePath(source, f.FullName) + ":" + f.Length + ":" + f.LastWriteTimeUtc.Ticks)))));
             var target = Path.Combine(cache, "runtime-" + fingerprint);
             if (Directory.Exists(target) && File.GetAttributes(target).HasFlag(FileAttributes.ReparsePoint)) throw new IOException("Папка комплекта компилятора не должна быть ссылкой.");

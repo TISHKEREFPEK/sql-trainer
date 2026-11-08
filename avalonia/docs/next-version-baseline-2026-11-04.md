@@ -1,5 +1,18 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## Основание Pico/RP2040 · 8 ноября 2026
+
+Добавлены PicoCompiler/Core, PicoFirmwareRunner, pico-worker/pico-uf2, неизменённый MIT RP2040js 1.4.1 и prepare-pico.ps1. Источники, закреплённые версии, разделение trusted core и pupil compile, лицензии и незавершённые части — [Pico foundation](pico-foundation-2026-11-08.md). Модель SQLite/сохранений не менялась. Рабочие приложения/БД и remote не обновлялись, цель активна.
+
+- `pico-core-scratch`: **1 passed** — Arduino compile в AppContainer за 18 с с core.a на scratch-диске, затем ожидаемый явный отказ нереализованному BootROM ABI. Это не подтверждение запуска Arduino-программы.
+- `pico-foundation-sandbox`: **12 passed / 0 skipped** — 5 первых Pico tests + 6 CompilerSandboxTests + CompilerLeaseTests. Подтверждены genuine compiled ARM/GPIO2→25/ADC1,65 В/UART0→UART1 UTF-8/reset, UF2-отказы, private include denial, actual runtime alias при занятом верхнем диске, Arduino compile/ROM boundary. Общие регрессии: AVR driver/prototypes, запрет private include/incbin/изменения SDK/сети, отмена/завершение дочерних процессов, восстановление после host crash и live lease.
+- `pico-foundation-final`: **6 passed / 0 skipped** после расширения Pico tests: private include запрещён также для Arduino-профиля с готовым ядром; зависшая прошивка возвращает `Complete=false` после 1 000 000 инструкций и продолжает работу следующим шагом. Наборы пересекаются, не суммировать их как уникальные проверки.
+- Скрипт prepare-pico выполнен в PowerShell 5.1 на отдельном probe-runtime с уже установленным core: SHA256 архива, полная распаковка xPack в короткий temp, перемещение в отдельный ARM runtime, копирование native ctags/лицензий и запись marker прошли. Прежний ручной ARM-комплект сохранён рядом. Повторный вызов подтвердил готовый комплект. Чистая интернет-установка core этим прогоном не доказана; прежняя ручная установка core завершилась отдельно.
+- `pico-script-runtime`: **2 passed / 0 skipped** на результате скриптовой подготовки — bare-metal GPIO/ADC/UART и Arduino compile / явный ROM-отказ. Скрипт распаковал тот же закреплённый архив и сохранил совместимость с подготовленным compiler cache. Проверка npm SHA512 повторена; в vendor нет оригинальных ROM/UF2/bin. PowerShell parser: 0 syntax errors.
+- `pico-core-lock-final`: **1 passed / 0 skipped** после ограничения ожидания lease — Arduino compile с занятой верхней буквой диска. Все 105 vendored CJS/типовых файлов сравнены SHA256 с распакованным npm-пакетом: 0 отличий; LICENSE/ORIGIN сохранены отдельно.
+
+Новый пользовательский исполняемый тип Pico/ROM ABI/native-связка/I2C bridge/полная периферия/поставка не готовы. Полная solution/Windows 10/LAN не запускались в этом блоке; результаты раньше не распространять на новые незатронутые сценарии. Ожидание lease ядра ограничено шестью минутами и повторяет только sharing/lock violation; другие ошибки диска не превращаются в бесконечный retry. GitHub — только при следующей отправке по команде владельца.
+
 ## Зафиксированная активная длительность электроники · 7 ноября 2026
 
 Оценка незаконченного буфера до 10 с относится к нормальному таймеру/исправному диску; при ошибках фиксации или остановках интерфейса полнота измерения не гарантируется. Не трактовать это как гарантию сохранения всех секунд.

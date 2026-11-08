@@ -11,6 +11,8 @@ Run-DotNet @('restore', 'Classroom.sln', '--locked-mode')
 Run-DotNet @('build', 'Classroom.sln', '-c', 'Release', '--no-restore', '-m:1', '-p:UseSharedCompilation=false')
 & "$PSScriptRoot/prepare-electronics.ps1"
 if (-not $SkipTests) {
+    & "$PSScriptRoot/prepare-pico.ps1"
+    $env:CLASSROOM_PICO_RUNTIME = Join-Path $root 'artifacts/pico-runtime'
     $env:CLASSROOM_UI_OUTPUT = Join-Path $root 'artifacts/ui'
     Run-DotNet @('test', 'Classroom.sln', '-c', 'Release', '--no-build', '--no-restore', '--logger', 'trx', '--results-directory', 'artifacts/tests')
 }

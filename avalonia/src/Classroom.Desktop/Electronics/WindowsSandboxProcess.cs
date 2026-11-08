@@ -110,8 +110,14 @@ public static class WindowsSandboxProcess
         return (read, write);
     }
 
-    public static async Task<Result> Run(string executable, IEnumerable<string> arguments, string readOnlyRoot, string scratch,
-        IReadOnlyDictionary<string, string> settings, CancellationToken cancellation)
+    public static Task<Result> Run(string executable,IEnumerable<string> arguments,string readOnlyRoot,string scratch,IReadOnlyDictionary<string,string> settings,CancellationToken cancellation)
+        =>RunCore(executable,arguments,readOnlyRoot,scratch,settings,cancellation,TimeSpan.FromSeconds(60),null);
+    internal static Task<Result> RunWithPreparedFiles(string executable,IEnumerable<string> arguments,string readOnlyRoot,string scratch,IReadOnlyDictionary<string,string> settings,CancellationToken cancellation,Action<string> prepareFiles)
+        =>RunCore(executable,arguments,readOnlyRoot,scratch,settings,cancellation,TimeSpan.FromSeconds(60),prepareFiles);
+    internal static Task<Result> PrepareTrustedRuntime(string executable,IEnumerable<string> arguments,string readOnlyRoot,string scratch,IReadOnlyDictionary<string,string> settings,CancellationToken cancellation)
+        =>RunCore(executable,arguments,readOnlyRoot,scratch,settings,cancellation,TimeSpan.FromMinutes(5),null);
+    static async Task<Result> RunCore(string executable, IEnumerable<string> arguments, string readOnlyRoot, string scratch,
+        IReadOnlyDictionary<string, string> settings, CancellationToken cancellation,TimeSpan timeLimit,Action<string>? prepareFiles)
     {
         cancellation.ThrowIfCancellationRequested();
         executable = Path.GetFullPath(executable); scratch = Path.GetFullPath(scratch); readOnlyRoot = Path.GetFullPath(readOnlyRoot);
@@ -132,6 +138,7 @@ public static class WindowsSandboxProcess
             Directory.CreateDirectory(scratch); GrantScratch(scratch, appSid);
             using var runtimeDrive = CompilerDrive.Create(readOnlyRoot, lease);
             using var scratchDrive = CompilerDrive.Create(scratch, lease);
+            prepareFiles?.Invoke(runtimeDrive.Root);
             string Map(string value)
             {
                 var separator = value.IndexOf('=');
@@ -174,7 +181,7 @@ public static class WindowsSandboxProcess
             using var output = new StreamReader(new FileStream(outRead, FileAccess.Read), Encoding.UTF8);
             using var error = new StreamReader(new FileStream(errRead, FileAccess.Read), Encoding.UTF8);
             var outputTask = ReadBounded(output); var errorTask = ReadBounded(error);
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation); limit.CancelAfter(TimeSpan.FromSeconds(60));
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation); limit.CancelAfter(timeLimit);
             using var registration = limit.Token.Register(() => TerminateJobObject(job, 1));
             if (ResumeThread(pi.Thread) == uint.MaxValue) throw Failure("process resume");
             await process.WaitForExitAsync();
@@ -182,7 +189,7 @@ public static class WindowsSandboxProcess
             TerminateJobObject(job, 1);
             await WaitForJob(job);
             var result = new Result(process.ExitCode, await outputTask, await errorTask);
-            if (limit.IsCancellationRequested) throw new IOException("Компиляция остановлена: отмена или превышен лимит 60 секунд.\n" + result.Error[..Math.Min(result.Error.Length, 8000)]);
+            if (limit.IsCancellationRequested) throw new IOException($"Компиляция остановлена: отмена или превышен лимит {timeLimit.TotalSeconds:0} секунд.\n" + result.Error[..Math.Min(result.Error.Length, 4000)]+"\n"+result.Output[^Math.Min(result.Output.Length,8000)..]);
             return result;
         }
         finally

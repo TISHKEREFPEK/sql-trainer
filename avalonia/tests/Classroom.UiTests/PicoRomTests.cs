@@ -19,7 +19,8 @@ public sealed class PicoRomTests
               {0x3f800000,0x40400000,0x3eaaaaab,3},{0x7f7fffff,0x40000000,0x7f800000,2},
               {0x80000000,0x80000000,0x80000000,0},{0x3f800000,0xbf800000,0,0},
               {0x00800000,0x40000000,0,3},{1,0x3f800000,0x3f800000,0},
-              {0x3fc00000,0x3f000000,0x3f800000,1},{0x3fc00000,0x40000000,0x40400000,2}};
+              {0x3fc00000,0x3f000000,0x3f800000,1},{0x3fc00000,0x40000000,0x40400000,2},
+              {0x40000000,0,0x3fb504f3,6},{0xbf800000,0,0xff800000,6},{0x80000000,0,0x80000000,6},{0x00800000,0,0x20000000,6}};
             struct df_case{uint64_t a,b,result;uint32_t index;};
             const df_case doubles[]={
               {0x3ff0000000000000ULL,0x3ca0000000000000ULL,0x3ff0000000000000ULL,0},
@@ -27,7 +28,8 @@ public sealed class PicoRomTests
               {0x3ff0000000000000ULL,0x4008000000000000ULL,0x3fd5555555555555ULL,3},
               {0x7fefffffffffffffULL,0x4000000000000000ULL,0x7ff0000000000000ULL,2},
               {0x0010000000000000ULL,0x4000000000000000ULL,0,3},
-              {0x3ff8000000000000ULL,0x3fe0000000000000ULL,0x3ff0000000000000ULL,1}};
+              {0x3ff8000000000000ULL,0x3fe0000000000000ULL,0x3ff0000000000000ULL,1},
+              {0x4000000000000000ULL,0,0x3ff6a09e667f3bcdULL,6},{0x0010000000000000ULL,0,0x2000000000000000ULL,6}};
             extern "C" void reset();
             __attribute__((section(".vectors"),used)) const uintptr_t vectors[]={0x20042000,(uintptr_t)reset};
             extern "C" void reset(){
@@ -45,7 +47,7 @@ public sealed class PicoRomTests
     [Theory]
     [InlineData(0,"ROM memory range")]
     [InlineData(1,"read-only through XIP")]
-    [InlineData(2,"float/sqrt")]
+    [InlineData(2,"float/cos")]
     public async Task InvalidMemoryAndUnsupportedRomCallsFailAndRequireReload(int scenario,string expected)
     {
         var code=$$"""
@@ -57,7 +59,7 @@ public sealed class PicoRomTests
             extern "C" void reset(){
               if({{scenario}}==0)((void(*)(uintptr_t,uint32_t,uint32_t))lookup(0x14,'M','S'))(0x20041ff0,0xaa,32);
               if({{scenario}}==1)*(volatile uint32_t*)0x10001000=0;
-              if({{scenario}}==2){uintptr_t table=lookup(0x16,'S','F');((void(*)())*(uint32_t*)(table+0x18))();}
+              if({{scenario}}==2){uintptr_t table=lookup(0x16,'S','F');((void(*)())*(uint32_t*)(table+0x3c))();}
               while(1){}
             }
             """;

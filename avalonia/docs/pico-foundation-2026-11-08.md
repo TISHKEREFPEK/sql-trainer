@@ -4,6 +4,7 @@
 
 ## Что реализовано
 
+- После `ba121b2` добавлены int/fixed 32/64-bit signed/unsigned conversions, compare, float↔double и точно округлённый sqrt. ROM floor/saturation не подменяется C truncation; экстремальный scale ограничен до BigInt allocation. Проверен настоящий Arduino analogWrite: аппаратный PWM около 1000 Гц/25%, delay на другом выводе около 100 Гц. Это первый эталон, не все режимы PWM.
 - После `00b4836` реализованы add/sub/mul/div binary32/64: точные рациональные BigInt, ближайшее чётное округление, знаки нуля, overflow и обнуление input/output denormals по ROM. Значения payload не проходят через Number; это функциональные host-вызовы, не обещание оригинальных циклов ROM. Неподдержанные indeterminate infinity combinations явно отклоняются.
 - После первого foundation-коммита `1cc2d46` добавлен собственный host ROM ABI: lookup, memcpy/memset/word variants и битовые функции. Это собственные таблицы/Thumb entry points и реальные операции над памятью MCU, без оригинального ROM. Неизвестные функции и инструкции явно останавливают выполнение.
 - Обычные проверенные Arduino setup/loop теперь запускаются: GPIO/ADC/UART, настоящая USB enumeration через TinyUSB/IRQ и UTF-8, в том числе многопакетный ввод/эхо. Отложенная доставка USB SETUP устраняет вызов до завершения предыдущего события; OUT без данных ждёт, а не порождает пустые пакеты. PicoFrame сообщает UsbReady.
@@ -17,7 +18,7 @@
 
 ## Важная незавершённая граница
 
-Общий первоначальный отказ всем ROM-обращениям снят для перечисленных функций. **Остальные float/double ROM slots пока не реализованы**, вызов выдаёт явную ошибку с именем операции. Conversions/compare пока блокируют обычный analogWrite, где Arduino рассчитывает делитель через float. Reset/BOOTSEL и другие непокрытые ROM-вызовы также не подменяются успехом. Оригинальные байты Raspberry Pi BootROM из demo upstream не включены: лицензия эмулятора MIT не распространяется автоматически на отдельные floating-point routines ROM.
+Общий первоначальный отказ всем ROM-обращениям снят для перечисленных функций. **Scientific slots (sin/cos/tan/sincos/exp/log/atan2) пока не реализованы**, вызов выдаёт явную ошибку с именем операции. Некоторые indeterminate infinity combinations также ещё явно отклоняются. Reset/BOOTSEL и другие непокрытые ROM-вызовы не подменяются успехом. Оригинальные байты Raspberry Pi BootROM из demo upstream не включены: лицензия эмулятора MIT не распространяется автоматически на отдельные floating-point routines ROM.
 
 USB CDC подтверждён перечисленными сценариями, не всеми режимами USB. PWM/PIO/DMA/RTC/watchdog, остальные прерывания, частоты и протоколы требуют собственных эталонов. Исполнение второго ядра через SIO FIFO явно не поддержано; начальный single-core сценарий работает. I2C-связь с circuit solver явно отклоняется до реализации. Не подключены физическая распиновка, новый native PartKind, редактор кода/проверочная копия/история Pico и поставка Pico runtime пользователю. ESP32-S3 и многоплатность также открыты.
 
@@ -29,7 +30,7 @@ USB CDC подтверждён перечисленными сценариями
 ./scripts/prepare-electronics.ps1
 ./scripts/prepare-pico.ps1
 $env:CLASSROOM_PICO_RUNTIME = Join-Path (Get-Location) 'artifacts/pico-runtime'
-dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests'
+dotnet test tests/Classroom.UiTests/Classroom.UiTests.csproj -c Release --filter 'FullyQualifiedName~PicoFoundationTests|FullyQualifiedName~PicoRomTests|FullyQualifiedName~PicoConversionTests'
 ```
 
 Первая подготовка SDK требует интернета и свободного места для обоих наборов инструментов и их изолированного кэша; компиляция скетча сети не требует. Папки Pico/AVR должны быть раздельными и не вложенными. Скрипт сохраняет лицензии/исходники ctags, проверяет SHA256 xPack и не перезаписывает неизвестный ARM-комплект. Короткая временная папка распаковки учитывает ограничения PowerShell 5.1 на длину пути. `build-windows.ps1` подготавливает Pico для тестов, но пока упаковывает пользователям только прежний AVR runtime.

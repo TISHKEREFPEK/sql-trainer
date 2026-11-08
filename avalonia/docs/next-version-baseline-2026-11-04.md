@@ -1,5 +1,16 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## Pico conversions / sqrt / первый PWM · 8 ноября 2026
+
+После `ba121b2` общая binary representation обслуживает все signed/unsigned int/fixed 32/64-bit conversions, compare и float↔double. Float→integer использует ROM floor/saturation, не C truncation; обычные SDK wrappers сохраняют свои C-правила. Encoder/ToInteger проверяют крайние exponent/scale до сдвигов BigInt. Sqrt вычисляет integer root и точную середину; signed zero/negative→-Infinity следуют ROM. Оригинальный ROM не включён. Shared API/БД/схемы/установка/личные данные не менялись.
+
+- `pico-conversion-pwm`: **2 passed / 0 skipped**, 20 с — genuine ARM calls через обе ROM-таблицы, floor отрицательных дробей, saturation/scale INT_MIN/MAX, int64/fixed64 tie-to-even и правильные EABI регистры; float↔double и compare. Обычный Arduino analogWrite задаёт реальный MCU PWM GPIO15 около 1000 Гц с duty около 25%; GPIO25 с delay(5) переключается около 100 Гц, диагностика пуста. Это первый эталон PWM, не все режимы/контакты/прерывания.
+- `pico-conversion-sqrt-block`: **16 passed / 0 skipped**, 2 м 14 с — полный текущий набор PicoFoundationTests + PicoRomTests + PicoConversionTests. Добавлены sqrt bit-vectors обеих точностей: sqrt(2), минимальный normal, negative→-Infinity и signed zero. Прежние Arduino math, GPIO/ADC/UART/USB/NOR, UF2 и изоляция прошли. Явный unsupported fixture перенесён со sqrt на cos.
+- `pico-conversion-scale-extremes`: **1 passed / 0 skipped**, 3 с — дополнение native conversion-сценария int64→float/double при INT_MIN/MAX scale: overflow→Infinity / underflow→signed zero без неограниченного выделения памяти. Повтор одного сценария, не 17 уникальных тестов.
+- Обновлённый `avalonia/tests/check-pico-arithmetic.cjs`: **23 884** сравнения арифметики, **65 681** conversions/comparisons, **5 971** sqrt совпали с независимым IEEE host oracle после ROM normalization. Seed прежний; fixed scale в случайных проверках -64..64, случаи потери значения oracle при его underflow пропускаются. Это вспомогательные сравнения, не xUnit test count и не полное доказательство всех FP-значений. Нативные отдельные bit-vectors проверяют края и EABI.
+
+Открыты scientific sin/cos/tan/sincos/exp/log/atan2 и непокрытые indeterminate infinity combinations, расширенные режимы PWM/IRQ/PIO/DMA/RTC/watchdog, native circuit integration и поставка. Pico остаётся Visual. Полная solution/Win10/LAN не проверялись этим блоком; точные циклы ROM/аналоговый PHY не заявлены. Импорт/учебная редактура/GitHub отложены, общая цель активна.
+
 ## Первые четыре арифметические операции Pico · 8 ноября 2026
 
 После `00b4836` добавлен pico-float.cjs: add/sub/mul/div для binary32/64 через рациональные BigInt, точный nearest-even, signed zero / overflow / ROM denormal policy. ARM ROM slots используют существующий механизм вызова. Непокрытые indeterminate infinities явно отвергаются; остальные math/conversions ещё открыты. Источник правил — RP2040 datasheet §2.8.3.2, SDK wrappers; обычная GCC soft-float библиотека без адаптации не даёт нужную политику denormals/conversions. Исходный ROM не включён. Pico остаётся Visual.

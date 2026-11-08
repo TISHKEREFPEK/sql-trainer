@@ -1,5 +1,11 @@
 # Архитектура Avalonia Classroom
 
+## Общая numeric representation / conversions / sqrt Pico · 8 ноября 2026
+
+representation(width) выделен в общий helper для binary32/64. invokeConversion обслуживает int/fixed 32/64-bit slots, compare и cross-width: wide аргументы читаются из R0/R1, scale — из R1 для 32-bit integer/float либо R2 для wide, result — R0/R1 при 64-bit. ToInteger делает floor и saturation, не C truncation; FromInteger/CrossWidth — nearest-even с ROM denormal policy. Encoder отсекает крайние exponent до BigInt shifts, ToInteger ограничивает scale до shifts; INT_MIN/MAX scale обрабатываются за ограниченное время.
+
+Sqrt нормализует radicand в небольшой BigInt, integer Newton даёт floor root, точное сравнение с (root+1/2)^2 определяет округление. Negative finite/negative infinity дают -Infinity, signed zero сохраняется. Научные slots пока явно отклоняются. Реальный Arduino analogWrite использует эти conversions и существующий MCU PWM; аппаратные таймеры/прерывания продолжают обслуживаться между ROM-вызовами. Проверенный эталон не закрывает все режимы PWM/IRQ. Native PartKind/БД/схемы не менялись.
+
 ## Рациональные float/double операции Pico · 8 ноября 2026
 
 pico-float.cjs декодирует payload как sign/mantissa/exponent, складывает/умножает целые BigInt либо хранит точное отношение при делении, затем округляет nearest-even в binary32/64. Сохраняются signed zero, overflow→infinity, input/output denormals→zero; input NaN преобразуется в signed infinity согласно ROM. Диапазон экспонент ограничен форматами, поэтому сдвиги не зависят от непроверенного int/fixed n. Противоположные infinities при сложении, zero×infinity и indeterminate division пока явно отклоняются. Нормальные вычисления не используют Number как промежуточное float-значение. Registered ROM slots 0x00..0x0c вызывают этот код через существующий BKPT/BX LR ABI. Остальные slots, включая sqrt/conversions/compare, пока явно не реализованы; программа не получает фиктивный результат.

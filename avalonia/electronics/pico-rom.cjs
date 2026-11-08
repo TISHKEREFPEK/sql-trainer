@@ -1,6 +1,6 @@
 'use strict';
 const {installFlash}=require('./pico-flash.cjs');
-const {invokeArithmetic}=require('./pico-float.cjs');
+const {invokeArithmetic,invokeConversion}=require('./pico-float.cjs');
 // Original host implementation of the documented RP2040 ROM ABI. No Raspberry
 // Pi ROM image/instructions are included. Unknown functions fail explicitly.
 function installRomAbi(mcu) {
@@ -36,7 +36,8 @@ function installRomAbi(mcu) {
   for(const name of ['UB','DT','DE','WV'])functions.set(name,entry(name,unsupported(name)));
   const names=['add','sub','mul','div','compare-fast','compare-flags','sqrt','to-int','to-fixed','to-uint','to-ufixed','from-int','from-fixed','from-uint','from-ufixed','cos','sin','tan','sincos','exp','log','compare','atan2','from-int64','from-fixed64','from-uint64','from-ufixed64','to-int64','to-fixed64','to-uint64','to-ufixed64','convert-width'];
   for(const [table,label] of [[0x800,'float'],[0x900,'double']]) {
-    u16(table-2,32);for(let i=0;i<32;i++)u32(table+i*4,entry(label+'/'+names[i],i<4?()=>invokeArithmetic(registers,label==='float'?32:64,names[i]):unsupported(label+'/'+names[i])));
+    const width=label==='float'?32:64;
+    u16(table-2,32);for(let i=0;i<32;i++)u32(table+i*4,entry(label+'/'+names[i],i<4||i===6?()=>invokeArithmetic(registers,width,names[i]):i>=7&&i<=14||i===21||i>=23?()=>invokeConversion(registers,width,i):unsupported(label+'/'+names[i])));
   }
   u32(0x10,0x0301754d); // documented magic and compatible v3 table layout
   const data=new Map([['SF',0x800],['SD',0x900],['GR',0xa00],['CR',0xa10]]);u32(0xa00,0);

@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Конверсии, корень и PWM Pico · 8 ноября 2026
+
+ROM поддерживает int/fixed/64-bit conversions, compare, float↔double и sqrt. Первый Arduino analogWrite/аппаратный PWM и delay прошёл эталон; научные функции и native-связка ещё не готовы. Для полного текущего набора добавьте `FullyQualifiedName~PicoConversionTests` к фильтру PicoRomTests/PicoFoundationTests. Установка и GitHub не обновлены, Pico остаётся Visual; точные доказательства — в baseline.
+
 ## Первые операции ROM float/double · 8 ноября 2026
 
 Работают add/sub/mul/div binary32/64 с точным округлением и правилами denormals RP2040. Остальные операции, преобразования, PWM и native-связка ещё требуют реализации/проверки. Для проверки используется тот же набор PicoRomTests; доказательства — в baseline, поведение — в [описании](docs/pico-foundation-2026-11-08.md). Pico остаётся Visual, GitHub отложен.

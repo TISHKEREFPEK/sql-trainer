@@ -1,5 +1,11 @@
 # Контекст проекта
 
+## Преобразования, sqrt и первый Arduino PWM Pico · 8 ноября 2026
+
+После `ba121b2` добавлены все int/fixed 32/64-bit conversions двух точностей, float↔double и compare. ROM float→int/fixed использует floor и saturation; SDK обёртки сохраняют собственные C-правила преобразования. Сдвиги ограничены до выделения BigInt даже при INT_MIN/MAX scale. Sqrt вычисляет integer root и сравнивает точную середину, сохраняя signed zero и документированный negative→-Infinity. Реальный analogWrite/1000 Гц/25% с delay на другом выводе прошёл первый эталон. Доказательства/границы — baseline.
+
+Далее нужны sin/cos/tan/sincos/exp/log/atan2 и непокрытые indeterminate infinity combinations, затем расширенные эталоны PWM/IRQ/PIO/DMA/RTC/watchdog и native pin mapping/solver/editor/review/history/поставка. Не объявлять всю ROM/периферию готовой по этим сценариям. Pico остаётся Visual, цель активна; импорт/учебная редактура/GitHub отложены.
+
 ## Первые четыре операции ROM math Pico · 8 ноября 2026
 
 После `00b4836` добавлены add/sub/mul/div обеих точностей: точные рациональные BigInt, IEEE binary encoding с правилами RP2040 ROM (nearest-even, input/output denormals→signed zero, input NaN→signed infinity). Не используется приближённая арифметика Number для float payload. Неопределённые infinity combinations пока явно отклоняются. Проверен вызов через настоящий ARM ABI/регистры; подробности и фактические проверки — в baseline. Следующий шаг — int/fixed/64-bit conversions и compare, затем sqrt/transcendentals, необходимые для обычного analogWrite эталоны PWM и native-связка. Не объявлять весь float/double готовым по четырём операциям. Pico остаётся Visual, цель активна; импорт/учебная редактура/GitHub отложены.

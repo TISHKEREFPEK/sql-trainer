@@ -1,5 +1,9 @@
 # Архитектура
 
+## Pico numeric conversions и sqrt · 8 ноября 2026
+
+Общий binary representation в pico-float используется для arithmetic, int/fixed conversions, compare и float↔double. Saturation/underflow/overflow проверяются до сдвигов, поэтому scale из 32-bit регистра не создаёт огромный BigInt. Конверсии следуют ROM floor/saturation и EABI расположению 64-bit аргументов/scale в R0..R3. Sqrt использует точный integer Newton root и сравнение квадрата середины, без Number-аппроксимации. Циклы ROM по-прежнему не воспроизводятся точно, научные функции ещё открыты; формат схем/БД не меняется.
+
 ## Точная арифметика ROM Pico · 8 ноября 2026
 
 pico-float.cjs реализует add/sub/mul/div как рациональные BigInt над мантиссами/степенями двойки и точно округляет в binary32/64. ROM entry points передают аргументы через R0/R1 либо R0..R3 и возвращают результат в R0 либо R0/R1. Double rounding через Number не используется; целые индексы/экспоненты малы и точны. Неопределённые infinity combinations остаются явными ошибками. Точные аппаратные циклы не моделируются, остальные math/conversions ещё открыты. Shared API/схема БД/сохранений не меняются.

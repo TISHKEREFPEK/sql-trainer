@@ -20,10 +20,11 @@ class PicoI2c {
       controller.abort=reason=>{transmitting=false;abort(reason);controller.rxFIFO.reset();controller.clearInterrupts(4);controller.setInterrupts(16);};
       controller.onWriteByte=value=>{transmitting=true;if(controller.control&0x100)controller.clearInterrupts(16);transport.eventHandler.writeByte(value);};
       controller.onReadByte=()=>transport.eventHandler.readByte();controller.onStop=()=>transport.eventHandler.stop();
-      const read=controller.readUint32.bind(controller),write=controller.writeUint32.bind(controller);let hold=1;
-      controller.readUint32=offset=>offset===0x7c?hold:read(offset);
+      const read=controller.readUint32.bind(controller),write=controller.writeUint32.bind(controller);let hold=1,dma=0;
+      controller.readUint32=offset=>offset===0x7c?hold:offset===0x88?dma:read(offset);
       controller.writeUint32=(offset,value)=>{
         if(offset===0x7c){hold=value&0xffffff;return;}
+        if(offset===0x88){dma=value&3;return;}
         if(offset===0xa0){controller.spikelen=value&0xff;return;}
         if(offset===0x6c&&(!(value&1)||value&2)&&(pending.size||value&2)){
           for(const alarm of pending)alarm.cancel();pending.clear();
@@ -35,6 +36,7 @@ class PicoI2c {
       };
       return bus;
     });this.gpio=new PicoGpioI2c(mcu,clock,this.devices);
+    for(const channel of mcu.dma.channels){const start=channel.start.bind(channel);channel.start=()=>{if((channel.ctrl&1)&&channel.transCount>0&&channel.treq>=32&&channel.treq<=35)throw Error('RP2040 I2C DMA transfer is not supported yet');return start();};}
   }
   prepare(configs){
     if(!Array.isArray(configs)||configs.length>80)throw Error('Invalid Pico I2C devices');

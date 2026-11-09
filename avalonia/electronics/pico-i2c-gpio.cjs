@@ -5,7 +5,7 @@ class GpioI2cBus {
     Object.assign(this,{owner,sda,scl,controller,packet:null,phase:'idle',low:false,lastSda:true,lastScl:true,lastRise:null,period:Infinity,active:[]});
   }
   live(d){const c=d.config;return this.owner.devices.get(c.id)===d&&d.powered&&c.connected&&c.sda===this.sda&&c.scl===this.scl&&(!this.packet||c.address===this.packet.address);}
-  flush(){if(this.packet){this.owner.trace.push({...this.packet,controller:this.controller,software:true});this.owner.traceBytes+=this.packet.data.length;this.packet=null;}}
+  flush(){if(this.packet){this.owner.trace.push({...this.packet,controller:this.controller,software:true,sda:this.sda,scl:this.scl});this.owner.traceBytes+=this.packet.data.length;this.packet=null;}}
   receive(){this.phase='receive';this.bits=0;this.byte=0;}
   start(){const repeated=this.packet!==null;this.flush();this.repeated=repeated;this.address=true;this.active=[];this.low=false;this.lastRise=null;this.period=Infinity;this.receive();}
   push(value){if(this.packet.data.length>=4096)throw Error('I2C transfer exceeds 4096 bytes');this.packet.data.push(value);}
@@ -48,7 +48,7 @@ class GpioI2cBus {
 }
 class PicoGpioI2c {
   constructor(mcu,clock,devices){
-    Object.assign(this,{mcu,clock,devices,buses:new Map(),trace:[],traceBytes:0,digital:[]});
+    Object.assign(this,{mcu,clock,devices,buses:new Map(),trace:[],traceBytes:0,digital:[],pullups:new Set()});
     // GPIO input pads are resolved only for SIO. Explicit host input wins over
     // pull resistors; an output feeds back its actual driven level.
     const read=mcu.sio.readUint32.bind(mcu.sio);
@@ -62,10 +62,11 @@ class PicoGpioI2c {
     };
     for(const pin of mcu.gpio){const update=pin.checkForUpdates.bind(pin);pin.checkForUpdates=()=>{update();this.tick();};}
   }
-  level(index){const p=this.mcu.gpio[index];return p.outputEnable&&!p.outputDisable?p.outputValue:this.digital[index]??(p.pullupEnabled?true:p.pulldownEnabled?false:p.rawInputValue);}
+  level(index){const p=this.mcu.gpio[index];return p.outputEnable&&!p.outputDisable?p.outputValue:this.digital[index]??(p.pullupEnabled||this.pullups.has(index)?true:p.pulldownEnabled?false:p.rawInputValue);}
   tick(){for(const bus of this.buses.values())bus.tick();}
   update(configs,digital){
     this.digital=digital;
+    this.pullups=new Set(configs.filter(c=>c.powered&&c.connected).flatMap(c=>[c.sda,c.scl]));
     for(const c of configs){const key=c.sda+':'+c.scl;if(!this.buses.has(key))this.buses.set(key,new GpioI2cBus(this,c.sda,c.scl,c.controller));}
     // Retain a removed pair only while its physical transfer is still active.
     const keys=new Set(configs.map(c=>c.sda+':'+c.scl));for(const [key,bus]of this.buses)if(!keys.has(key)&&bus.phase==='idle')this.buses.delete(key);

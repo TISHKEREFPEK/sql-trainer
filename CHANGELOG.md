@@ -1,5 +1,12 @@
 # Изменения
 
+## Native Pico RP2040 · 9 ноября 2026
+
+- Добавлен новый PartKind Pico в конец enum и отдельная модель pico-rp2040. Прежний Visual Pico/его контакты/снимки не преобразуются. Плата подключена к DC solver, всем GND/AGND, GPIO 3,3 В, ADC, виртуальному USB-питанию и реальному ARM runner редактора/проверочной копии.
+- Доступны USB Serial/UART0/UART1, шаблон по проводке LED/кнопки/ADC/OLED, две аппаратные и программные I2C-шины. Журнал хранит optional controller/software/GPIO без новых полей в старых записях; сервер принимает Pico. Новая миграция БД не требуется, Server/роли обновлять совместно.
+- Добавлены UART FIFO trigger/receive timeout и DMA-control/DREQ configuration; неподдержанная активная I2C DMA выдаёт явную ошибку. Контакты Pico защищены от подачи 5 В; внешнее управление питанием/RUN/reference ещё отклоняется явно.
+- Сценарий Windows packaging включает отдельный Pico SDK в Teacher/Student. Чистая установка/Win10/LAN/полная периферия/точная графика ещё требуют приёмки; рабочая установка и GitHub не обновлялись.
+
 ## Аппаратный I2C Pico · 9 ноября 2026
 
 - Добавлен GPIO/SIO-декодер START/STOP, адреса, ACK, чтения/записи и repeated START; настоящий Arduino-Pico probe/Adafruit BusIO обнаруживает подключённые модели. SIO GPIO_IN учитывает output feedback, pull resistors, host inputs и input override. Это ещё не полная электрическая модель/PIO/IRQ.

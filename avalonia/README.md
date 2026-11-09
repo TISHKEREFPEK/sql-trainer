@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Native Pico · 9 ноября 2026
+
+В каталоге есть отдельная исполняемая Pico RP2040; старый Visual-вариант остаётся. После prepare-pico.ps1 доступны GPIO/ADC/PWM, USB/UART, аппаратный/программный I2C и OLED, обычное сохранение/снимки/проверочная копия. Нужны совместные новые Server/Teacher/Student (новый тип платы и optional I2C metadata); миграции SQLite нет. build-windows включает Pico SDK в обе роли даже с SkipTests. Для проверки добавить PicoNativeTests к Pico-набору; точные прогоны/границы — baseline. Поддержаны виртуальный USB и 3,3 В GPIO, не внешний регулятор/RUN/reference и не прямая I2C-подтяжка 5 В. Полная периферия/графика/чистая поставка/Win10/LAN ещё открыты. Установленные приложения и GitHub не обновлены.
+
 ## Аппаратный I2C основания Pico · 9 ноября 2026
 
 Для проверки аппаратного/программного I2C, SDK probe и настоящих Adafruit BusIO/GFX/SSD1306 добавьте `FullyQualifiedName~PicoI2cTests` к Pico-набору; общий AVR-код проверяют `LcdI2cTests|OledTests`. Повторите prepare-pico.ps1 для добавления трёх закреплённых библиотек из готового base runtime; они включаются в read-only compiler cache. Готовый дополненный Pico runtime не требует base при повторном запуске подготовки. Pico ещё Visual: native-связка/поставка и полная периферия открыты. Подробности — [Pico foundation](docs/pico-foundation-2026-11-08.md). Установка и GitHub не обновлялись.

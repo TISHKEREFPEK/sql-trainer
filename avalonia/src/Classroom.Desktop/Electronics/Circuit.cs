@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
 public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1);
@@ -61,7 +61,7 @@ public sealed record CircuitProject
         }
         if (Wires.Any(w => !Valid(w.From) || !Valid(w.To) || w.From == w.To || !System.Text.RegularExpressions.Regex.IsMatch(w.Color, "^#[0-9A-Fa-f]{6}$")) || Wires.Select(w => w.Id).Distinct().Count() != Wires.Count)
             throw new InvalidDataException("Провод ссылается на отсутствующий вывод.");
-        if (Parts.Count(p => p.Kind is PartKind.Uno or PartKind.Mega) > 1) throw new InvalidDataException("Пока доступна одна исполняемая плата на схему; остальные платы можно сохранить в режиме схемы.");
+        if (Parts.Count(CircuitBoards.IsBoard) > 1) throw new InvalidDataException("Пока доступна одна исполняемая плата на схему; остальные платы можно сохранить в режиме схемы.");
         if (Parts.Count(p => p.Kind == PartKind.Breadboard) > 2) throw new InvalidDataException("На схеме допускается до двух макетных плат.");
         bool Valid(Terminal pin) => Parts.Any(p => p.Id == pin.Part && PartLibrary.Pins(p).Contains(pin.Pin));
     }
@@ -82,6 +82,7 @@ public static class PartLibrary
     {
         PartKind.Uno => "Arduino Uno", PartKind.Resistor => "Резистор", PartKind.Led => "Светодиод",
         PartKind.Mega => "Arduino Mega 2560",
+        PartKind.Pico => "Raspberry Pi Pico",
         PartKind.LcdI2c => "LCD · I2C",
         PartKind.OledI2c => "OLED 128×64 · I2C",
         PartKind.Switch => "Кнопка", PartKind.Battery => "Источник питания", PartKind.Ground => "Земля",
@@ -92,6 +93,7 @@ public static class PartLibrary
     {
         PartKind.Uno => Enumerable.Range(0, 14).Select(i => "D" + i).Concat(Enumerable.Range(0, 6).Select(i => "A" + i)).Concat(["5V", "GND"]).ToArray(),
         PartKind.Mega => AvrBoards.Get("mega2560").PinNames.Concat(["5V","3V3","GND","VIN","IOREF"]).ToArray(),
+        PartKind.Pico => PicoBoard.Pins,
         PartKind.LcdI2c => ["GND","VCC","SDA","SCL"],
         PartKind.OledI2c => ["VDD","GND","SCL","SDA"],
         PartKind.Led => ["A", "K"], PartKind.Ground => ["GND"],
@@ -131,7 +133,8 @@ public static class CircuitSolver
             foreach (var rail in new[] {"L+","L−","R+","R−"})
                 for (var row = 2; row <= 25; row++) Join(new(breadboard.Id, rail + "1"), new(breadboard.Id, rail + row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
-        var grounds = project.Parts.Where(p => p.Kind is PartKind.Ground or PartKind.Uno or PartKind.Mega).Select(p => new Terminal(p.Id, "GND")).ToArray();
+        foreach(var pico in project.Parts.Where(p=>p.Kind==PartKind.Pico))foreach(var pin in PicoBoard.Pins.Where(PicoBoard.IsGround))Join(new(pico.Id,PicoBoard.Ground),new(pico.Id,pin));
+        var grounds = project.Parts.Where(p => p.Kind==PartKind.Ground||CircuitBoards.IsBoard(p)).Select(p => new Terminal(p.Id, CircuitBoards.IsBoard(p)?CircuitBoards.Ground(p):"GND")).ToArray();
         if (grounds.Length == 0 && project.Parts.FirstOrDefault(p => p.Kind is PartKind.Battery or PartKind.AnalogSensor) is { } battery)
             grounds = [new(battery.Id, "−")];
         foreach (var ground in grounds.Skip(1)) Join(grounds[0], ground);
@@ -157,13 +160,14 @@ public static class CircuitSolver
                 case PartKind.Switch: branches.Add((part, T("1"), T("2"), part.Active ? 100 : 1e-10, 0, false)); break;
                 case PartKind.Led: case PartKind.Diode: branches.Add((part, T("A"), T("K"), 0, part.Value, true)); break;
                 case PartKind.Battery: case PartKind.AnalogSensor: branches.Add((part, T("+"), T("−"), 10, part.Value, false)); break;
-                case PartKind.Uno: case PartKind.Mega:
-                    branches.Add((part, T("5V"), T("GND"), 10, 5, false));
+                case PartKind.Uno: case PartKind.Mega: case PartKind.Pico:
+                    var pico=part.Kind==PartKind.Pico;var ground=CircuitBoards.Ground(part);var rail=pico?3.3:5;
+                    branches.Add((part, T(pico?PicoBoard.Vbus:"5V"), T(ground), 10, 5, false));
+                    if(pico){branches.Add((part,T(PicoBoard.V3),T(ground),10,3.3,false));branches.Add((part,T(PicoBoard.Vsys),T(ground),10,4.7,false));branches.Add((part,T("35:ADC_VREF"),T(PicoBoard.V3),1.0/200,0,false));branches.Add((part,T("30:RUN"),T(PicoBoard.V3),1.0/50000,0,false));branches.Add((part,T("37:3V3_EN"),T(PicoBoard.V3),1.0/100000,0,false));}
                     if(part.Kind==PartKind.Mega){branches.Add((part,T("3V3"),T("GND"),10,3.3,false));branches.Add((part,T("IOREF"),T("GND"),10,5,false));}
-                    var board=AvrBoards.For(part)!;var names=board.PinNames;
-                    for (var i = 0; i < names.Length; i++)
-                        if (digital is not null && i < digital.Length && (digital[i].Output || digital[i].PullUp))
-                            branches.Add((part, T(names[i]), T("GND"), digital[i].Output ? 1.0 / 25 : 1.0 / 50000, digital[i].PullUp ? 5 : Math.Clamp(digital[i].Voltage, 0, 5), false));
+                    for (var i = 0; i < CircuitBoards.PinCount(part); i++)
+                        if (CircuitBoards.Pin(part,i) is { } pin && digital is not null && i < digital.Length && (digital[i].Output || digital[i].PullUp))
+                            branches.Add((part, T(pin), T(ground), digital[i].Output ? 1.0 / 25 : 1.0 / 50000, digital[i].PullUp ? rail : Math.Clamp(digital[i].Voltage, 0, rail), false));
                     break;
             }
         }
@@ -199,20 +203,19 @@ public static class CircuitSolver
         {
             var voltage = V(b.A, volts) - V(b.B, volts);
             var current = b.Diode ? Math.Max(0, (voltage - b.Source) / 10) : (voltage - b.Source) * b.G;
-            if (b.Part.Kind is not (PartKind.Uno or PartKind.Mega)&&(!CircuitI2c.IsDevice(b.Part)||b.A.Pin==CircuitI2c.PowerPin(b.Part))) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
+            if (!CircuitBoards.IsBoard(b.Part)&&(!CircuitI2c.IsDevice(b.Part)||b.A.Pin==CircuitI2c.PowerPin(b.Part))) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
                 b.Part.Kind == PartKind.Motor ? Math.Clamp(Math.Abs(voltage) / 5, 0, 1) * 100 : null);
             if (b.Part.Kind == PartKind.Led && current > 0.03) warnings.Add("Ток светодиода выше 30 мА. Добавьте или увеличьте резистор.");
-            if (Math.Abs(current) > 0.1 && b.Part.Kind is PartKind.Uno or PartKind.Mega or PartKind.Battery) warnings.Add("Перегрузка источника или короткое замыкание. Проверьте проводку.");
+            if (Math.Abs(current) > 0.1 && (CircuitBoards.IsBoard(b.Part)||b.Part.Kind==PartKind.Battery)) warnings.Add("Перегрузка источника или короткое замыкание. Проверьте проводку.");
         }
         foreach (var servo in project.Parts.Where(p => p.Kind == PartKind.Servo))
         {
             var signal = Root(new(servo.Id, "SIG"));
             double? pulse = null;
-            foreach (var mcu in project.Parts.Where(p => AvrBoards.For(p) is not null))
+            foreach (var mcu in project.Parts.Where(CircuitBoards.IsBoard))
             {
-                var names=AvrBoards.For(mcu)!.PinNames;
-                for (var i = 0; digital is not null && i < Math.Min(names.Length, digital.Length); i++)
-                    if (Root(new(mcu.Id,names[i])) == signal) pulse = digital[i].PulseUs;
+                for (var i = 0; digital is not null && i < Math.Min(CircuitBoards.PinCount(mcu), digital.Length); i++)
+                    if (CircuitBoards.Pin(mcu,i) is { } name && Root(new(mcu.Id,name)) == signal) pulse = digital[i].PulseUs;
             }
             if (readings.TryGetValue(servo.Id, out var reading) && reading.Voltage > 3.5 && pulse is >= 500 and <= 2500)
                 readings[servo.Id] = reading with { Indicator = Math.Clamp((pulse.Value - 500) * 180 / 2000, 0, 180) };

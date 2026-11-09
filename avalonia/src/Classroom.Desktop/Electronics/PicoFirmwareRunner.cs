@@ -5,7 +5,7 @@ using Classroom.Contracts;
 namespace Classroom.Desktop.Electronics;
 
 public sealed record PicoI2cDevice(string Id,int Address,int Columns,int Rows,bool Connected,bool Powered,string Kind="lcd",int Controller=0,int Sda=4,int Scl=5);
-public sealed record PicoI2cIo(int Controller,int Address,bool Read,int[] Data,bool Ack,bool RepeatedStart,bool Software=false);
+public sealed record PicoI2cIo(int Controller,int Address,bool Read,int[] Data,bool Ack,bool RepeatedStart,bool Software=false,int? Sda=null,int? Scl=null);
 public sealed record PicoFrame(PinDrive[] Pins,string[] SerialPorts,int[] SerialPending,bool UsbReady,double Milliseconds,bool Complete,long Instructions,double ClockHz,string[] Diagnostics,LcdFrame[] Displays,OledFrame[] OledDisplays,PicoI2cIo[] I2c);
 
 // Foundation API, deliberately separate from the supported circuit-board picker.
@@ -23,7 +23,7 @@ public sealed class PicoFirmwareRunner : IDisposable
         process.ErrorDataReceived+=(_,_)=>{};process.BeginErrorReadLine();
         try{await Exchange<JsonElement>(new{uf2=Convert.ToBase64String(uf2)});}catch{Dispose();throw;}
     }
-    public Task<PicoFrame> Step(bool[]? digital=null,double[]? analog=null,string? serialInput=null,int serialPort=0,double milliseconds=10,IReadOnlyList<PicoI2cDevice>? devices=null)=>Exchange<PicoFrame>(new{digital,analog,serialInput,serialPort,milliseconds,devices});
+    public Task<PicoFrame> Step(bool[]? digital=null,double[]? analog=null,string? serialInput=null,int serialPort=0,double milliseconds=10,IReadOnlyList<PicoI2cDevice>? devices=null,bool?[]? gpioInputs=null)=>Exchange<PicoFrame>(new{digital,analog,serialInput,serialPort,milliseconds,devices,gpioInputs});
     async Task<T> Exchange<T>(object request)
     {
         await exchange.WaitAsync();

@@ -7,6 +7,7 @@ public static class CircuitCodeGuide
 {
     public static CodeGuide Build(CircuitProject project)
     {
+        if(project.Parts.Any(p=>p.Kind==PartKind.Pico))return PicoCodeGuide.Build(project);
         var notes = new List<string> { "setup() — начальная настройка; loop() — повторяющиеся действия. Код меняется только по вашей команде." };
         var unsupported = project.Parts.Where(p => !PartCatalog.CanSimulate(p)).ToArray();
         if (unsupported.Length > 0) notes.Add("Только для схемы: " + string.Join(", ", unsupported.Select(PartLibrary.Name).Distinct()) + ". Автонастройка и исполнение для этих моделей пока недоступны.");

@@ -146,7 +146,7 @@ public static class PartArtwork
             else if(pin.StartsWith('A')&&int.TryParse(pin[1..],out var analog)){x=200+analog*15;y=259;}
             else{x=pin switch{"IOREF"=>66,"3V3"=>92,"5V"=>105,"GND"=>118,"VIN"=>144,_=>20};y=259;}
         }
-        else if (PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico" && pins.Length == 40)
+        else if ((p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && pins.Length == 40)
         {
             x = i < 20 ? 20 : size.Width - 20;
             y = 70 + (i < 20 ? i : 39 - i) * 15;

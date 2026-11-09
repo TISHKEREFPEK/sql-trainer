@@ -1,7 +1,11 @@
 namespace Classroom.Contracts;
 
 public sealed record ElectronicsSerialIo(int Port, string Text);
-public sealed record ElectronicsI2cIo(int Address,bool Read,int[] Data,bool Ack,bool RepeatedStart);
+public sealed record ElectronicsI2cIo(int Address,bool Read,int[] Data,bool Ack,bool RepeatedStart,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? Controller=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] bool? Software=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? Sda=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? Scl=null);
 public sealed record ElectronicsActiveSpan(long StartedAt,long EndedAt);
 
 public sealed record ElectronicsChange(string Id, long Sequence, long At, string Actor, string Kind, string BeforeHash, string AfterHash,
@@ -25,7 +29,11 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
         if(kind!="i2c-transfer"||data.Length is <1 or >128||data.Any(t=>t is null||t.Address is <0 or >127||t.Data is null||t.Data.Length>4096||t.Data.Any(b=>b is <0 or >255)))
             throw new InvalidDataException("Некорректные данные I2C в истории.");
         using var document=System.Text.Json.JsonDocument.Parse(json);
-        if(!document.RootElement.GetProperty("parts").EnumerateArray().Any(p=>p.GetProperty("kind").GetString() is "Uno" or "Mega"))throw new InvalidDataException("У обмена I2C отсутствует исполняемая плата.");
+        var kinds=document.RootElement.GetProperty("parts").EnumerateArray().Select(p=>p.GetProperty("kind").GetString()).ToArray();
+        if(!kinds.Any(k=>k is "Uno" or "Mega" or "Pico"))throw new InvalidDataException("У обмена I2C отсутствует исполняемая плата.");
+        if(data.Any(t=>(t.Controller is not null||t.Software is not null||t.Sda is not null||t.Scl is not null)&&(!kinds.Contains("Pico")||t.Controller is not (0 or 1)||t.Software is null||
+            (t.Sda is null)!=(t.Scl is null)||t.Sda is <0 or >29||t.Scl is <0 or >29||t.Sda is not null&&t.Sda==t.Scl||t.Software==true&&t.Sda is null)))
+            throw new InvalidDataException("Некорректный контроллер или GPIO I2C в истории Pico.");
     }
     static void ValidateSerial(string json,string kind,ElectronicsSerialIo? data)
     {
@@ -34,7 +42,7 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
             throw new InvalidDataException("Некорректные данные последовательного порта в истории.");
         using var document=System.Text.Json.JsonDocument.Parse(json);
         var kinds=document.RootElement.GetProperty("parts").EnumerateArray().Select(p=>p.GetProperty("kind").GetString()).ToArray();
-        if(data.Port>=(kinds.Contains("Mega")?4:1)||kind is "serial-input-request" or "serial-input" or "serial-output"&&!kinds.Any(k=>k is "Uno" or "Mega"))
+        if(data.Port>=(kinds.Contains("Mega")?4:kinds.Contains("Pico")?3:1)||kind is "serial-input-request" or "serial-input" or "serial-output"&&!kinds.Any(k=>k is "Uno" or "Mega" or "Pico"))
             throw new InvalidDataException("Последовательный порт не относится к плате этой схемы.");
         try{_ = new System.Text.UTF8Encoding(false,true).GetByteCount(data.Text);}
         catch(System.Text.EncoderFallbackException e){throw new InvalidDataException("В данных порта есть неполный символ.",e);}

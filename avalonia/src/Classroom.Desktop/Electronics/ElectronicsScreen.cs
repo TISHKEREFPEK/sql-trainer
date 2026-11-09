@@ -67,6 +67,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(50) };
     readonly DispatcherTimer autosave = new() { Interval = TimeSpan.FromMilliseconds(500) };
     readonly FirmwareRunner firmware = new();
+    readonly PicoFirmwareRunner picoFirmware = new();
+    bool picoUsbReady;
     CircuitResult? result;
     Terminal? startPin;
     string? selected;
@@ -390,7 +392,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         var kind = definition.Kind;
         if (project.Parts.Count >= 80) throw new InvalidDataException("На схеме допускается до 80 компонентов.");
-        if (kind is PartKind.Uno or PartKind.Mega && project.Parts.Any(p => AvrBoards.For(p) is not null)) throw new InvalidDataException("Пока доступна одна исполняемая плата на схему.");
+        if (kind is PartKind.Uno or PartKind.Mega or PartKind.Pico && project.Parts.Any(CircuitBoards.IsBoard)) throw new InvalidDataException("Пока доступна одна исполняемая плата на схеме.");
         Checkpoint(); var id = Guid.NewGuid().ToString("N");
         var center=viewport.ToWorld(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2));
         var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null);
@@ -455,6 +457,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         { properties.Children.Add(Ui.Text("Выберите компонент или провод.", 16)); return; }
         properties.Spacing=10;
         properties.Children.Add(Ui.Muted("СВОЙСТВА ДЕТАЛИ",10));properties.Children.Add(Ui.Text(PartLibrary.Name(p), 18));
+        if(p.Kind==PartKind.Pico)properties.Children.Add(Ui.Muted("GPIO — 3,3 В. Питание от виртуального USB. Доступны GPIO, ADC, PWM, UART, USB Serial и I2C; остальные режимы ещё в разработке.",12));
         if (!PartCatalog.CanSimulate(p)){var badge=Ui.Muted("Только схема · без симуляции",12);ToolTip.SetTip(badge,"Симуляция поведения этой модели ещё не реализована.");properties.Children.Add(badge);}
         if (p.Kind == PartKind.Visual)
         {
@@ -610,7 +613,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 Canvas.SetLeft(button, (point.X - p.X) * zoom - diameter / 2); Canvas.SetTop(button, (point.Y - p.Y) * zoom - diameter / 2); group.Children.Add(button);
                 if (!hole)
                 {
-                    var pico = PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico" && PartLibrary.Pins(p).Length == 40;
+                    var pico = (p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && PartLibrary.Pins(p).Length == 40;
                     var left = point.X - p.X < size.Width / 2;
                     var sideways = pico && p.QuarterTurns % 2 == 1;
                     var mega=p.Kind==PartKind.Mega;var megaDigital=mega&&pin.StartsWith('D')&&int.TryParse(pin[1..],out _);
@@ -688,27 +691,34 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
             Stop(); Save(); RecordHistory(run?"run-request":"compile-request",true); compilation = new(); var generation = runId; running = true;
             var snapshot = project.Serialize(); var failureKind = run ? "run-error" : "compile-error";
-            var controller=project.Parts.SingleOrDefault(p=>AvrBoards.For(p) is not null);var board=controller is null?null:AvrBoards.For(controller);
-            status.Text = "Компиляция "+(board?.Name??"платы")+"…";
+            var controller=project.Parts.SingleOrDefault(CircuitBoards.IsBoard);var board=controller is null?null:AvrBoards.For(controller);
+            status.Text = "Компиляция "+(controller is null?"платы":CircuitBoards.Name(controller))+"…";
             try
             {
-                var hasUno = board is not null;
+                var hasUno = controller is not null;
                 if (run && project.Parts.FirstOrDefault(p => !PartCatalog.CanSimulate(p)) is { } unsupported)
                     throw new InvalidDataException($"«{PartLibrary.Name(unsupported)}» добавлена для схемы. Её симуляция пока не реализована. Уберите такие детали или работайте в режиме схемы.");
-                if (!hasUno && !run) throw new InvalidDataException("Для проверки кода добавьте Arduino Uno или Mega 2560 на схему.");
+                if (!hasUno && !run) throw new InvalidDataException("Для проверки кода добавьте исполняемую плату на схему.");
                 if(run&&controller?.Kind==PartKind.Mega&&project.Wires.Any(w=>w.From==new Terminal(controller.Id,"VIN")||w.To==new Terminal(controller.Id,"VIN")))
                     throw new InvalidDataException("Вход VIN пока доступен для схемы. Для симуляции Mega используется виртуальное питание USB; модель внешнего регулятора ещё не подключена.");
                 if (hasUno)
                 {
                     failureKind = "compile-error";
-                    var hex = await FirmwareRunner.Compile(project.Code, compilation.Token,board!.Id);
-                    if (generation != runId || disposed) return;
-                    Report("compiled",snapshot);
-                    failureKind = "run-error";
-                    if (run) {await firmware.Start(hex,board!.Id);serialReady=true;ClearSerialDisplay();UpdateSerialControls();}
+                    if(controller!.Kind==PartKind.Pico){
+                        if(run){PicoBoard.ValidateRun(project);var preflight=CircuitSolver.Solve(project);_ = CircuitPico.Inputs(project,preflight,CircuitPico.Devices(project,preflight));}
+                        var image=await PicoCompiler.Compile(project.Code,compilation.Token);if(generation!=runId||disposed)return;
+                        Report("compiled",snapshot);failureKind="run-error";
+                        if(run){await picoFirmware.Start(image);picoUsbReady=false;serialReady=true;ClearSerialDisplay();UpdateSerialControls();}
+                    }else{
+                        var hex = await FirmwareRunner.Compile(project.Code, compilation.Token,board!.Id);
+                        if (generation != runId || disposed) return;
+                        Report("compiled",snapshot);
+                        failureKind = "run-error";
+                        if (run) {await firmware.Start(hex,board!.Id);serialReady=true;ClearSerialDisplay();UpdateSerialControls();}
+                    }
                 }
                 if (generation != runId || disposed) return;
-                if (run) { timer.Start(); Report("started",snapshot); status.Text = hasUno ? $"Симуляция запущена. Модель постоянного тока; {board!.Name} питается от виртуального USB 5 В." : "Симуляция постоянного тока запущена."; }
+                if (run) { timer.Start(); Report("started",snapshot); status.Text = hasUno ? $"Симуляция запущена. Модель постоянного тока; {CircuitBoards.Name(controller!)} питается от виртуального USB." : "Симуляция постоянного тока запущена."; }
                 else { running = false; status.Text = "Код скомпилирован без ошибок."; }
             }
             catch (Exception e) { if (generation != runId || disposed) return; Report(failureKind,snapshot,e.Message); Stop(); throw; }
@@ -720,8 +730,18 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         ticking = true;UpdateSerialControls();var generation = runId;
         try
         {
-            var uno = project.Parts.FirstOrDefault(p => AvrBoards.For(p) is not null);
-            if (uno is not null)
+            var uno = project.Parts.FirstOrDefault(CircuitBoards.IsBoard);
+            if(uno?.Kind==PartKind.Pico){
+                result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices);
+                var serial=pendingSerial;pendingSerial=null;
+                var frame=await picoFirmware.Step(analog:inputs.Analog,serialInput:serial?.Text,serialPort:serial?.Port??0,devices:devices,gpioInputs:inputs.Digital);
+                if(generation!=runId||disposed)return;
+                if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
+                outputs=frame.Pins;picoUsbReady=frame.UsbReady;ReceiveSerial(frame.SerialPorts,frame.SerialPending);
+                if(frame.I2c.Length>0)RecordHistory("i2c-transfer",true,i2cIo:frame.I2c.Select(t=>new ElectronicsI2cIo(t.Address,t.Read,t.Data,t.Ack,t.RepeatedStart,t.Controller,t.Software,t.Sda,t.Scl)).ToArray());
+                displays=frame.Displays.ToDictionary(d=>d.Id);oledDisplays=frame.OledDisplays.ToDictionary(d=>d.Id);
+                if(frame.Diagnostics.Length>0)status.Text=string.Join(" ",frame.Diagnostics);
+            }else if (uno is not null)
             {
                 result = CircuitSolver.Solve(project, outputs);
                 var board=AvrBoards.For(uno)!;
@@ -748,7 +768,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     void Stop()
     {
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
-        runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose(); outputs = null;
+        runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose();picoFirmware.Dispose();picoUsbReady=false; outputs = null;
         serialReady=false;pendingSerial=null;displays.Clear();oledDisplays.Clear();UpdateSerialControls();
     }
     string Svg()

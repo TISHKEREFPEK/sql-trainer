@@ -10,8 +10,8 @@ function Run-DotNet([string[]]$Arguments) {
 Run-DotNet @('restore', 'Classroom.sln', '--locked-mode')
 Run-DotNet @('build', 'Classroom.sln', '-c', 'Release', '--no-restore', '-m:1', '-p:UseSharedCompilation=false')
 & "$PSScriptRoot/prepare-electronics.ps1"
+& "$PSScriptRoot/prepare-pico.ps1"
 if (-not $SkipTests) {
-    & "$PSScriptRoot/prepare-pico.ps1"
     $env:CLASSROOM_PICO_RUNTIME = Join-Path $root 'artifacts/pico-runtime'
     $env:CLASSROOM_UI_OUTPUT = Join-Path $root 'artifacts/ui'
     Run-DotNet @('test', 'Classroom.sln', '-c', 'Release', '--no-build', '--no-restore', '--logger', 'trx', '--results-directory', 'artifacts/tests')
@@ -36,6 +36,12 @@ foreach ($item in @('arduino-cli.exe', 'node.exe', 'ArduinoCLI-LICENSE.txt', 'No
     Copy-Item -LiteralPath (Join-Path $electronicsSource $item) -Destination $electronicsTarget -Recurse -Force
 }
 New-Item -ItemType Directory -Path (Join-Path $electronicsTarget 'user') -Force | Out-Null
+$picoSource=Join-Path $root 'artifacts/pico-runtime'
+$picoTarget=Join-Path $publish "$app/electronics/pico-runtime"
+New-Item -ItemType Directory -Path $picoTarget -Force | Out-Null
+foreach($item in @('arduino-cli.exe','node.exe','ArduinoCLI-LICENSE.txt','Node-LICENSE.txt','offline-pico-v1.json','offline-pico-libraries-v1.json','sandbox-arm','data','user')){
+    Copy-Item -LiteralPath (Join-Path $picoSource $item) -Destination $picoTarget -Recurse -Force
+}
 }
 $forbidden = Get-ChildItem "$publish/Student" -Recurse -File | Where-Object {
     $_.Name -match '^Classroom\.(Domain|Storage|Server|Worker)(\.|$)|catalog\.json|\.sqlite($|-)|\.pfx$|e_sqlite3|BouncyCastle|EntityFrameworkCore'

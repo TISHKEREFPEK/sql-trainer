@@ -7,6 +7,7 @@ const {StringDecoder}=require('node:string_decoder');
 const {decodeUf2}=require('./pico-uf2.cjs');
 const {installRomAbi}=require('./pico-rom.cjs');
 const {PicoI2c}=require('./pico-i2c.cjs');
+const {installUart}=require('./pico-uart.cjs');
 let state;
 function load(uf2) {
   const image=decodeUf2(uf2),clock=new SimulationClock(),mcu=new RP2040(clock),serial=[[],[],[]],incoming=[[],[],[]],messages=[];
@@ -14,6 +15,7 @@ function load(uf2) {
   mcu.logger={debug(){},info(){},warn(name,text){if(/Instruction .*not implemented|Opcode:/.test(text))throw Error(name+': '+text);log(name,text);},error(name,text){throw Error(name+': '+text);}};
   mcu.flash.fill(0xff);mcu.flash.set(image.flash);mcu.core.SP=image.stack;mcu.core.PC=image.entry;mcu.core.VTOR=image.vector;
   installRomAbi(mcu);
+  installUart(mcu,clock);
   const sioRead=mcu.sio.readUint32.bind(mcu.sio),sioWrite=mcu.sio.writeUint32.bind(mcu.sio);let fifoErrors=0;
   mcu.sio.readUint32=offset=>{if(offset===0x50)return 2|fifoErrors;if(offset===0x58){fifoErrors|=8;return 0;}return sioRead(offset);};
   mcu.sio.writeUint32=(offset,value)=>{if(offset===0x50){fifoErrors&=~(value&12);return;}if(offset===0x54)throw Error('RP2040 second-core FIFO execution is not supported');return sioWrite(offset,value);};
@@ -36,18 +38,18 @@ function load(uf2) {
 }
 function step(input) {
   if(!state||state.failed)throw Error('Load Pico firmware before stepping');
-  const {mcu,clock,incoming}=state,digital=input.digital??[],analog=input.analog??[],port=input.serialPort??0,duration=input.milliseconds??10;
-  if(!Array.isArray(digital)||digital.length>30||digital.some(v=>typeof v!=='boolean'))throw Error('Invalid Pico GPIO input');
+  const {mcu,clock,incoming}=state,digital=input.gpioInputs??input.digital??[],analog=input.analog??[],port=input.serialPort??0,duration=input.milliseconds??10;
+  if(!Array.isArray(digital)||digital.length>30||digital.some(v=>typeof v!=='boolean'&&!(input.gpioInputs!=null&&v===null)))throw Error('Invalid Pico GPIO input');
   if(!Array.isArray(analog)||analog.length>4||analog.some(v=>typeof v!=='number'||!Number.isFinite(v)||v<0||v>3.3))throw Error('Pico ADC voltage must be 0..3.3 V');
   if(!Number.isInteger(port)||port<0||port>2||input.serialInput!=null&&typeof input.serialInput!=='string')throw Error('Invalid Pico serial port/input');
   if(!Number.isFinite(duration)||duration<=0||duration>50)throw Error('Pico step must be 0..50 ms');
   const bytes=Buffer.from(input.serialInput??'','utf8');if(bytes.length+incoming[port].length>4096)throw Error('Pico serial input queue is full');
   if(port===0&&bytes.length&&!state.usbReady)throw Error('Pico USB CDC has not initialized');
   const devices=state.i2c.prepare(input.devices??[]);state.i2c.update(devices,digital);
-  digital.forEach((v,i)=>mcu.gpio[i].setInputValue(v));analog.forEach((v,i)=>mcu.adc.channelValues[i]=Math.round(v*4095/3.3));incoming[port].push(...bytes);
+  digital.forEach((v,i)=>{if(v!==null)mcu.gpio[i].setInputValue(v);});analog.forEach((v,i)=>mcu.adc.channelValues[i]=Math.round(v*4095/3.3));incoming[port].push(...bytes);
   function feed(){
     while(incoming[0].length&&state.usbReady&&!state.usb.txFIFO.full)state.usb.sendSerialByte(incoming[0].shift());state.resumeUsbRead();
-    mcu.uart.forEach((uart,i)=>{if(incoming[i+1].length&&uart.rxEnabled&&!(uart.flags&64))uart.feedByte(incoming[i+1].shift());});
+    mcu.uart.forEach((uart,i)=>{if(incoming[i+1].length&&uart.enabled&&uart.rxEnabled&&!(uart.flags&64))uart.feedByte(incoming[i+1].shift());});
   }
   const start=clock.nanos,target=start+duration*1e6,levels=mcu.gpio.map(p=>p.value===GPIOPinState.High),last=Array(30).fill(start),accumulated=Array(30).fill(0);
   const release=mcu.gpio.map((pin,i)=>pin.addListener(value=>{

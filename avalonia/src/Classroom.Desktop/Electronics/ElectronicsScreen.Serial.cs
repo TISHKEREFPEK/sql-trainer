@@ -16,11 +16,12 @@ public sealed partial class ElectronicsScreen
     Button? serialSend;
     ElectronicsSerialIo? pendingSerial;
     bool serialReady, serialBinding;
+    bool SerialChannelReady=>serialReady&&(!project.Parts.Any(p=>p.Kind==PartKind.Pico)||serialChannel.SelectedIndex!=0||picoUsbReady);
     Control BuildSerialPanel()
     {
         serialInput.Watermark="Данные для платы";
         serialInput.MaxLength=4096;
-        serialSend=Ui.Button("Отправить",()=>Perform(QueueSerialInput),()=>running&&serialReady&&!ticking&&pendingSerial is null&&!disposed);
+        serialSend=Ui.Button("Отправить",()=>Perform(QueueSerialInput),()=>running&&SerialChannelReady&&!ticking&&pendingSerial is null&&!disposed);
         var clear=Ui.Button("Очистить экран",()=>Perform(()=>
         {
             var index=Math.Max(0,serialChannel.SelectedIndex);RecordHistory("serial-clear",true,serialIo:new(index,""));serialText[index]="";ShowSerial();
@@ -28,7 +29,7 @@ public sealed partial class ElectronicsScreen
         ToolTip.SetTip(clear,"Очищается только экран выбранного порта. Записанная история сохраняется.");
         serialChannel.SelectionChanged+=(_,_)=>
         {
-            ShowSerial();if(!serialBinding&&serialChannel.SelectedIndex>=0)_=Perform(()=>RecordHistory("serial-channel",true,serialIo:new(serialChannel.SelectedIndex,"")));
+            ShowSerial();if(!serialBinding&&serialChannel.SelectedIndex>=0){_=Perform(()=>RecordHistory("serial-channel",true,serialIo:new(serialChannel.SelectedIndex,"")));UpdateSerialControls();}
         };
         serialInput.KeyDown+=(_,e)=>{if(e.Key==Key.Enter){e.Handled=true;_=Perform(QueueSerialInput);}};
         var send=new Grid{ColumnDefinitions=new("*,Auto,Auto"),ColumnSpacing=8};
@@ -39,6 +40,7 @@ public sealed partial class ElectronicsScreen
     void QueueSerialInput()
     {
         if(!running||!serialReady||disposed)throw new InvalidDataException("Сначала запустите симуляцию платы.");
+        if(!SerialChannelReady)throw new InvalidDataException("Дождитесь подключения USB Serial Pico или выберите UART.");
         if(pendingSerial is not null||ticking)throw new InvalidDataException("Предыдущий обмен с платой ещё обрабатывается. Повторите отправку.");
         var text=(serialInput.Text??"")+(serialEnding.SelectedIndex==1?"\n":serialEnding.SelectedIndex==2?"\r\n":"");
         if(text.Length==0)return;
@@ -54,21 +56,22 @@ public sealed partial class ElectronicsScreen
     }
     void UpdateSerialControls()
     {
-        var count=project.Parts.Any(p=>p.Kind==PartKind.Mega)?4:1;
+        var pico=project.Parts.Any(p=>p.Kind==PartKind.Pico);var count=project.Parts.Any(p=>p.Kind==PartKind.Mega)?4:pico?3:1;
         if(serialChannel.Items.Count!=count)
         {
-            serialBinding=true;var selected=serialChannel.SelectedIndex;serialChannel.ItemsSource=Enumerable.Range(0,count).Select(i=>i==0?"Serial":"Serial"+i).ToArray();serialChannel.SelectedIndex=Math.Clamp(selected,0,count-1);serialBinding=false;
+            serialBinding=true;var selected=serialChannel.SelectedIndex;serialChannel.ItemsSource=Enumerable.Range(0,count).Select(i=>pico?(i==0?"Serial · USB":"Serial"+i+" · UART"+(i-1)):i==0?"Serial":"Serial"+i).ToArray();serialChannel.SelectedIndex=Math.Clamp(selected,0,count-1);serialBinding=false;
         }
-        if(serialSend is not null)serialSend.IsEnabled=running&&serialReady&&!ticking&&pendingSerial is null&&!disposed;
-        if(codeTabs?.ItemsSource is TabItem[] pages&&pages.Length>0)pages[0].Header="Код "+(project.Parts.Select(AvrBoards.For).FirstOrDefault(b=>b is not null)?.Name??"платы");
+        if(serialSend is not null)serialSend.IsEnabled=running&&SerialChannelReady&&!ticking&&pendingSerial is null&&!disposed;
+        if(codeTabs?.ItemsSource is TabItem[] pages&&pages.Length>0)pages[0].Header="Код "+(project.Parts.FirstOrDefault(CircuitBoards.IsBoard) is {}controller?CircuitBoards.Name(controller):"платы");
         ShowSerial();
     }
     void ShowSerial(){var index=Math.Clamp(serialChannel.SelectedIndex,0,3);monitor.Text=serialText[index];serialQueueInfo.Text=serialQueued[index]>0?$"Ожидает чтения: {serialQueued[index]} байт":"";}
     void ClearSerialDisplay(){Array.Fill(serialText,"");Array.Clear(serialQueued);ShowSerial();}
     void ReceiveSerial(FirmwareFrame frame)
+        =>ReceiveSerial(frame.SerialPorts??[frame.Serial],frame.SerialPending??[]);
+    void ReceiveSerial(string[] ports,int[] queued)
     {
-        Array.Clear(serialQueued);if(frame.SerialPending is { }queued)Array.Copy(queued,serialQueued,Math.Min(4,queued.Length));
-        var ports=frame.SerialPorts??[frame.Serial];
+        Array.Clear(serialQueued);Array.Copy(queued,serialQueued,Math.Min(4,queued.Length));
         for(var i=0;i<Math.Min(4,ports.Length);i++)
         {
             var text=ports[i];if(text.Length==0)continue;

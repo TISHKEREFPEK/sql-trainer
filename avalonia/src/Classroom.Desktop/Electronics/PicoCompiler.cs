@@ -34,7 +34,8 @@ public static partial class PicoCompiler
             var runtime=await CompilerRuntime.Prepare(Runtime,cancellation,extraDirectory:"sandbox-arm");
             if(kind==PicoSourceKind.Arduino)await PrepareCore(runtime,cancellation);
             Directory.CreateDirectory(scratch);
-            var settings=new Dictionary<string,string>{{"ARDUINO_DIRECTORIES_DATA",Path.Combine(runtime,"data")},{"ARDUINO_DIRECTORIES_DOWNLOADS",Path.Combine(scratch,"downloads")},{"ARDUINO_DIRECTORIES_USER",Path.Combine(scratch,"user")},{"ARDUINO_BUILD_CACHE_PATH",Path.Combine(scratch,"cache")}};
+            var user=Directory.Exists(Path.Combine(runtime,"user","libraries"))?Path.Combine(runtime,"user"):Path.Combine(scratch,"user");
+            var settings=new Dictionary<string,string>{{"ARDUINO_DIRECTORIES_DATA",Path.Combine(runtime,"data")},{"ARDUINO_DIRECTORIES_DOWNLOADS",Path.Combine(scratch,"downloads")},{"ARDUINO_DIRECTORIES_USER",user},{"ARDUINO_BUILD_CACHE_PATH",Path.Combine(scratch,"cache")}};
             async Task Run(string executable,IEnumerable<string> arguments)
             {
                 var result=await Task.Run(()=>OperatingSystem.IsWindows()?(kind==PicoSourceKind.Arduino?WindowsSandboxProcess.RunWithPreparedFiles(executable,arguments,runtime,scratch,settings,cancellation,alias=>StageCore(runtime,scratch,alias)):WindowsSandboxProcess.Run(executable,arguments,runtime,scratch,settings,cancellation)):throw new IOException("Компиляция Pico требует Windows."),cancellation);

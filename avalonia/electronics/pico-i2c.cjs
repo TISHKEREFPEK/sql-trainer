@@ -1,8 +1,9 @@
 'use strict';
 const {I2cBus}=require('./i2c-bus.cjs');
+const {PicoGpioI2c}=require('./pico-i2c-gpio.cjs');
 class PicoI2c {
   constructor(mcu,clock){
-    this.devices=new Map();this.buses=mcu.i2c.map((controller,index)=>{
+    this.devices=new Map();this.tracePending=[];this.buses=mcu.i2c.map((controller,index)=>{
       const pending=new Set(),timer={get cycles(){return clock.nanos;},addClockEvent(callback,nanos){const alarm=clock.createAlarm(()=>{pending.delete(alarm);callback();});pending.add(alarm);alarm.schedule(nanos);}};
       let transmitting=false;
       const transport={get sclFrequency(){const count=controller.sclHighPeriod+controller.sclLowPeriod;if(count<=0||!Number.isFinite(mcu.clkSys)||mcu.clkSys<=0)throw Error('Invalid RP2040 I2C clock');return mcu.clkSys/count;},
@@ -33,7 +34,7 @@ class PicoI2c {
         write(offset,value);
       };
       return bus;
-    });
+    });this.gpio=new PicoGpioI2c(mcu,clock,this.devices);
   }
   prepare(configs){
     if(!Array.isArray(configs)||configs.length>80)throw Error('Invalid Pico I2C devices');
@@ -41,8 +42,16 @@ class PicoI2c {
     for(const c of normalized)if(!Number.isInteger(c.controller)||c.controller<0||c.controller>1||!Number.isInteger(c.sda)||c.sda<0||c.sda>29||!Number.isInteger(c.scl)||c.scl<0||c.scl>29||c.sda===c.scl)throw Error('Invalid Pico I2C controller/pins');
     return this.buses[0].validate(normalized);
   }
-  update(configs){this.buses[0].update(configs);}
-  get full(){return this.buses.reduce((n,b)=>n+b.trace.length,0)>=128||this.buses.reduce((n,b)=>n+b.traceBytes,0)>=32768;}
-  frame(){const [first,second]=this.buses.map(b=>b.frame());return {displays:first.displays,oledDisplays:first.oledDisplays,i2c:[...first.i2c.map(t=>({...t,controller:0})),...second.i2c.map(t=>({...t,controller:1}))]};}
+  update(configs,digital=[]){this.buses[0].update(configs);this.gpio.update(configs,digital);}
+  get full(){return this.tracePending.length>0||this.buses.reduce((n,b)=>n+b.trace.length,0)+this.gpio.trace.length>=128||this.buses.reduce((n,b)=>n+b.traceBytes,0)+this.gpio.traceBytes>=32768;}
+  frame(){
+    const [first,second]=this.buses.map(b=>b.frame());
+    this.tracePending.push(...first.i2c.map(t=>({...t,controller:0})),...second.i2c.map(t=>({...t,controller:1})),...this.gpio.frame());
+    // One SIO port write can finish several physical buses simultaneously.
+    // Drain bounded frames before resuming CPU; never truncate their packets.
+    const i2c=[];let bytes=0;
+    while(this.tracePending.length&&i2c.length<128&&bytes+this.tracePending[0].data.length<=32768){const packet=this.tracePending.shift();i2c.push(packet);bytes+=packet.data.length;}
+    return {displays:first.displays,oledDisplays:first.oledDisplays,i2c};
+  }
 }
 module.exports={PicoI2c};

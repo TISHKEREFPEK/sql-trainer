@@ -2,7 +2,7 @@
 
 ## Аппаратный I2C основания Pico · 9 ноября 2026
 
-Для проверки моста двух контроллеров к LCD/SSD1306 добавьте `FullyQualifiedName~PicoI2cTests` к Pico-набору; общий AVR-код проверяют `LcdI2cTests|OledTests`. SDK/запуск прежние. Pico ещё Visual: GPIO-probe, внешние библиотеки и native-связка не готовы. Подробности — [Pico foundation](docs/pico-foundation-2026-11-08.md). Установка и GitHub не обновлялись.
+Для проверки аппаратного/программного I2C, SDK probe и настоящих Adafruit BusIO/GFX/SSD1306 добавьте `FullyQualifiedName~PicoI2cTests` к Pico-набору; общий AVR-код проверяют `LcdI2cTests|OledTests`. Повторите prepare-pico.ps1 для добавления трёх закреплённых библиотек из готового base runtime; они включаются в read-only compiler cache. Готовый дополненный Pico runtime не требует base при повторном запуске подготовки. Pico ещё Visual: native-связка/поставка и полная периферия открыты. Подробности — [Pico foundation](docs/pico-foundation-2026-11-08.md). Установка и GitHub не обновлялись.
 
 ## Научные функции Pico · 8 ноября 2026
 

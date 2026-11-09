@@ -43,7 +43,7 @@ function step(input) {
   if(!Number.isFinite(duration)||duration<=0||duration>50)throw Error('Pico step must be 0..50 ms');
   const bytes=Buffer.from(input.serialInput??'','utf8');if(bytes.length+incoming[port].length>4096)throw Error('Pico serial input queue is full');
   if(port===0&&bytes.length&&!state.usbReady)throw Error('Pico USB CDC has not initialized');
-  const devices=state.i2c.prepare(input.devices??[]);state.i2c.update(devices);
+  const devices=state.i2c.prepare(input.devices??[]);state.i2c.update(devices,digital);
   digital.forEach((v,i)=>mcu.gpio[i].setInputValue(v));analog.forEach((v,i)=>mcu.adc.channelValues[i]=Math.round(v*4095/3.3));incoming[port].push(...bytes);
   function feed(){
     while(incoming[0].length&&state.usbReady&&!state.usb.txFIFO.full)state.usb.sendSerialByte(incoming[0].shift());state.resumeUsbRead();

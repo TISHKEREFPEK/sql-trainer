@@ -34,6 +34,7 @@ public sealed class ClassroomApplication : Application
 
     public static int Run(string[] args, bool teacher)
     {
+        if(args.FirstOrDefault()=="--verify-electronics")return args.Length==2?Electronics.ElectronicsPackageCheck.Run(args[1]).GetAwaiter().GetResult():2;
         Teacher = teacher;
         return AppBuilder.Configure<ClassroomApplication>().UsePlatformDetect().LogToTrace().StartWithClassicDesktopLifetime(args);
     }

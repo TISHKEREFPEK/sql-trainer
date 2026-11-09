@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## Проверяемый автономный комплект · 9 ноября 2026
+
+Отдельный copy-electronics-runtime выбирает CLI/Node/licenses, data, sandbox toolchain и закреплённые библиотеки без download/backup/sketches. Robocopy сохраняет пути >260; ready marker появляется после копирования. Ранний ClassroomApplication `--verify-electronics` использует SDK рядом с EXE, изолированные компиляторы и собственный короткий cache, не открывая UI/учётные данные/БД. Проверяет настоящий Uno/Mega/Pico C++ и исполнение UTF-8 serial/OLED, пишет JSON с hashes/error. Непустые выходы не перезаписываются; успешный собственный cache удаляется, сбойный сохраняется. Публикация и упаковка разделены; Inno 7 нужен для long paths. Контракты/SQLite не менялись. [Сборка и доказательства](windows-package-check-2026-11-09.md); установка/обновление Win10 и LAN ещё не проверены.
+
 ## Native Pico · 9 ноября 2026
 
 Новый PartKind Pico добавлен в конец enum и связан только с catalog ID pico-rp2040, исторический Visual Pico сохранён. PicoBoard задаёт 40 уникальных numbered header names, GPIO0–22/26–28; 23/24/25/29 остаются внутренними. CircuitBoards абстрагирует имя/ground/индекс вывода без переноса ARM в AvrBoards. CircuitSolver объединяет все Pico GND/AGND и добавляет виртуальные USB/VSYS/3V3/DC branches; RUN/EN/reference и внешнее питание не объявлены моделируемыми. CircuitConnections объединяет провода/полосы/земли, не резисторы. CircuitPico.Devices определяет фактические SDA/SCL GPIO, rejecting merged/ground/power nets; не принимает среднюю за шаг SCL-voltage за отключение проводки. Inputs возвращает nullable digital, allowing high-Z и I2C pullups, плюс три external ADC/VSYS÷3. GPIO вне диапазона явно останавливает запуск. Связь остаётся пошаговой DC, не непрерывной аналоговой симуляцией.

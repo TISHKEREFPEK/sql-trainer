@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Автономная поставка · 9 ноября 2026
+
+Используйте Inno Setup 7 и новые/пустые выходные папки. build-windows копирует SDK с длинными путями и выполняет `--verify-electronics` опубликованных ролей даже при SkipTests. Уже опубликованные папки можно упаковать отдельно через build-installers без повторного копирования SDK. [Команды, размеры и доказательства](docs/windows-package-check-2026-11-09.md). Холодные Uno/Mega/Pico-OLED проверки обеих ролей прошли; реальная установка/Win10/LAN ещё не приняты. GitHub и рабочие приложения не обновлялись.
+
 ## Native Pico · 9 ноября 2026
 
 В каталоге есть отдельная исполняемая Pico RP2040; старый Visual-вариант остаётся. После prepare-pico.ps1 доступны GPIO/ADC/PWM, USB/UART, аппаратный/программный I2C и OLED, обычное сохранение/снимки/проверочная копия. Нужны совместные новые Server/Teacher/Student (новый тип платы и optional I2C metadata); миграции SQLite нет. build-windows включает Pico SDK в обе роли даже с SkipTests. Для проверки добавить PicoNativeTests к Pico-набору; точные прогоны/границы — baseline. Поддержаны виртуальный USB и 3,3 В GPIO, не внешний регулятор/RUN/reference и не прямая I2C-подтяжка 5 В. Полная периферия/графика/чистая поставка/Win10/LAN ещё открыты. Установленные приложения и GitHub не обновлены.
@@ -228,13 +232,13 @@ JSON v1 расширен необязательными Angle=0, StretchX=1 и S
 
 Build-зависимость `System.Security.Cryptography.Xml` и её транзитивная `Pkcs` обновлены до 10.0.13. Для прежних 10.0.12 NuGet сообщает NU1902/NU1903; восстановление использует обновлённые lock-файлы без отключения аудита.
 
-На Windows установите SDK из `global.json`, PowerShell и Inno Setup 6, затем выполните:
+На Windows установите SDK из `global.json`, PowerShell и Inno Setup 7, затем выполните:
 
 ```powershell
 ./avalonia/scripts/build-windows.ps1
 ```
 
-Скрипт выполняет locked restore, Release build, тесты и четыре self-contained публикации, проверяет отсутствие серверных файлов в ученической поставке и создаёт два установщика в `avalonia/artifacts/installers`. Установленный .NET, Node.js и Electron для работы не нужны. `-SkipInstaller` создаёт папки приложений, `-SkipTests` пропускает проверки при повторной упаковке.
+Скрипт выполняет locked restore, Release build, тесты и четыре self-contained публикации, проверяет отсутствие серверных файлов у ученика и автономную электронику из обеих опубликованных ролей, затем создаёт два установщика в `avalonia/artifacts/installers`. Установленный .NET, Node.js и Electron для работы не нужны. `-SkipInstaller` оставляет папки приложений, `-SkipTests` пропускает обычные тесты; проверка опубликованного SDK пропускается отдельно через `-SkipPackageCheck`. Непустой выход сохраняется и отвергается; для повторной упаковки готовых папок используйте `build-installers.ps1`. [Подробности поставки](docs/windows-package-check-2026-11-09.md).
 
 GitHub Actions `.github/workflows/avalonia-windows.yml` выполняет эту сборку на Windows. [Сборка 9 октября 2026](https://github.com/TISHKEREFPEK/sql-trainer/actions/runs/37902279682) прошла успешно: 10 проверок логики/API и 5 проверок UI, собраны `SQL-Teacher-0.1.0-win-x64.exe` и `SQL-Student-0.1.0-win-x64.exe`. [Архив с установщиками и отчётами](https://github.com/TISHKEREFPEK/sql-trainer/actions/runs/37902279682/artifacts/11603530250) хранится 14 дней. Установщики пока без цифровой подписи. Установщик и удаление приложения сохраняют пользовательские базы и настройки вне каталога программы.
 

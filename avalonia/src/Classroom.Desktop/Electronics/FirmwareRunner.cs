@@ -10,7 +10,7 @@ public sealed class FirmwareRunner : IDisposable
 {
     static readonly SemaphoreSlim compilerSlots = new(2, 2);
     Process? process;
-    static string Runtime
+    internal static string Runtime
     {
         get
         {

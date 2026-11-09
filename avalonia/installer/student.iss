@@ -1,4 +1,7 @@
 #define AppVersion "0.1.0"
+#ifndef PublishRoot
+#define PublishRoot "..\artifacts\publish"
+#endif
 [Setup]
 AppId={{1F89D440-C52A-45AF-8A0B-AE149B3EA5F2}
 AppName=SQL · Ученик
@@ -22,7 +25,7 @@ RestartApplications=no
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [Files]
-Source: "..\artifacts\publish\Student\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishRoot}\Student\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{group}\SQL · Ученик"; Filename: "{app}\Classroom.Student.exe"
 Name: "{autodesktop}\SQL · Ученик"; Filename: "{app}\Classroom.Student.exe"; Tasks: desktopicon

@@ -1,5 +1,9 @@
 # Архитектура
 
+## Проверка Windows-поставки · 9 ноября 2026
+
+build-windows готовит SDK независимо от SkipTests, публикует роли/Server/Worker, копирует известный SDK payload через long-path robocopy, проверяет дерево Student и запускает ранний `--verify-electronics` каждой роли. Фиксированные скетчи компилируются обычным AppContainer и исполняются из SDK рядом с EXE; пользовательские БД/настройки не открываются. Собственный короткий temp cache устраняет найденный GNU linker path failure; при сбое остаётся диагностика. build-installers требует Inno 7 и позволяет упаковать уже проверенные папки. Выходы ограничены artifacts/.codex, непустые папки отвергаются без удаления. Модель данных/обычный вход не меняются. [Подробности и фактические проверки](../avalonia/docs/windows-package-check-2026-11-09.md).
+
 ## Native Pico · 9 ноября 2026
 
 Pico добавлен в конец PartKind, catalog pico-rp2040 отделён от исторического Visual Pico. CircuitBoards даёт общие имя/ground/индекс GPIO, AvrBoards продолжает владеть только AVR-компиляцией. PicoBoard хранит 40 физических terminals и исключает внутренние GPIO23/24/25/29 из разъёма. DC solver объединяет GND/AGND, моделирует виртуальные USB 5 В / VSYS 4,7 В / GPIO rail 3,3 В; это квазистатика, не модель регулятора. RUN/EN/external reference/power явно ограничены. CircuitPico связывает GPIO/I2C с wire/breadboard nets, не с ошибочно усреднённым уровнем SCL/SDA во время передачи. Nullable external inputs сохраняют released GPIO и pullups; ADC3 получает VSYS/3. Превышение допустимого GPIO-уровня отклоняется до/во время запуска.

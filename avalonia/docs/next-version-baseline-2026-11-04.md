@@ -1,5 +1,9 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## Проверка Windows-комплекта · 9 ноября 2026
+
+После native Pico проверен полный SDK payload в обеих self-contained ролях: long-path copy (максимум 358), Student privacy scan, холодная компиляция/исполнение Uno/Mega/Pico-OLED из обеих опубликованных EXE. Документ [windows-package-check](windows-package-check-2026-11-09.md) — источник точных отчётов/размеров/хешей, истории linker-cache исправления и одного пока необъяснённого Windows error 2. Новый verifier и long-path copier не меняют бизнес-логику/БД. Последний свежий build-windows целиком после cache fix не повторялся; успешные отдельные этапы не считать таким прогоном. E11/E14/Win10/LAN и вся цель остаются открыты; GitHub отложен, рабочая установка не заменена.
+
 ## Native Pico RP2040 · 9 ноября 2026
 
 После `5eb2b81` добавлен новый append-only PartKind Pico / catalog pico-rp2040. Старый Visual Pico сохраняется отдельно с прежними terminals/JSON. Native путь включает 40 numbered headers (внутренние GPIO23/24/25/29 не наружные контакты), GND/AGND, virtual USB DC rails 5/4,7/3,3 В, GPIO/ADC/PWM, реальные ARM compiler/runner, USB/UART0/UART1, wire→I2C mapping/OLED, шаблон LED/button/ADC/OLED, save/report/history и учительскую запускаемую копию. Входы GPIO могут быть high-Z; software bus видит реальные pullups, усреднённый SCL одного кадра не превращается в разрыв проводки. GPIO >3,45 В отказывается запускать; внешний RUN/EN/reference/регулятор не объявлены поддержанными. Проверка кода отделена от электрических ограничений запуска.

@@ -1,5 +1,11 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## RTC и итог упаковки · 9 ноября 2026
+
+Оба установщика среза `6406e6d` собраны Inno 7.1.0, родительский процесс завершился с exit 0; Teacher 722 395 920 байт / Student 656 999 623 байт. Hashes/локальные отчёты — [package check](windows-package-check-2026-11-09.md). Они не запускались и не содержат последующий RTC diff. Установка/upgrade Win10 и физический offline/LAN ещё открыты; GitHub отложен.
+
+Следующий функциональный блок заменяет RTC_BASE собственной календарной моделью без Date/host timezone; IRQ25 исполняет штатные SDK handlers. `check-pico-rtc.cjs` прошёл с TZ UTC/America/New_York/Europe/Moscow: leap2100/force, independent DOTW, 99/4095-year boundaries, date latch, stopped RTC/reference, real dividers, RO/atomic/forced/masked IRQ/reset. После этого расширен отрицательный сценарий каждого поля будильника и повторён Node-прогон успешно. `pico-rtc-first`: **1 passed / 0 skipped**, 25 с — настоящий Arduino-Pico C++/SDK, календарь/одноразовый и повторный IRQ callback/пауза, без diagnostics. `pico-rtc-regression`: **12 passed / 0 skipped**, 3 м 42 с — окончательный RTC, PicoFoundation (в том числе isolation/cache/alias), PicoNative и RealWireProbe GPIO→hardware I2C. Release test build / locked restore прошли; этот прогон не вся solution suite, с первым RTC пересекается. `git diff --check` прошёл. [Модель и открытая точность](pico-foundation-2026-11-08.md); это не завершение всей Pico/матрицы/цели.
+
 ## Проверка Windows-комплекта · 9 ноября 2026
 
 После native Pico проверен полный SDK payload в обеих self-contained ролях: long-path copy (максимум 358), Student privacy scan, холодная компиляция/исполнение Uno/Mega/Pico-OLED из обеих опубликованных EXE. Документ [windows-package-check](windows-package-check-2026-11-09.md) — источник точных отчётов/размеров/хешей, истории linker-cache исправления и одного пока необъяснённого Windows error 2. Новый verifier и long-path copier не меняют бизнес-логику/БД. Последний свежий build-windows целиком после cache fix не повторялся; успешные отдельные этапы не считать таким прогоном. E11/E14/Win10/LAN и вся цель остаются открыты; GitHub отложен, рабочая установка не заменена.

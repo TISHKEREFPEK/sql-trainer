@@ -1,5 +1,15 @@
 # Основание Pico/RP2040 · 8 ноября 2026
 
+## Функциональные часы RTC · 9 ноября 2026
+
+Собственный `pico-rtc.cjs` заменяет только RTC-периферию RP2040js; vendor остаётся неизменённым. Дата не использует JavaScript Date, часовой пояс или часы ПК. Поддержаны отдельный day-of-week, календарные переносы/12-битный год, аппаратный leap rule /4 и FORCE_NOTLEAPYEAR, LOAD/enable, остановка RTC/его reference clock, CLKDIV_M1 и дробный CLOCKS divisor (INT=0 означает 65536), latch RTC_0→RTC_1, поля будильника, raw/masked/forced IRQ25 и очистка через MATCH_ENA, RTC reset. Это моделируемое время платы, не изменение календарных дат статистики учеников.
+
+Неверная календарная конфигурация и внешние GPIN reference clocks отвергаются явно. Поддержка функциональная: точная задержка пересечения clock domains, переключение PLL/oscillator во время отсчёта, held-reset access и пробуждение dormant ещё не приняты. Не считать этот блок доказательством всей периферии/точности часов. Источники: [RP2040 §4.8](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf), [официальный RTC register header](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2040/hardware_regs/include/hardware/regs/rtc.h), [штатный SDK](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_rtc/rtc.c).
+
+Проверки: `node avalonia/tests/check-pico-rtc.cjs` — календарные границы, намеренно независимый день недели, 2100 leap/force, год 99/4095, остановка счётчика и reference, latch, RO/atomic/masked/forced IRQ, reset и делители; прошёл с TZ `UTC`, `America/New_York`, `Europe/Moscow`. `pico-rtc-first`: **1 passed / 0 skipped**, 25 с — настоящий C++/штатный SDK, быстрый физический divider, календарь/IRQ callback/пауза/повторный будильник, без diagnostics. Дальнейший прогон соседних сценариев фиксируется в baseline. Установщики, собранные в packaging-блоке `6406e6d`, не включают последующий RTC diff; рабочие приложения не заменялись.
+
+Окончательный `pico-rtc-regression`: **12 passed / 0 skipped**, 3 м 42 с — RTC + Foundation/Native/RealWireProbe; Release test build и locked restore прошли. В отдельный Node-сценарий затем добавлены отрицательные проверки всех семи полей будильника, он повторён успешно. Прогоны пересекаются и не суммируются как уникальные проверки; полная suite/физический Win10/LAN не запускались. Подробный источник доказательств — начало baseline.
+
 Это промежуточная реализация E11. С 9 ноября отдельный **native Pico RP2040 уже исполняется в редакторе** для проверенных GPIO/ADC/PWM/USB/UART/I2C/OLED сценариев. Это не полная совместимость Cirkit/всей периферии. Исторический Visual Pico сохранён без преобразования; старые Uno/Mega/снимки не меняются. Установка и GitHub не обновлялись, импорт отложен.
 
 ## Что реализовано

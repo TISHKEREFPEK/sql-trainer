@@ -8,6 +8,7 @@ const {decodeUf2}=require('./pico-uf2.cjs');
 const {installRomAbi}=require('./pico-rom.cjs');
 const {PicoI2c}=require('./pico-i2c.cjs');
 const {installUart}=require('./pico-uart.cjs');
+const {installRtc}=require('./pico-rtc.cjs');
 let state;
 function load(uf2) {
   const image=decodeUf2(uf2),clock=new SimulationClock(),mcu=new RP2040(clock),serial=[[],[],[]],incoming=[[],[],[]],messages=[];
@@ -16,6 +17,7 @@ function load(uf2) {
   mcu.flash.fill(0xff);mcu.flash.set(image.flash);mcu.core.SP=image.stack;mcu.core.PC=image.entry;mcu.core.VTOR=image.vector;
   installRomAbi(mcu);
   installUart(mcu,clock);
+  installRtc(mcu,clock);
   const sioRead=mcu.sio.readUint32.bind(mcu.sio),sioWrite=mcu.sio.writeUint32.bind(mcu.sio);let fifoErrors=0;
   mcu.sio.readUint32=offset=>{if(offset===0x50)return 2|fifoErrors;if(offset===0x58){fifoErrors|=8;return 0;}return sioRead(offset);};
   mcu.sio.writeUint32=(offset,value)=>{if(offset===0x50){fifoErrors&=~(value&12);return;}if(offset===0x54)throw Error('RP2040 second-core FIFO execution is not supported');return sioWrite(offset,value);};

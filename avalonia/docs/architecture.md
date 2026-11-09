@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## RTC · 9 ноября 2026
+
+installRtc заменяет MMIO RTC_BASE собственным BasePeripheral на simulation clock, оборачивает только CLOCKS RTC ctrl/div и RTC reset. Частота выводится из выбранного внутреннего reference/divisor; календарь не связан с Date/timezone. Сохраняются отдельный day-of-week/12-bit year, аппаратный leap rule, frozen state/phase, RTC_0 date latch, match flags/raw/mask/force IRQ25. SDK работает обычным ARM-кодом; внешняя clock/invalid calendar конфигурация отклоняется явно. Clock-domain latency, dynamic PLL и dormant ещё не приняты. JSON/SQLite/пользовательский вход не меняются. [Доказательства](pico-foundation-2026-11-08.md).
+
 ## Проверяемый автономный комплект · 9 ноября 2026
 
 Отдельный copy-electronics-runtime выбирает CLI/Node/licenses, data, sandbox toolchain и закреплённые библиотеки без download/backup/sketches. Robocopy сохраняет пути >260; ready marker появляется после копирования. Ранний ClassroomApplication `--verify-electronics` использует SDK рядом с EXE, изолированные компиляторы и собственный короткий cache, не открывая UI/учётные данные/БД. Проверяет настоящий Uno/Mega/Pico C++ и исполнение UTF-8 serial/OLED, пишет JSON с hashes/error. Непустые выходы не перезаписываются; успешный собственный cache удаляется, сбойный сохраняется. Публикация и упаковка разделены; Inno 7 нужен для long paths. Контракты/SQLite не менялись. [Сборка и доказательства](windows-package-check-2026-11-09.md); установка/обновление Win10 и LAN ещё не проверены.

@@ -1,5 +1,9 @@
 # Архитектура
 
+## Функциональный RTC Pico · 9 ноября 2026
+
+Собственный pico-rtc заменяет периферию RTC_BASE, сохраняя vendor RP2040js. Календарь — отдельные целочисленные поля без Date/host timezone; simulation-clock alarm двигает их по RTC/clock dividers только при разрешённом отсчёте. Latch RTC_0→RTC_1 и IRQ25 raw/masked/forced доступны через настоящие MMIO/SDK; RTC reset очищает состояние. Clock-domain crossing/PLL reconfiguration/dormant ещё не приняты, неподдержанная конфигурация не нормализуется в вымышленную дату. Формат проектов/БД/статистические даты не меняются. [Точность и проверки](../avalonia/docs/pico-foundation-2026-11-08.md).
+
 ## Проверка Windows-поставки · 9 ноября 2026
 
 build-windows готовит SDK независимо от SkipTests, публикует роли/Server/Worker, копирует известный SDK payload через long-path robocopy, проверяет дерево Student и запускает ранний `--verify-electronics` каждой роли. Фиксированные скетчи компилируются обычным AppContainer и исполняются из SDK рядом с EXE; пользовательские БД/настройки не открываются. Собственный короткий temp cache устраняет найденный GNU linker path failure; при сбое остаётся диагностика. build-installers требует Inno 7 и позволяет упаковать уже проверенные папки. Выходы ограничены artifacts/.codex, непустые папки отвергаются без удаления. Модель данных/обычный вход не меняются. [Подробности и фактические проверки](../avalonia/docs/windows-package-check-2026-11-09.md).

@@ -6,7 +6,7 @@ namespace Classroom.UiTests;
 
 public sealed class LcdI2cTests
 {
-    const string Program="""
+    internal const string Program="""
         #include <Wire.h>
         void pins(byte b,bool repeated=false){Wire.beginTransmission(0x27);Wire.write(b);Wire.endTransmission(!repeated);}
         void nibble(byte b,bool data=false){byte p=(b<<4)|8|(data?1:0);pins(p);pins(p|4);pins(p);}

@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Аппаратный I2C основания Pico · 9 ноября 2026
+
+Для проверки моста двух контроллеров к LCD/SSD1306 добавьте `FullyQualifiedName~PicoI2cTests` к Pico-набору; общий AVR-код проверяют `LcdI2cTests|OledTests`. SDK/запуск прежние. Pico ещё Visual: GPIO-probe, внешние библиотеки и native-связка не готовы. Подробности — [Pico foundation](docs/pico-foundation-2026-11-08.md). Установка и GitHub не обновлялись.
+
 ## Научные функции Pico · 8 ноября 2026
 
 Реализованы sin/cos/tan/sincos/exp/log/atan2 обеих точностей с независимыми эталонами. К текущему test filter добавьте PicoScienceTests; fixtures включены только в тестовый проект, mpmath нужен только для их повторной генерации. Обычные Arduino-скетчи и SDK range reduction проверяются отдельно; очень большие углы имеют ограничение точности SDK. Pico пока Visual; подробности — [описание](docs/pico-foundation-2026-11-08.md). Установка/GitHub не обновлены.

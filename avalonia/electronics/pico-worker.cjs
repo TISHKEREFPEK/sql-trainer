@@ -6,6 +6,7 @@ const {SimulationClock}=require('./vendor/rp2040js/cjs/clock/simulation-clock.js
 const {StringDecoder}=require('node:string_decoder');
 const {decodeUf2}=require('./pico-uf2.cjs');
 const {installRomAbi}=require('./pico-rom.cjs');
+const {PicoI2c}=require('./pico-i2c.cjs');
 let state;
 function load(uf2) {
   const image=decodeUf2(uf2),clock=new SimulationClock(),mcu=new RP2040(clock),serial=[[],[],[]],incoming=[[],[],[]],messages=[];
@@ -29,7 +30,7 @@ function load(uf2) {
   const endpointRead=mcu.usbCtrl.onEndpointRead;let waitingUsbRead=null;
   mcu.usbCtrl.onEndpointRead=(endpoint,size)=>{if(endpoint===usb.outEndpoint&&size>0&&usb.txFIFO.itemCount===0){waitingUsbRead={endpoint,size};return;}endpointRead(endpoint,size);};
   function resumeUsbRead(){if(waitingUsbRead&&usb.txFIFO.itemCount){const pending=waitingUsbRead;waitingUsbRead=null;endpointRead(pending.endpoint,pending.size);}}
-  state={mcu,clock,serial,incoming,usb,messages,decoders:serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},
+  state={mcu,clock,serial,incoming,usb,messages,i2c:new PicoI2c(mcu,clock),decoders:serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},
     get transmitted(){return transmitted;},resetTransmitted(){transmitted=0;},resumeUsbRead};
   return {ready:true,board:'pico',flashBytes:2*1024*1024,ramBytes:264*1024,vector:image.vector,entry:image.entry,serialPorts:3,bootrom:false};
 }
@@ -42,7 +43,7 @@ function step(input) {
   if(!Number.isFinite(duration)||duration<=0||duration>50)throw Error('Pico step must be 0..50 ms');
   const bytes=Buffer.from(input.serialInput??'','utf8');if(bytes.length+incoming[port].length>4096)throw Error('Pico serial input queue is full');
   if(port===0&&bytes.length&&!state.usbReady)throw Error('Pico USB CDC has not initialized');
-  if(input.devices?.length)throw Error('Pico circuit I2C bridge is not connected yet');
+  const devices=state.i2c.prepare(input.devices??[]);state.i2c.update(devices);
   digital.forEach((v,i)=>mcu.gpio[i].setInputValue(v));analog.forEach((v,i)=>mcu.adc.channelValues[i]=Math.round(v*4095/3.3));incoming[port].push(...bytes);
   function feed(){
     while(incoming[0].length&&state.usbReady&&!state.usb.txFIFO.full)state.usb.sendSerialByte(incoming[0].shift());state.resumeUsbRead();
@@ -57,7 +58,7 @@ function step(input) {
   }));
   let instructions=0;
   try {
-    while(clock.nanos<target&&instructions<1000000&&state.transmitted<8192) {
+    while(clock.nanos<target&&instructions<1000000&&state.transmitted<8192&&!state.i2c.full) {
       if((instructions&127)===0)feed();
       if(mcu.core.waiting){const next=clock.nanosToNextAlarm;clock.tick(Math.min(target-clock.nanos,next>0?next:target-clock.nanos));}
       else{const cycles=mcu.core.executeInstruction();clock.tick(cycles*1e9/mcu.clkSys);instructions++;}
@@ -67,7 +68,7 @@ function step(input) {
   const pins=mcu.gpio.map((pin,i)=>{if(levels[i])accumulated[i]+=clock.nanos-last[i];return {output:pin.outputEnable,voltage:elapsed>0?3.3*accumulated[i]/elapsed:pin.outputValue?3.3:0,pullUp:pin.value===GPIOPinState.InputPullUp,pulseUs:state.pulses[i],frequency:state.frequency[i]};});
   const serialPorts=state.serial.map((values,i)=>{const text=state.decoders[i].write(Buffer.from(values));values.length=0;return text;});state.resetTransmitted();
   const diagnostics=state.messages.splice(0);
-  return {pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics};
+  return {pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics,...state.i2c.frame()};
 }
 module.exports={load,step};
 if(require.main===module)require('node:readline').createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{

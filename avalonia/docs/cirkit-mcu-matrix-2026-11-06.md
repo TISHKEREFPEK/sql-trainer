@@ -17,6 +17,7 @@ ESP32-сетевые примеры документации включают HT
 
 ## Что подтверждено у нас исходниками и целевым набором
 
+- 9 ноября после `96155ac`: добавлен отдельный аппаратный I2C-мост Pico/Wire/Wire1 к LCD/SSD1306; собственный адаптер исправляет TX_EMPTY_CTRL/abort без изменения vendor. Проверены чтение/repeated START, два банка, NACK/восстановление, частоты и атомарный отказ неверному входу. Это ещё не GPIO-probe/Adafruit/native-провода или доказательство всех режимов I2C. Границы/фактические прогоны — в начале baseline / Pico foundation; Pico остаётся Visual.
 - После `c9a2e90` scientific ROM slots Pico реализованы и имеют независимые эталоны высокой точности + ARM/Arduino checks. Первые GPIO/ADC/UART/USB/NOR/PWM сценарии работают; это ещё не полная периферийная и native-приёмка. SDK-ограничение больших углов зафиксировано отдельно в Pico foundation. Pico остаётся Visual до подключения к circuit solver/editor/review/history; исходный ROM не поставляется.
 
 - Дополнение 8 ноября после первого Pico foundation: собственные ROM memory/bits/lookup/flash-вызовы уже запускают проверенные Arduino-скетчи с GPIO/ADC/UART/USB CDC и NOR erase/program. Float/double ABI пока явно отклоняется; PWM/остальная периферия и native-связка не приняты. Pico остаётся Visual. Подробности — [Pico foundation](pico-foundation-2026-11-08.md); исторический текст ниже об отсутствии всего ROM ABI относится к первому checkpoint.

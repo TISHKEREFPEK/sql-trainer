@@ -60,7 +60,7 @@ function step(input) {
   });
   // Finish a frame early under heavy serial traffic, preserving every byte
   // rather than silently dropping output when a host-side buffer fills.
-  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192&&lcdBus.trace.length<128){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
+  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192&&lcdBus.trace.length<128&&lcdBus.traceBytes<32768){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
   finally{listeners.forEach(({port,listener})=>port.removeListener(listener));}
   const pins=pinMap.map((pin,index)=>{
     if(levels[index])accumulated[index]+=cpu.cycles-last[index];const state=pin.port.pinState(pin.bit);

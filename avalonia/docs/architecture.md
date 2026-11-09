@@ -1,5 +1,11 @@
 # Архитектура Avalonia Classroom
 
+## Два I2C-контроллера Pico · 9 ноября 2026
+
+`pico-i2c.cjs` адаптирует неизменённые RPI2C к существующему `I2cBus`, используя SimulationClock nanos и общий Map физических дисплеев. Foundation DTO `PicoI2cDevice` содержит controller/SDA/SCL; `PicoFrame` — LCD/OLED и трассу с controller. ACK зависит от питания/connected/address, роли контактов банка и functionSelect=3. Частота — clk_sys/(SCL_HCNT+SCL_LCNT). Чтение устройства происходит после задержки байта, с повторной проверкой соединения. Проверка всех конфигураций чистая: неверный поздний элемент не сбрасывает первый LCD. Общий лимит завершённой трассы 128 пакетов/32768 байтов на шаг дополняет предел 4096 байтов на пакет; незавершённый пакет живёт между шагами.
+
+Адаптер хранит SDA_HOLD/FS_SPKLEN; TX_EMPTY_CTRL учитывает сдвиговую передачу, abort очищает RX и выставляет TX_EMPTY. Штатный SDK disable между оконченными сообщениями без STOP не теряет held-пакет/repeated START; при отключении с ожидающими alarm они отменяются, пакет помечается неуспешным. Отложенные callbacks повторно сверяют identity/power/connected/mux и адрес с текущим пакетом, поэтому смена адреса не подтверждает старую передачу. Трассы двух банков выдаются с их номерами, без обещания глобального временного порядка. Slave/10-bit, async DMA, GPIO bitbang/scanner, аналоговые уровни/согласование 3,3→5 В и native solver не реализованы этим мостом. Vendor, Shared contracts, БД и файл схемы не меняются; Pico пока Visual.
+
 ## Bounded fixed-point scientific ROM Pico · 8 ноября 2026
 
 pico-science использует P=320 и самостоятельно вычисленные π / ln2. Sin/cos: ближайший quadrant, остаток до π/4, Taylor; tan — отношение двух fixed результатов. Exp: k*ln2 + малый остаток, Taylor и общий encoder. Log: нормализованная мантисса и atanh series. Atan2: отношение min/max, atan series/reduction, отдельные знаки нуля/оси/infinities и tiny-ratio branch. Ограничения циклов 128/256/512 исключают бесконечный ряд; tiny normal values не теряются при fixed conversion. Number используется для индексов/малых экспонент, не для значений функций. Экспорт representation из pico-float разделяет единые ROM denormal/rounding rules.

@@ -1,8 +1,8 @@
 # Архитектура Avalonia Classroom
 
-## GPIO SPI · 10 ноября 2026
+## TFT shared control initialisation · 10 ноября 2026
 
-Shared GpioSpi живёт рядом с hardware SpiDisplays и использует тот же controller/GRAM/trace. Peek читает следующий MISO byte без продвижения pointer, commit происходит на восьмом rising edge; последний MISO bit удерживается до falling edge. AVR callbacks видят фактический port output до PIN update; Pico resolver сохраняет цепочку I2C и input override. Idle/no-TFT path не создаёт per-pin input arrays; GPIO callback cache учитывает value/ctrl/pad/input. Связанные summaries разделяются по device/method, неизвестная partial-byte частота разрешена только software без completed words. [Контракт/ограничения](ili9341-spi-2026-11-10.md).
+TftCodeGuide хранит роль GPIO и способ SPI, заранее deasserts CS, выделяет первого владельца общего RST; второй Adafruit object использует -1 и software reset по выбранному CS. Матрица подтверждает две панели на Uno/Mega/Pico и I2C LCD/OLED рядом на Mega, а native renderer принимает четыре surface frames без подмены. [Ресурсы/пределы](ili9341-spi-2026-11-10.md). Контракты/SQLite/SDK не меняются.
 
 ## Watchdog warm reset · 10 ноября 2026
 

@@ -1,8 +1,8 @@
 # Изменения
 
-## GPIO SPI для ILI9341 · 10 ноября 2026
+## Общие управляющие линии TFT · 10 ноября 2026
 
-Добавлен декодер rising/falling GPIO edges, model readback peek, AVR PIN и Pico SIO input paths, partial-byte abort/cross-frame continuity, software Adafruit code guide. MISO тоже учитывается при выборе hardware/software шаблона. Сводки разделяют способы обмена; неизвестная частота прерванного software byte явно обозначается. Новая capability spi-gpio-v1 защищает доставку этого формата. [Доказательства/пределы](avalonia/docs/ili9341-spi-2026-11-10.md); SQLite, данные пользователя и GitHub не менялись.
+TftCodeGuide различает роли выводов, разрешает общие DC/RST/LED, предварительно отключает CS обеих панелей и не повторяет hardware reset общей линии при втором begin. Проверены независимые цвета/ID двух панелей, совместные LCD/OLED, native surfaces/save, bounded RPC и MISO contention. [Результаты/остаток](avalonia/docs/ili9341-spi-2026-11-10.md). Принято отдельное будущее требование защиты файлов для standard Windows accounts; сейчас файлы/ACL/Windows policies не шифруются и не меняются.
 
 ## Watchdog Pico · 10 ноября 2026
 

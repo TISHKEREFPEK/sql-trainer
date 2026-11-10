@@ -1,8 +1,8 @@
 # Архитектура
 
-## Программный SPI · 10 ноября 2026
+## Общий RST/DC у TFT · 10 ноября 2026
 
-GpioSpi декодирует фронты MCU GPIO независимо от Arduino API: MOSI rising, MISO falling, mode0/3, atomic complete-byte commit и abort по CS/reset/DC/mux. AVR использует port.lastValue/PIN hooks, Pico — SIO resolver после I2C. Hardware word bridge не подменяется GPIO. TftCodeGuide выбирает реальный software constructor при несовместимых hardware GPIO/MISO. Metadata различает software/hardware и требует spi-gpio-v1 при передаче; старые записи/SQLite не меняются. [Точные ограничения/проверки](../avalonia/docs/ili9341-spi-2026-11-10.md).
+Generator claims GPIO по роли: data/control collisions и CS conflicts отклоняются, одноимённые DC/RST/LED допускаются. До begin все CS выставляются HIGH; shared RST получает одного hardware-reset owner, остальные используют library SWRESET с собственным CS. Это сохраняет первое изображение при инициализации второго. [Матрица проверок/остаток](../avalonia/docs/ili9341-spi-2026-11-10.md). Model/SQLite не меняются. Защита файлов/ключей и неповреждение старых serialized formats добавлены в E14, шифрование пока не реализовано.
 
 ## Warm reset Pico · 10 ноября 2026
 

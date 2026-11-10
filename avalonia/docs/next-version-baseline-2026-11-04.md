@@ -1,5 +1,15 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## Shared TFT control и смешанные дисплеи · 10 ноября 2026
+
+После `49b946e` исправлен generator двух панелей с общими DC/RST/LED. Предварительный HIGH всех CS и единственный hardware reset owner оставляют первую панель живой после второго begin; чужие control roles/CS не переопределяются. [Конкретные доказательства и остаток](ili9341-spi-2026-11-10.md). Учтено новое требование владельца защиты содержимого файлов: standard Windows accounts без admin, основания сейчас/защита release перед повторной приёмкой; конкретная технология не выбрана, ничего не шифруется и системные права пользователя не меняются. GitHub/импорт отложены.
+
+- `tft-shared-control-before`: **0 passed / 3 failed**, 166 ms — актуальный starter считал shared DC/RST конфликтом. После исправления `tft-shared-control-fixed`: **3 passed / 0 skipped**, 164 ms, Uno/Mega/Pico; код/провода проекта не мутируют.
+- `tft-shared-buses`: **7 passed / 0 skipped**, 1 м 6 с — три starter cases, три настоящих Adafruit programs Uno/Mega/Pico с двумя shared-reset TFT (независимые red/green pixels и оба ID 93/41), Mega с двумя TFT + PCF8574 LCD + SSD1306 OLED. Pico: ещё 120 RPC steps, >10 обработанных UPDATE, каждый response <1 000 000 characters; peak working set **114876416 bytes**, потолок 512 MiB. Не заявлять это замером всего приложения/physical Win10.
+- `tft-shared-native`: **2 passed / 0 skipped**, 10 с — неверные CS/cross-role связи требуют исправления, третья панель сохраняется/запуск отклоняется; native Mega renderer показывает 2 TFT + LCD + OLED, fit не закрывает детали нижними tools, сохранён точный JSON. Просмотрен `.codex/next-version-baseline/lesson-ui-images/shared-tft-lcd-oled-1320.png`: четыре работающих поверхности/полный готовый текст, схема и код под ней.
+- Node `check-spi-displays.cjs` прошёл, включая conflicting MISO register responses при двух выбранных TFT. `tft-shared-regression`: **38 passed / 0 skipped**, 5 м 35 с — Oled (7), TftNative (9: physical + generated native), PicoNative (4), SharedTft role/starter (4), SoftwareSpi (5), LcdI2c (5), ElectronicsHistory (4). Состав подтверждён TRX; это выбранные семьи, не полная solution suite. Финальная Release build всей Classroom.sln: **0 warnings / 0 errors**, 9,82 с; `git diff --check` прошёл. Прогоны пересекаются; не суммировать как уникальные тесты.
+- SQLite/contracts/SDK versions не менялись. Новая упаковка/Win10/offline LAN/35 clients/полная GPIO и SPI peripheral matrix не выполнялись и не закрыты.
+
 ## GPIO SPI для ILI9341 · 10 ноября 2026
 
 После `4dd7d67` добавлен software SPI по настоящим GPIO transitions для Uno/Mega/Pico, MISO readback/peek, complete-byte commit, CS/reset/DC/mux abort и сохранение shift state между frames. Auto code guide использует six-argument Adafruit constructor по соединениям, учитывает MISO при выборе аппаратного режима. [Архитектура и полный остаток](ili9341-spi-2026-11-10.md). Сервер/роли обновлять совместно: новая capability spi-gpio-v1 для software/unknown-frequency semantics; SQLite/SDK версии прежние. Остальная матрица/полишинг/поставка/Win10/LAN не закрыты, импорт/GitHub отложены.

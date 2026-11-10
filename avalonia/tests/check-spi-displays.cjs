@@ -18,4 +18,7 @@ bus.update([{...config,connected:false}]);assert.equal(byte(0x28),255);assert.eq
 bus.update([{...config,powered:false}]);assert.equal(byte(0xd3),255);assert.equal(bus.frame().tftDisplays[0].display,false);
 assert.throws(()=>bus.update([config,config]),/configuration/);assert.throws(()=>bus.update([{...config,cs:{pin:10,level:false}}]),/configuration/);
 bus.update([config]);levels.set(9,false);assert.throws(()=>bus.begin(0,0,8,1,4e6),/mode/);assert.throws(()=>bus.begin(0,0,8,0,11e6),/clock/);
-console.log('SPI display bus: valid/invalid bindings, power/MISO, transient CS abort, cross-frame continuation and protocol bounds passed');
+// A shared MISO must report conflicting register responses, not pick a winner.
+const second={...config,id:'tft2',cs:{pin:15}};levels.set(15,true);bus.update([config,second]);byte(0x36);byte(0x48,true);
+levels.set(10,true);levels.set(15,false);byte(0x36);byte(0x28,true);levels.set(10,false);byte(0x0b);assert.throws(()=>byte(0,true),/MISO contention/);
+console.log('SPI display bus: valid/invalid bindings, power/MISO, transient CS abort, cross-frame continuation, protocol bounds and two-panel contention passed');

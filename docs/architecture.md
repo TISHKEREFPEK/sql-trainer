@@ -1,8 +1,8 @@
 # Архитектура
 
-## TFT hardware SPI foundation · 10 ноября 2026
+## TFT ILI9341: native и SPI · 10 ноября 2026
 
-Worker-only spiDevices связывает GPIO/constant controls и реальные SPI peripheral words с оригинальной ILI9341 GRAM. Время передачи, режим/битовый порядок/roles, completed-byte response, cancellation epoch и RGB frames реализованы отдельно от native project kind. Старые Step вызовы совместимы; optional DTO не меняет JSON проектов/SQLite/API. SDK получил library supplement Adafruit ILI9341 1.7.0 с отдельным marker и полной лицензированной папкой; runtime download не добавлен. [Контракт, доказательства и обязательные дальнейшие слои](../avalonia/docs/ili9341-spi-2026-11-10.md). Это ещё не пользовательская деталь редактора.
+Append-only TftSpi / tft-ili9341-spi проходит через общий project inspector; SQLite не меняется. CircuitSpi строит bindings только из физических wire/breadboard nets, различает питание, обрыв, GPIO и константы. Оригинальный TftDisplayFace выводит RGB888 кадр с освобождением bitmap; геометрия 9-pin header не меняет старый Visual. CodeGuide использует действительные SPI/GPIO Uno/Mega/Pico; редактор и независимая teacher-copy работают одинаково. [Контракты, доказательства и открытые режимы](../avalonia/docs/ili9341-spi-2026-11-10.md). Сервер и роли нужно обновлять совместно.
 
 ## Warm reset Pico · 10 ноября 2026
 

@@ -106,7 +106,11 @@ public static class CircuitCodeGuide
             }
         }
         if(!ready) return new(string.Join("\n",notes),null);
+        var tft=TftCodeGuide.Build(project,uno);notes.AddRange(tft.Notes);
+        if(!tft.Ready||tft.Pins.Any(pin=>used.ContainsKey(pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount))))return new(string.Join("\n",notes.Append("Совместные выводы TFT и других деталей настройте вручную; шаблон не изменяет проводку.")),null);
+        declarations.AddRange(tft.Declarations);setup.AddRange(tft.Setup);
         var code=new StringBuilder($"// Начальный шаблон по текущим соединениям {profile.Name}.\n");
+        if(tft.Declarations.Length>0)code.Append(TftCodeGuide.Includes);
         if(servo) code.Append("#include <Servo.h>\n");
         if(oled)code.Append("#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n");
         if(i2c)code.AppendLine(I2cSketch.Helpers);

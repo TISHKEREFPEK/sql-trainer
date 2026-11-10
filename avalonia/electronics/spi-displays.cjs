@@ -33,13 +33,13 @@ class SpiDisplays {
     this.refresh();
   }
   refresh(){for(const r of this.records){
-    const c=r.config,powered=c.powered&&c.connected,reset=this.signal(c.rst),cs=this.signal(c.cs),dc=this.signal(c.dc);
-    const electrical=JSON.stringify([powered,reset,cs,dc,this.accepts(c)]);if(electrical!==r.electrical){r.epoch++;r.electrical=electrical;}
+    const c=r.config,powered=c.powered,reset=this.signal(c.rst),cs=this.signal(c.cs),dc=this.signal(c.dc);
+    const electrical=JSON.stringify([powered,c.connected,reset,cs,dc,this.accepts(c)]);if(electrical!==r.electrical){r.epoch++;r.electrical=electrical;}
     r.panel.update({powered,resetHigh:reset===true,backlight:this.signal(c.led)===true});
   }}
   begin(controller,value,bits,mode,hz,lsb=false){
     this.refresh();
-    const selected=this.records.filter(r=>r.config.controller===controller&&r.panel.powered&&r.panel.resetHigh&&this.signal(r.config.cs)===false&&this.accepts(r.config));
+    const selected=this.records.filter(r=>r.config.connected&&r.config.controller===controller&&r.panel.powered&&r.panel.resetHigh&&this.signal(r.config.cs)===false&&this.accepts(r.config));
     if(!selected.length)return ()=>bits===16?65535:(1<<bits)-1;
     if(bits!==8&&bits!==16)throw Error('TFT hardware SPI currently supports 8/16-bit words');
     if(mode!==0&&mode!==3)throw Error('ILI9341 requires SPI mode 0 or 3');

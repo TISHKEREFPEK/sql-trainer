@@ -1,8 +1,8 @@
 # Архитектура Avalonia Classroom
 
-## SPI display foundation · 10 ноября 2026
+## Native TFT и SPI · 10 ноября 2026
 
-SpiDisplays/Ili9341 — общий цифровой controller/GRAM; AVR SPDR/clock events и RP2040 FIFO/clock alarms передают настоящие words без перехвата Arduino API. Аппаратные GPIO roles/control lines и cancellation epoch исключают ответы по неправильной проводке/после CS pulse. Ограничены две панели, 8/16-bit word и mode 0/3; software GPIO SPI ещё не подключён. Цветные RGB888 frames и typed spiDevices optional в локальном worker DTO. Pico reset переносит внешнюю panel Map на physical clock, не прежние MCU bindings. Новая library 1.7.0 готовится отдельным supplement, marker/copy scripts обновлены. Native part/solver/renderer и server project kind ещё прежние. [Подробности/границы](ili9341-spi-2026-11-10.md).
+SpiDisplays/Ili9341 связываются с append-only TftSpi через CircuitSpi: физические wire/strip nets, MCU pin roles, отдельные power/connected/backlight. Потеря MOSI/SCK не стирает запитанную GRAM. TftDisplayFace — оригинальный вектор и освобождаемый RGB bitmap; PartArtwork переносит header вместе с геометрией и экспортирует схему. TftCodeGuide общий для Uno/Mega/Pico SPI0/SPI1, контролирует конфликты с другими деталями. Server inspector допускает новый kind без миграции; старый Visual остаётся отдельно. Worker words/clock/epochs, отдельные SDK и ограничения из 531dbc6 сохраняются. [Подробности и непроверенные режимы](ili9341-spi-2026-11-10.md).
 
 ## Watchdog warm reset · 10 ноября 2026
 

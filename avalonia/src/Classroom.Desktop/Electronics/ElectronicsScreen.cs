@@ -68,6 +68,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     readonly DispatcherTimer autosave = new() { Interval = TimeSpan.FromMilliseconds(500) };
     readonly FirmwareRunner firmware = new();
     readonly PicoFirmwareRunner picoFirmware = new();
+    Dictionary<string,TftDisplayFrame> tftDisplays=[];
     bool picoUsbReady;
     CircuitResult? result;
     Terminal? startPin;
@@ -457,7 +458,12 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         { properties.Children.Add(Ui.Text("Выберите компонент или провод.", 16)); return; }
         properties.Spacing=10;
         properties.Children.Add(Ui.Muted("СВОЙСТВА ДЕТАЛИ",10));properties.Children.Add(Ui.Text(PartLibrary.Name(p), 18));
-        if(p.Kind==PartKind.Pico)properties.Children.Add(Ui.Muted("GPIO — 3,3 В. Питание от виртуального USB. Доступны GPIO, ADC, PWM, UART, USB Serial и I2C; остальные режимы ещё в разработке.",12));
+        if(p.Kind==PartKind.Pico)properties.Children.Add(Ui.Muted("GPIO — 3,3 В. Питание от виртуального USB. Доступны GPIO, ADC, PWM, UART, USB Serial, I2C и TFT по аппаратному SPI; остальные режимы ещё в разработке.",12));
+        if(p.Kind==PartKind.TftSpi){
+            properties.Children.Add(Ui.Muted("ILI9341 · 240×320 · 9 контактов. VCC 3–5,5 В; входы модуля согласованы по уровням, MISO — 3,3 В. LED управляет подсветкой; MISO нужен для чтения. Поддержаны аппаратный SPI и до двух дисплеев. Touch и SD отсутствуют.",12));
+            var device=CircuitSpi.Devices(project).FirstOrDefault(d=>d.Id==p.Id);
+            properties.Children.Add(Ui.Text(device is null?"Добавьте исполняемую плату.":!device.Powered?"Проверьте VCC и общую GND.":!device.Connected?"Проверьте MOSI, SCK, CS, D/C и RST.":!CircuitSpi.Hardware(project.Parts.Single(CircuitBoards.IsBoard),device)?"MOSI/SCK не соответствуют аппаратному SPI этой платы.":"Питание и сигнальные соединения определены.",12));
+        }
         if (!PartCatalog.CanSimulate(p)){var badge=Ui.Muted("Только схема · без симуляции",12);ToolTip.SetTip(badge,"Симуляция поведения этой модели ещё не реализована.");properties.Children.Add(badge);}
         if (p.Kind == PartKind.Visual)
         {
@@ -568,7 +574,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             var baseSize = PartArtwork.BaseBody(p);
             var face = new Canvas { Width = baseSize.Width, Height = baseSize.Height, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
                 RenderTransformOrigin = new RelativePoint(0,0,RelativeUnit.Relative), RenderTransform = new MatrixTransform { Matrix = PartArtwork.TransformMatrix(p, zoom) } };
-            face.Children.Add(p.Kind == PartKind.Breadboard ? BreadboardFace(1) : p.Kind==PartKind.LcdI2c?new LcdDisplayFace(p,displays.GetValueOrDefault(p.Id)):p.Kind==PartKind.OledI2c?new OledDisplayFace(p,oledDisplays.GetValueOrDefault(p.Id)):PartArtwork.Thumbnail(PartCatalog.For(p).Art, baseSize.Width, baseSize.Height));
+            face.Children.Add(p.Kind == PartKind.Breadboard ? BreadboardFace(1) : p.Kind==PartKind.LcdI2c?new LcdDisplayFace(p,displays.GetValueOrDefault(p.Id)):p.Kind==PartKind.OledI2c?new OledDisplayFace(p,oledDisplays.GetValueOrDefault(p.Id)):p.Kind==PartKind.TftSpi?new TftDisplayFace(tftDisplays.GetValueOrDefault(p.Id)):PartArtwork.Thumbnail(PartCatalog.For(p).Art, baseSize.Width, baseSize.Height));
             board.Child = face;
             group.Children.Add(board);
             var title = new TextBlock { Text = PartLibrary.Name(p), FontSize = 12 * zoom, MaxWidth = Math.Max(80, size.Width) * zoom, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -611,7 +617,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 ToolTip.SetTip(button, pin + (result?.Voltages.TryGetValue(new(p.Id, pin), out var v) == true ? $" · {v:F2} В" : ""));
                 Avalonia.Automation.AutomationProperties.SetName(button, PartLibrary.Name(p) + ": " + pin);
                 Canvas.SetLeft(button, (point.X - p.X) * zoom - diameter / 2); Canvas.SetTop(button, (point.Y - p.Y) * zoom - diameter / 2); group.Children.Add(button);
-                if (!hole)
+                if (!hole&&p.Kind!=PartKind.TftSpi)
                 {
                     var pico = (p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && PartLibrary.Pins(p).Length == 40;
                     var left = point.X - p.X < size.Width / 2;
@@ -696,6 +702,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             try
             {
                 var hasUno = controller is not null;
+                if(run)CircuitSpi.ValidateRun(project);
                 if (run && project.Parts.FirstOrDefault(p => !PartCatalog.CanSimulate(p)) is { } unsupported)
                     throw new InvalidDataException($"«{PartLibrary.Name(unsupported)}» добавлена для схемы. Её симуляция пока не реализована. Уберите такие детали или работайте в режиме схемы.");
                 if (!hasUno && !run) throw new InvalidDataException("Для проверки кода добавьте исполняемую плату на схему.");
@@ -732,14 +739,15 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
             var uno = project.Parts.FirstOrDefault(CircuitBoards.IsBoard);
             if(uno?.Kind==PartKind.Pico){
-                result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices);
+                result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var spiDevices=CircuitSpi.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices,spiDevices);
                 var serial=pendingSerial;pendingSerial=null;
-                var frame=await picoFirmware.Step(analog:inputs.Analog,serialInput:serial?.Text,serialPort:serial?.Port??0,devices:devices,gpioInputs:inputs.Digital);
+                var frame=await picoFirmware.Step(analog:inputs.Analog,serialInput:serial?.Text,serialPort:serial?.Port??0,devices:devices,gpioInputs:inputs.Digital,spiDevices:spiDevices);
                 if(generation!=runId||disposed)return;
                 if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
                 outputs=frame.Pins;picoUsbReady=frame.UsbReady;ReceiveSerial(frame.SerialPorts,frame.SerialPending);
                 if(frame.I2c.Length>0)RecordHistory("i2c-transfer",true,i2cIo:frame.I2c.Select(t=>new ElectronicsI2cIo(t.Address,t.Read,t.Data,t.Ack,t.RepeatedStart,t.Controller,t.Software,t.Sda,t.Scl)).ToArray());
                 displays=frame.Displays.ToDictionary(d=>d.Id);oledDisplays=frame.OledDisplays.ToDictionary(d=>d.Id);
+                tftDisplays=(frame.TftDisplays??[]).ToDictionary(d=>d.Id);
                 if(frame.Diagnostics.Length>0)status.Text=string.Join(" ",frame.Diagnostics);
                 if(frame.ResetReason is {}reason){RecordHistory(reason==1?"watchdog-timer-reset":"watchdog-forced-reset",true);status.Text="Плата перезапущена сторожевым таймером.";}
             }else if (uno is not null)
@@ -749,7 +757,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 var inputs = Enumerable.Range(0, board.DigitalCount).Select(i => result.Voltages.GetValueOrDefault(new(uno.Id, "D" + i)) > 2.5).ToArray();
                 var analog = Enumerable.Range(0, board.AnalogCount).Select(i => result.Voltages.GetValueOrDefault(new(uno.Id, "A" + i))).ToArray();
                 var serial=pendingSerial;pendingSerial=null;
-                var frame = await firmware.Step(inputs, analog,serial?.Text,serial?.Port??0,CircuitI2c.Devices(project,result));
+                var frame = await firmware.Step(inputs, analog,serial?.Text,serial?.Port??0,CircuitI2c.Devices(project,result),CircuitSpi.Devices(project,result));
                 if (generation != runId || disposed) return;
                 if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
                 outputs = frame.Pins;
@@ -757,6 +765,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 if(frame.I2c is {Length:>0} transfers)RecordHistory("i2c-transfer",true,i2cIo:transfers);
                 displays=(frame.Displays??[]).ToDictionary(d=>d.Id);
                 oledDisplays=(frame.OledDisplays??[]).ToDictionary(d=>d.Id);
+                tftDisplays=(frame.TftDisplays??[]).ToDictionary(d=>d.Id);
             }
             result = CircuitSolver.Solve(project, outputs); Draw();
             if (result.Warnings.Length > 0) status.Text = string.Join(" ", result.Warnings);
@@ -770,7 +779,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
         runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose();picoFirmware.Dispose();picoUsbReady=false; outputs = null;
-        serialReady=false;pendingSerial=null;displays.Clear();oledDisplays.Clear();UpdateSerialControls();
+        serialReady=false;pendingSerial=null;displays.Clear();oledDisplays.Clear();tftDisplays.Clear();UpdateSerialControls();
     }
     string Svg()
     {

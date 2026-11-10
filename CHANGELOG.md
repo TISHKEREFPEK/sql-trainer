@@ -1,8 +1,8 @@
 # Изменения
 
-## TFT/SPI foundation · 10 ноября 2026
+## Native TFT ILI9341 · 10 ноября 2026
 
-Добавлены оригинальные ILI9341 controller и hardware SPI bindings AVR/Pico, optional worker DTO и закреплённая offline Adafruit ILI9341 1.7.0. Контроллер проверен настоящими прошивками всех трёх плат; SPI byte отменяется при разрыве критических линий, неверный MISO не выдаёт ID. SDK/copy scripts включают новый library supplement. Каталог/solver/native renderer/teacher review нового TFT остаются следующим этапом, старый Visual не менялся. [Границы/проверки](avalonia/docs/ili9341-spi-2026-11-10.md); установки/БД/GitHub не обновлены.
+Новый append-only TftSpi / tft-ili9341-spi: 9 контактов, wire/breadboard→hardware SPI, питание/подсветка, оригинальная цветная поверхность, экспорт схемы и шаблон по реальным Uno/Mega/Pico SPI0/SPI1 соединениям. Server inspector принимает новый kind; старые Visual/JSON/SQLite сохраняются. Разрыв сигнального провода больше не изображает отключение питания дисплея. [Проверки, ограничения и продолжение](avalonia/docs/ili9341-spi-2026-11-10.md). GitHub/установки отложены.
 
 ## Watchdog Pico · 10 ноября 2026
 

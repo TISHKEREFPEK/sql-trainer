@@ -1,8 +1,8 @@
 # SQL Classroom · Avalonia
 
-## ILI9341 hardware foundation · 10 ноября 2026
+## TFT ILI9341 в native · 10 ноября 2026
 
-После обновления prepare-electronics/prepare-pico доступна закреплённая Adafruit ILI9341 1.7.0. Worker API может связать hardware SPI с оригинальной моделью цветного дисплея; три реальных скетча Uno/Mega/Pico проверены. Native-каталог/проводка/render/teacher-copy пока не подключены. [Проверки, скрипты и необходимые следующие слои](docs/ili9341-spi-2026-11-10.md). Старые core markers сохранены, SPI library supplement включается в обе поставки; прежние установщики/рабочие приложения не заменялись, GitHub отложен.
+Каталог содержит отдельный девятиконтактный TFT 240×320 · ILI9341 · SPI. Проводка задаёт hardware SPI Uno/Mega/Pico, подсветку и GPIO управления; цветной кадр виден в ученическом и проверочном редакторе, шаблон строится по соединениям. Выполнить prepare-electronics/prepare-pico для pinned Adafruit ILI9341 1.7.0. [Проверки и границы](docs/ili9341-spi-2026-11-10.md). Старые Visual сохраняются; готовые установщики ещё прежние, GitHub отложен.
 
 ## Watchdog Pico · 10 ноября 2026
 

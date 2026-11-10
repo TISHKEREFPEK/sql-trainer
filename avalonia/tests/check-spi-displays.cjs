@@ -13,6 +13,8 @@ levels.set(10,true);bus.refresh();levels.set(10,false);bus.refresh();assert.equa
 finish=bus.begin(0,0x28,8,0,4e6);bus.update([JSON.parse(JSON.stringify(config))]);assert.equal(finish(),0);assert.equal(bus.frame().tftDisplays[0].display,false); // Equivalent frame binding preserves an in-flight word.
 bus.update([{...config,mosi:12}]);assert.equal(byte(0xd3),255);assert.equal(byte(0,true),255);
 bus.update([{...config,miso:14}]);byte(0xd3);assert.equal(byte(0,true),255);
+byte(0x29);assert.equal(bus.frame().tftDisplays[0].display,true);
+bus.update([{...config,connected:false}]);assert.equal(byte(0x28),255);assert.equal(bus.frame().tftDisplays[0].display,true); // Breaking a signal wire is not a panel power cut.
 bus.update([{...config,powered:false}]);assert.equal(byte(0xd3),255);assert.equal(bus.frame().tftDisplays[0].display,false);
 assert.throws(()=>bus.update([config,config]),/configuration/);assert.throws(()=>bus.update([{...config,cs:{pin:10,level:false}}]),/configuration/);
 bus.update([config]);levels.set(9,false);assert.throws(()=>bus.begin(0,0,8,1,4e6),/mode/);assert.throws(()=>bus.begin(0,0,8,0,11e6),/clock/);

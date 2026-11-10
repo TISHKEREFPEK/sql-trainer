@@ -39,13 +39,14 @@ public static class CircuitPico
             return new PicoI2cDevice(device.Id,(int)device.Value,size.Columns,size.Rows,connected,nets.Same(new(device.Id,"GND"),grounds)&&voltage>=(oled?3.0:4.5)&&voltage<=5.5,oled?"ssd1306":"lcd",connected?sda[0]%4/2:0,connected?sda[0]:4,connected?scl[0]:5);
         }).ToArray();
     }
-    public static (bool?[] Digital,double[] Analog) Inputs(CircuitProject project,CircuitResult result,PicoI2cDevice[] devices)
+    public static (bool?[] Digital,double[] Analog) Inputs(CircuitProject project,CircuitResult result,PicoI2cDevice[] devices,IReadOnlyList<SpiDisplayDevice>? spiDevices=null)
     {
         var board=project.Parts.Single(p=>p.Kind==PartKind.Pico);var digital=new bool?[30];var nets=new CircuitConnections(project);
         for(var i=0;i<30;i++)if(PicoBoard.Gpio(i) is {}pin){
             var terminal=new Terminal(board.Id,pin);var value=result.Voltages.GetValueOrDefault(terminal);
             if(!double.IsFinite(value)||value<-.1||value>3.45)throw new InvalidDataException($"Pico {pin}: {value:F2} В. GPIO работают на 3,3 В; проверьте питание и согласование уровней.");
             if(devices.Any(d=>d.Connected&&(d.Sda==i||d.Scl==i)))continue;
+            if(spiDevices?.Any(d=>d.Connected&&(d.Mosi==i||d.Sck==i||d.Miso==i))==true)continue;
             if(project.Wires.Any(w=>nets.Same(w.From,terminal)||nets.Same(w.To,terminal)))digital[i]=value>1.65;
         }
         digital[24]=true; // onboard VBUS sense in the virtual-USB power profile

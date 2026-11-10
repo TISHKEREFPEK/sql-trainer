@@ -1,5 +1,9 @@
 # Архитектура
 
+## Warm reset Pico · 10 ноября 2026
+
+Watchdog запрашивает смену MCU на границе инструкции; его alarm останавливается немедленно, чтобы simulation-clock не повторял срабатывание на нуле. Новые CPU/периферия получают сохранённые flash/SRAM/reason/scratch и проверенный flash vector либо однократный magic PC/SP. Старые периферийные callbacks отменяются; physical clock и powered I2C devices сохраняются, аппаратный clock domain начинается с нуля. Незавершённые I2C-пакеты отмечаются прерванными и попадают в bounded trace. Optional ResetReason существует только в worker-frame; native журнал использует обычные нейтральные kind-строки, JSON проектов/SQLite не меняются. [Проверки и неподдержанные режимы](../avalonia/docs/pico-foundation-2026-11-08.md).
+
 ## Функциональный RTC Pico · 9 ноября 2026
 
 Собственный pico-rtc заменяет периферию RTC_BASE, сохраняя vendor RP2040js. Календарь — отдельные целочисленные поля без Date/host timezone; simulation-clock alarm двигает их по RTC/clock dividers только при разрешённом отсчёте. Latch RTC_0→RTC_1 и IRQ25 raw/masked/forced доступны через настоящие MMIO/SDK; RTC reset очищает состояние. Clock-domain crossing/PLL reconfiguration/dormant ещё не приняты, неподдержанная конфигурация не нормализуется в вымышленную дату. Формат проектов/БД/статистические даты не меняются. [Точность и проверки](../avalonia/docs/pico-foundation-2026-11-08.md).

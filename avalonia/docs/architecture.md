@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## Watchdog warm reset · 10 ноября 2026
+
+Worker разделяет load и boot. При штатном watchdog request завершает текущий bounded frame, отменяет старые alarms и создаёт новые MCU/ROM/UART/RTC/I2C bindings на том же physical clock. Clock domain нового MCU даёт аппаратным timer registers новое начало. Flash/SRAM/8 scratch/reason переносятся; BootROM handoff проверяет magic/checksum/PC/SP и погашает scratch4 при использовании. Physical I2C Map/модель времени дисплеев сохраняются без удерживания прежних CPU bindings, trace очереди не обрезаются. ResetReason отражается в нейтральных kind watchdog-timer-reset/watchdog-forced-reset и русских подписях журнала. JSON проекта/контракты доставки/SQLite прежние. [Доказательства, 1 MHz/WDSEL границы](pico-foundation-2026-11-08.md).
+
 ## RTC · 9 ноября 2026
 
 installRtc заменяет MMIO RTC_BASE собственным BasePeripheral на simulation clock, оборачивает только CLOCKS RTC ctrl/div и RTC reset. Частота выводится из выбранного внутреннего reference/divisor; календарь не связан с Date/timezone. Сохраняются отдельный day-of-week/12-bit year, аппаратный leap rule, frozen state/phase, RTC_0 date latch, match flags/raw/mask/force IRQ25. SDK работает обычным ARM-кодом; внешняя clock/invalid calendar конфигурация отклоняется явно. Clock-domain latency, dynamic PLL и dormant ещё не приняты. JSON/SQLite/пользовательский вход не меняются. [Доказательства](pico-foundation-2026-11-08.md).

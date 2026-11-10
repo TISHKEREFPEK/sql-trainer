@@ -741,6 +741,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 if(frame.I2c.Length>0)RecordHistory("i2c-transfer",true,i2cIo:frame.I2c.Select(t=>new ElectronicsI2cIo(t.Address,t.Read,t.Data,t.Ack,t.RepeatedStart,t.Controller,t.Software,t.Sda,t.Scl)).ToArray());
                 displays=frame.Displays.ToDictionary(d=>d.Id);oledDisplays=frame.OledDisplays.ToDictionary(d=>d.Id);
                 if(frame.Diagnostics.Length>0)status.Text=string.Join(" ",frame.Diagnostics);
+                if(frame.ResetReason is {}reason){RecordHistory(reason==1?"watchdog-timer-reset":"watchdog-forced-reset",true);status.Text="Плата перезапущена сторожевым таймером.";}
             }else if (uno is not null)
             {
                 result = CircuitSolver.Solve(project, outputs);

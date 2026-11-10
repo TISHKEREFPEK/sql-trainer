@@ -9,15 +9,26 @@ const {installRomAbi}=require('./pico-rom.cjs');
 const {PicoI2c}=require('./pico-i2c.cjs');
 const {installUart}=require('./pico-uart.cjs');
 const {installRtc}=require('./pico-rtc.cjs');
+const {installWatchdog,bootTarget,clockDomain}=require('./pico-watchdog.cjs');
 let state;
 function load(uf2) {
-  const image=decodeUf2(uf2),clock=new SimulationClock(),mcu=new RP2040(clock),serial=[[],[],[]],incoming=[[],[],[]],messages=[];
+  const image=decodeUf2(uf2);state=boot(image,new SimulationClock());
+  return {ready:true,board:'pico',flashBytes:2*1024*1024,ramBytes:264*1024,vector:image.vector,entry:image.entry,serialPorts:3,bootrom:false};
+}
+function boot(image,clock,previous=null) {
+  const mcu=new RP2040(clockDomain(clock)),serial=[[],[],[]],incoming=previous?.incoming??[[],[],[]],messages=[];
   const log=(name,text)=>{if(messages.length<32)messages.push(name+': '+text);};
   mcu.logger={debug(){},info(){},warn(name,text){if(/Instruction .*not implemented|Opcode:/.test(text))throw Error(name+': '+text);log(name,text);},error(name,text){throw Error(name+': '+text);}};
-  mcu.flash.fill(0xff);mcu.flash.set(image.flash);mcu.core.SP=image.stack;mcu.core.PC=image.entry;mcu.core.VTOR=image.vector;
-  installRomAbi(mcu);
+  mcu.flash.fill(0xff);mcu.flash.set(previous?previous.mcu.flash:image.flash);
+  if(previous)mcu.sram.set(previous.mcu.sram);
+  const scratch=previous?.resetPending?.scratch?.slice(),target=previous?bootTarget(mcu,image,scratch):image;
+  mcu.core.SP=target.stack;mcu.core.PC=target.entry;mcu.core.VTOR=image.vector;
+  const rom=installRomAbi(mcu,previous?.rom.flashSnapshot());
   installUart(mcu,clock);
   installRtc(mcu,clock);
+  let resetPending=null;
+  const watchdog=installWatchdog(mcu,clock,reset=>{resetPending??=reset;});
+  if(previous){watchdog.reason=previous.resetPending.reason;watchdog.scratchData.set(scratch);}
   const sioRead=mcu.sio.readUint32.bind(mcu.sio),sioWrite=mcu.sio.writeUint32.bind(mcu.sio);let fifoErrors=0;
   mcu.sio.readUint32=offset=>{if(offset===0x50)return 2|fifoErrors;if(offset===0x58){fifoErrors|=8;return 0;}return sioRead(offset);};
   mcu.sio.writeUint32=(offset,value)=>{if(offset===0x50){fifoErrors&=~(value&12);return;}if(offset===0x54)throw Error('RP2040 second-core FIFO execution is not supported');return sioWrite(offset,value);};
@@ -34,9 +45,12 @@ function load(uf2) {
   const endpointRead=mcu.usbCtrl.onEndpointRead;let waitingUsbRead=null;
   mcu.usbCtrl.onEndpointRead=(endpoint,size)=>{if(endpoint===usb.outEndpoint&&size>0&&usb.txFIFO.itemCount===0){waitingUsbRead={endpoint,size};return;}endpointRead(endpoint,size);};
   function resumeUsbRead(){if(waitingUsbRead&&usb.txFIFO.itemCount){const pending=waitingUsbRead;waitingUsbRead=null;endpointRead(pending.endpoint,pending.size);}}
-  state={mcu,clock,serial,incoming,usb,messages,i2c:new PicoI2c(mcu,clock),decoders:serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},
+  const i2c=new PicoI2c(mcu,clock,previous?.i2c.devices);if(previous){
+    i2c.tracePending=previous.i2c.tracePending;
+    const physicalTime={get cycles(){return clock.nanos;}};for(const device of i2c.devices.values())device.cpu=physicalTime;
+  }
+  return {image,mcu,clock,rom,serial,incoming,usb,messages,i2c,decoders:previous?.decoders??serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},get resetPending(){return resetPending;},
     get transmitted(){return transmitted;},resetTransmitted(){transmitted=0;},resumeUsbRead};
-  return {ready:true,board:'pico',flashBytes:2*1024*1024,ramBytes:264*1024,vector:image.vector,entry:image.entry,serialPorts:3,bootrom:false};
 }
 function step(input) {
   if(!state||state.failed)throw Error('Load Pico firmware before stepping');
@@ -62,7 +76,7 @@ function step(input) {
   }));
   let instructions=0;
   try {
-    while(clock.nanos<target&&instructions<1000000&&state.transmitted<8192&&!state.i2c.full) {
+    while(clock.nanos<target&&instructions<1000000&&state.transmitted<8192&&!state.i2c.full&&!state.resetPending) {
       if((instructions&127)===0)feed();
       if(mcu.core.waiting){const next=clock.nanosToNextAlarm;clock.tick(Math.min(target-clock.nanos,next>0?next:target-clock.nanos));}
       else{const cycles=mcu.core.executeInstruction();clock.tick(cycles*1e9/mcu.clkSys);instructions++;}
@@ -71,8 +85,17 @@ function step(input) {
   const elapsed=clock.nanos-start;
   const pins=mcu.gpio.map((pin,i)=>{if(levels[i])accumulated[i]+=clock.nanos-last[i];return {output:pin.outputEnable,voltage:elapsed>0?3.3*accumulated[i]/elapsed:pin.outputValue?3.3:0,pullUp:pin.value===GPIOPinState.InputPullUp,pulseUs:state.pulses[i],frequency:state.frequency[i]};});
   const serialPorts=state.serial.map((values,i)=>{const text=state.decoders[i].write(Buffer.from(values));values.length=0;return text;});state.resetTransmitted();
-  const diagnostics=state.messages.splice(0);
-  return {pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics,...state.i2c.frame()};
+  const diagnostics=state.messages.splice(0),reset=state.resetPending;
+  if(reset)state.i2c.abort();
+  const result={pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:!reset&&clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics,resetReason:reset?.reason??null,...state.i2c.frame()};
+  if(reset){
+    // Retire every old peripheral callback before the new CPU is attached.
+    // Keep the same physical clock and external device models, not a power cut.
+    while(clock.nextAlarm)clock.nextAlarm.cancel();
+    try{state=boot(state.image,clock,state);}catch(error){state.failed=true;throw error;}
+    result.usbReady=false;result.pins=state.mcu.gpio.map(()=>({output:false,voltage:0,pullUp:false,pulseUs:null,frequency:null}));
+  }
+  return result;
 }
 module.exports={load,step};
 if(require.main===module)require('node:readline').createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{

@@ -1,5 +1,9 @@
 # Контекст проекта
 
+## Watchdog Pico · 10 ноября 2026
+
+После `1864744` добавлен функциональный watchdog warm reset для 1 MHz SDK tick/полного WDSEL: normal reboot и magic PC/SP, сохранение flash/RAM/scratch/внешних LCD/OLED, отдельное обнуление аппаратного времени, native-история с доставкой преподавателю. Прошли пять целевых проверок, 38 Pico regression, 20 resets с peak worker ~116 MiB и отдельное фактическое исполнение SRAM target. [Точные результаты/границы](../avalonia/docs/pico-foundation-2026-11-08.md). Нестандартный tick/selective WDSEL не считать поддержанными, не подавлять их ошибки. Рабочие приложения/базы/установщики и GitHub не обновлялись; прежний комплект `6406e6d` RTC/watchdog не содержит. Остальная матрица/графика/Win10/LAN и вся цель остаются открыты, импорт/учебная редактура/GitHub отложены.
+
 ## RTC Pico · 9 ноября 2026
 
 После `6406e6d` реализован функциональный RTC календарь/clock gating/dividers/latch/IRQ25 и штатный SDK alarm callback. Убраны host timezone/Date и ход отключённого RTC; unit-clock проверки проходят в трёх TZ, настоящий SDK-скетч прошёл. [Оставшаяся точность и доказательства](../avalonia/docs/pico-foundation-2026-11-08.md). Это следующий diff после уже собранного packaging snapshot; не объявлять его включённым в старые установщики. БД/рабочие приложения/GitHub не менялись. Полная матрица, PLL/domain/dormant, watchdog/reset, SPI/PIO/DMA/ESP32/многоплатность, графика/Win10/LAN остаются в активном плане; импорт/учебная редактура/GitHub отложены.

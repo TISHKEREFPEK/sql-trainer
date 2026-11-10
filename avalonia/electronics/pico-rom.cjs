@@ -4,8 +4,8 @@ const {invokeArithmetic,invokeConversion}=require('./pico-float.cjs');
 const {invokeScientific}=require('./pico-science.cjs');
 // Original host implementation of the documented RP2040 ROM ABI. No Raspberry
 // Pi ROM image/instructions are included. Unknown functions fail explicitly.
-function installRomAbi(mcu) {
-  const flash=installFlash(mcu);
+function installRomAbi(mcu,flashState) {
+  const flash=installFlash(mcu,flashState);
   const bytes=new Uint8Array(mcu.bootrom.buffer),view=new DataView(bytes.buffer),mapped=new Uint8Array(bytes.length),calls=new Map();
   const registers=mcu.core.registers,code=s=>s.charCodeAt(0)|(s.charCodeAt(1)<<8);
   function mark(address,size){mapped.fill(1,address,address+size);}
@@ -67,6 +67,6 @@ function installRomAbi(mcu) {
     if(immediate!==0x7f||!call)throw Error('RP2040 breakpoint '+immediate);
     call.fn();mcu.core.breakRewind=0; // BX LR is the next real Thumb instruction.
   };
-  return {version:3,implementation:'classroom-host-abi',span};
+  return {version:3,implementation:'classroom-host-abi',span,flashSnapshot:flash.snapshot};
 }
 module.exports={installRomAbi};

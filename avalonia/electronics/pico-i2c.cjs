@@ -2,8 +2,8 @@
 const {I2cBus}=require('./i2c-bus.cjs');
 const {PicoGpioI2c}=require('./pico-i2c-gpio.cjs');
 class PicoI2c {
-  constructor(mcu,clock){
-    this.devices=new Map();this.tracePending=[];this.buses=mcu.i2c.map((controller,index)=>{
+  constructor(mcu,clock,devices=new Map()){
+    this.devices=devices;this.tracePending=[];this.buses=mcu.i2c.map((controller,index)=>{
       const pending=new Set(),timer={get cycles(){return clock.nanos;},addClockEvent(callback,nanos){const alarm=clock.createAlarm(()=>{pending.delete(alarm);callback();});pending.add(alarm);alarm.schedule(nanos);}};
       let transmitting=false;
       const transport={get sclFrequency(){const count=controller.sclHighPeriod+controller.sclLowPeriod;if(count<=0||!Number.isFinite(mcu.clkSys)||mcu.clkSys<=0)throw Error('Invalid RP2040 I2C clock');return mcu.clkSys/count;},
@@ -46,6 +46,9 @@ class PicoI2c {
   }
   update(configs,digital=[]){this.buses[0].update(configs);this.gpio.update(configs,digital);}
   get full(){return this.tracePending.length>0||this.buses.reduce((n,b)=>n+b.trace.length,0)+this.gpio.trace.length>=128||this.buses.reduce((n,b)=>n+b.traceBytes,0)+this.gpio.traceBytes>=32768;}
+  abort(){
+    for(const bus of [...this.buses,...this.gpio.buses.values()])if(bus.packet){bus.packet.ack=false;bus.flush();}
+  }
   frame(){
     const [first,second]=this.buses.map(b=>b.frame());
     this.tracePending.push(...first.i2c.map(t=>({...t,controller:0})),...second.i2c.map(t=>({...t,controller:1})),...this.gpio.frame());

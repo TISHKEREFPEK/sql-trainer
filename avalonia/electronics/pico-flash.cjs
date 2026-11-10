@@ -2,9 +2,9 @@
 const {BasePeripheral}=require('./vendor/rp2040js/cjs/peripherals/peripheral.js');
 // Functional 2 MiB serial NOR model for the RP2040 SDK's flash/boot2 path.
 // It has a declared synthetic UID, not the identity of a physical computer.
-function installFlash(mcu) {
+function installFlash(mcu,previous) {
   const ssi=mcu.findPeripheral(0x18000000),read=ssi.readUint32.bind(ssi),write=ssi.writeUint32.bind(ssi),uid=[0x53,0x51,0x4c,0x43,0,0,0,1];
-  let fifo=[],command=null,index=0,address=0,lastOverride=mcu.qspi[1].outputOverride,wel=false,status1=0,status2=2,connected=true,xip=true,quadCommand=null;
+  let fifo=[],command=null,index=0,address=0,lastOverride=mcu.qspi[1].outputOverride,wel=previous?.wel??false,status1=previous?.status1??0,status2=previous?.status2??2,connected=true,xip=true,quadCommand=null;
   const qspi=mcu.findPeripheral(0x40018000),qread=qspi.readUint32.bind(qspi),qwrite=qspi.writeUint32.bind(qspi);
   qspi.readUint32=offset=>{if(offset<0x30){const pin=mcu.qspi[offset>>>3];return offset&4?pin.ctrl:pin.status;}return qread(offset);};
   qspi.writeUint32=(offset,value)=>{if(offset<0x30){if(offset&4){const pin=mcu.qspi[offset>>>3];pin.ctrl=value>>>0;pin.checkForUpdates();}return;}return qwrite(offset,value);};
@@ -82,6 +82,6 @@ function installFlash(mcu) {
   function erase(offset,count,blockSize,blockCommand){range(offset,count,4096);if(blockSize!==65536||blockCommand!==0xd8)throw Error('RP2040 flash erase command is not implemented');mcu.flash.fill(0xff,offset,offset+count);}
   function program(offset,source,count){range(offset,count,256);if(source<0x20000000||source+count>0x20042000)throw Error('RP2040 flash source must be in SRAM');for(let i=0;i<count;i++)mcu.flash[offset+i]&=mcu.sram[source-0x20000000+i];}
   enter(); // The UF2 loader starts at the application vector, after XIP setup.
-  return {connect,exit,flush,enter,erase,program,uid};
+  return {connect,exit,flush,enter,erase,program,uid,snapshot:()=>({wel,status1,status2})};
 }
 module.exports={installFlash};

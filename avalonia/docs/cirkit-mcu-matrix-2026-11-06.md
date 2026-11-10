@@ -1,5 +1,9 @@
 # Матрица MCU для E01/E11 · 6 ноября 2026
 
+## Дополнение watchdog · 10 ноября 2026
+
+В Pico работает штатный 1 MHz SDK watchdog/update/disable/reboot с полным WDSEL: настоящая повторная загрузка ARM, причина/scratch, проверенный PC/SP handoff в SRAM, сохранённые NOR/RAM и powered LCD/OLED. Перезапуск виден в native/server history. [Доказательства](pico-foundation-2026-11-08.md): 38 Pico regression и отдельные ресурс/SRAM проверки; variable/stopped tick, selective reset, debug и точные domain/clock режимы ещё не приняты. Остальная полная матрица/графика/ESP32/многоплатность/Win10/LAN остаются открыты, импорт отложен.
+
 ## Дополнение RTC и поставки · 9 ноября 2026
 
 После `6406e6d` функциональная RTC-модель Pico поддерживает календарь/делители/остановку/latch/будильник IRQ25 со штатным SDK; проверки в [Pico foundation](pico-foundation-2026-11-08.md). Точная clock-domain/PLL/dormant-приёмка остаётся открытой. Оба установщика предыдущего среза `6406e6d` успешно скомпилированы, но не содержат следующий RTC diff и не прошли реальную установку Win10/LAN; [состав и hashes](windows-package-check-2026-11-09.md). Ни этот RTC, ни упаковка не закрывают полную матрицу/ESP32/многоплатность/графику.

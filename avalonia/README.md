@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## Watchdog Pico · 10 ноября 2026
+
+Работают SDK watchdog_enable/update/reboot в штатном 1 MHz/полном reset-профиле, сохранение flash/RAM/scratch и внешних LCD/OLED. Native показывает/записывает причину перезапуска, преподаватель получает этот шаг истории. Для проверки — `PicoWatchdogTests` и `node tests/check-pico-watchdog.cjs` из avalonia. [Границы и результаты](docs/pico-foundation-2026-11-08.md). Рабочие приложения/старые установщики/GitHub не обновлены.
+
 ## RTC Pico · 9 ноября 2026
 
 Добавлен функциональный календарь/остановка/делители/будильник IRQ25 со штатным Pico SDK; часовой пояс ПК на симуляцию не влияет. Проверка `node tests/check-pico-rtc.cjs` из avalonia и `PicoRtcTests`; [точные прогоны и открытая точность](docs/pico-foundation-2026-11-08.md). Прежний комплект `6406e6d` не включает этот следующий diff. Рабочая установка/GitHub не обновлены.

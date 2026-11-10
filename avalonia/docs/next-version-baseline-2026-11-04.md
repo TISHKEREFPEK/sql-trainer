@@ -1,5 +1,16 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## Watchdog Pico · 10 ноября 2026
+
+После `1864744` добавлен настоящий SDK watchdog warm reset: CPU/периферия заново, flash/SRAM/scratch/reason и powered LCD/OLED сохраняются; physical time монотонно, hardware time_us начинается с нуля. Native reset event доставляется в teacher journal. [Архитектура/источники/точные открытые режимы](pico-foundation-2026-11-08.md). Профиль ограничен 1 MHz tick и SDK WDSEL; вся Pico/Cirkit/Win10/LAN-приёмка не завершена. Установщики `6406e6d`, рабочие приложения/базы и GitHub не обновлялись.
+
+- `pico-watchdog-first` не собрался из-за ошибок нового тестового кода; исправлены char-array и xUnit analyzer. Первый собранный набор `pico-watchdog-first-fixed`: 1 passed / 3 failed — timed resets зацикливали zero-time periodic alarm и приводили к 5-second timeout, forced handoff работал. Alarm останавливается внутри trigger, лимит worker не увеличивался.
+- `pico-watchdog-timeout-fixed`: **4 passed / 0 skipped**, 1 м 33 с — SDK feed→expiry и причина/scratch/NOR; forced PC/SP; powered LCD/OLED; bare-metal RAM и новое hardware time. После уточнения FORCE без tick/защиты неподдержанной частоты и добавления native-истории `pico-watchdog-native`: **5 passed / 0 skipped**, 2 м 16 с — прежние случаи + настоящее окно ученика→durable history→server→teacher journal с reset event.
+- `pico-watchdog-regression`: **38 passed / 0 skipped**, 9 м 59 с — весь фильтр FullyQualifiedName~Pico: Foundation/Rom/Conversion/Science/I2c/Rtc/Native/Connection/Watchdog, включая прежние USB/UART/ADC/PWM/ROM/снимки/teacher copy. Это не вся solution suite. Во время работы проверен живой testhost/компилятор; процесс не перезапускался из-за длительного наблюдения.
+- Затем добавлены только тесты ресурса/более строгого handoff, продуктовый код не менялся. `pico-watchdog-repeated`: **1 passed / 0 skipped**, 20 с — 20 настоящих SDK resets, сохранённый счётчик и DONE, peak working set **121 995 264 байта (~116 MiB)** при проверочном пороге 512 MiB. Это измерение данного worker/20 перезапусков, не всей программы или 35 LAN-клиентов.
+- `pico-watchdog-sram-target-fixed`: **1 passed / 0 skipped**, 20 с — целевая функция действительно скомпилирована в SRAM, проверяет своё расположение/сохранённую RAM/reason/погашенный scratch4 и исполняется после forced PC/SP handoff. Предшествующий запуск не компилировался из-за C++ parsing cast/function-name перед `<`; исправлено только тестовое выражение.
+- Node `check-pico-watchdog.cjs` прошёл: feed/one-shot timer/FORCE, FORCE без tick, неподдержанные режимы, отдельный clock origin, valid/invalid BootROM target. Прежний RTC checker также прошёл. Прогоны пересекаются, не суммировать их как уникальные тесты. `git diff --check` прошёл. Release build всего Classroom.sln с отдельным artifacts path: **0 warnings / 0 errors**, 9,48 с.
+
 ## RTC и итог упаковки · 9 ноября 2026
 
 Оба установщика среза `6406e6d` собраны Inno 7.1.0, родительский процесс завершился с exit 0; Teacher 722 395 920 байт / Student 656 999 623 байт. Hashes/локальные отчёты — [package check](windows-package-check-2026-11-09.md). Они не запускались и не содержат последующий RTC diff. Установка/upgrade Win10 и физический offline/LAN ещё открыты; GitHub отложен.

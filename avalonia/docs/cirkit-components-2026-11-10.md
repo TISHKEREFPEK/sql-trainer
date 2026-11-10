@@ -13,7 +13,7 @@
 | 4 Digit Seven Segment Display | Visual, multiplexing открыт |
 | 16x2 LCD Display | Parallel/16-pin модель не подключена |
 | 16x2 I2C LCD Display | Есть PCF8574/HD44780 и настоящие скетчи; оставшиеся режимы/точная графика открыты |
-| ILI9341 Display | [Hardware SPI и native TftSpi](ili9341-spi-2026-11-10.md): отдельная 9-pin модель/проводка/RGB/шаблон; software SPI/полные режимы/точный ресурс Cirkit ещё открыты |
+| ILI9341 Display | [Hardware/software GPIO SPI и native TftSpi](ili9341-spi-2026-11-10.md): отдельная 9-pin модель/проводка/RGB/шаблон; полные режимы/две панели/точный ресурс Cirkit ещё открыты |
 | Bipolar Stepper Motor (NEMA 17) | Visual, отдельная модель открыта |
 | A4988 Stepper Motor Driver Carrier | Visual, step/current/driver модель открыта |
 | DHT11 Humidity and Temperature Sensor | Visual, протокол/параметры открыты |

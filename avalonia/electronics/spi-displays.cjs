@@ -1,8 +1,8 @@
 'use strict';
 const {Ili9341}=require('./ili9341.cjs');
 const {SpiTrace}=require('./spi-trace.cjs');
-// Hardware SPI word bridge. Software-clocked GPIO SPI is a separate pending
-// adapter, not silently interpreted as hardware peripheral traffic.
+// Hardware SPI word bridge. The separate GPIO adapter observes real edges,
+// never reinterpreting them as hardware peripheral traffic.
 class SpiDisplays {
   constructor(now,level,pinCount,controllers,accepts,panels=new Map(),readable=c=>c.miso!=null){
     this.now=now;this.level=level;this.pinCount=pinCount;this.controllers=controllers;this.accepts=accepts;this.readable=readable;this.panels=panels;this.records=[];this.trace=new SpiTrace(now);this.pending=new Set();

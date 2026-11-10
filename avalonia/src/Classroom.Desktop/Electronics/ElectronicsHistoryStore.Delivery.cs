@@ -43,6 +43,7 @@ public sealed partial class ElectronicsHistoryStore
                 try{capabilities=await api.Get<ElectronicsJournalCapabilities>("electronics-journal/capabilities",cancellation);}
                 catch(ApiException e) when(e.Status is 404 or 405 or 501){throw new InvalidDataException("Обновите приложение преподавателя и сервер для истории SPI. Записи сохранены на этом ПК и не подтверждены как переданные.",e);}
                 if(capabilities.Features?.Contains(ElectronicsJournalProtocol.SpiSummary)!=true)throw new InvalidDataException("Сервер не поддерживает историю SPI. Обновите приложение преподавателя; записи сохранены на этом ПК.");
+                if(snapshot.Changes.Any(c=>c.SpiIo?.Any(t=>t.Software)==true)&&!capabilities.Features.Contains(ElectronicsJournalProtocol.SpiGpio))throw new InvalidDataException("Сервер не поддерживает историю программного SPI. Обновите приложение преподавателя; записи сохранены на этом ПК.");
             }
             Remember(position, false);
             ElectronicsJournalBatch Batch(ElectronicsChange[] changes) => new(position.StreamId, clientId, context.LessonId, context.AssignmentId, snapshot.StartedAt, snapshot.BaseJson, snapshot.Changes.Length, changes, position.ForkedFrom);

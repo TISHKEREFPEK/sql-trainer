@@ -17,6 +17,8 @@ public sealed class SpiHistoryTests
         var json=TftNativeTests.Project("uno").Serialize();var initial=ElectronicsJournal.Start(json,1);var old=ElectronicsJournal.Record(initial,json,json,"work-open",2,force:true);
         var oldJson=Wire.Write(old);Assert.DoesNotContain("spiIo",oldJson);Assert.Equal(oldJson,Wire.Write(Wire.Read<ElectronicsJournal>(oldJson)));
         var sample=Sample();var journal=ElectronicsJournal.Record(old,json,json,"spi-transfer",3,force:true,spiIo:[sample]);Assert.Equal(json,Wire.Read<ElectronicsJournal>(Wire.Write(journal)).Replay());Assert.Equal(Wire.Write(sample),Wire.Write(journal.Changes[^1].SpiIo![0]));
+        var partial=sample with{Software=true,CompletedWords=0,Bytes=0,Commands=0,AbortedWords=1,ClockHz=0,TxPrefix=[],RxPrefix=[],CommandPrefix=[],TxCrc32=0,RxCrc32=0,Issues=["interrupted"]};
+        Assert.Equal(json,ElectronicsJournal.Record(old,json,json,"spi-transfer",3,force:true,spiIo:[sample,partial]).Replay());Assert.Contains("частота не определена",SpiDiagnostics.Describe([partial]));
         var root=Path.Combine(Path.GetTempPath(),"classroom-spi-history-"+Guid.NewGuid().ToString("N"));var context=new ElectronicsHistoryContext(Guid.NewGuid().ToString("N"),new string('0',64),Guid.NewGuid().ToString("N"),null);
         using(var history=new ElectronicsHistoryStore(root,context,json))for(var i=0;i<65;i++)history.Record(json,"spi-transfer",true,spiIo:[sample with{StartedMs=i,EndedMs=i+0.002}]);
         using var reopened=new ElectronicsHistoryStore(root,context,json);Assert.True(reopened.Reopened);Assert.Equal(65,reopened.Journal.Changes.Length);Assert.Equal(json,reopened.Journal.Replay());Assert.Equal(Wire.Write(sample),Wire.Write(reopened.Journal.Changes[0].SpiIo![0]));Assert.Single(Directory.GetFiles(root,"p-*.json"));
@@ -56,13 +58,14 @@ public sealed class SpiHistoryTests
     [InlineData("drops-spi")]
     [InlineData("legacy")]
     [InlineData("ahead")]
+    [InlineData("old-gpio")]
     public async Task OldOrDroppingReceiversNeverClearSpiQueuesWhileLegacyHistoryStillUploads(string mode)
     {
         using var receiver=new Receiver(mode);var connection=new ConnectionSettings("https://127.0.0.1",new string('0',64));using var api=new ClassroomApi(connection);
         var oldHttp=(HttpClient)typeof(ClassroomApi).GetField("http",Private)!.GetValue(api)!;typeof(ClassroomApi).GetField("http",Private)!.SetValue(api,new HttpClient(receiver){BaseAddress=new Uri("https://127.0.0.1/api/v1/")});oldHttp.Dispose();
         var profile=Guid.NewGuid().ToString("N");typeof(ClassroomApi).GetProperty(nameof(ClassroomApi.ProfileId))!.SetValue(api,profile);
         var root=Path.Combine(Path.GetTempPath(),"classroom-spi-capability-"+Guid.NewGuid().ToString("N"));var json=TftNativeTests.Project("uno").Serialize();var context=new ElectronicsHistoryContext(profile,connection.Fingerprint,Guid.NewGuid().ToString("N"),null);
-        using var history=new ElectronicsHistoryStore(root,context,json);for(var i=0;i<(mode=="ahead"?20:1);i++)history.Record(json,mode=="legacy"?"work-open":"spi-transfer",true,spiIo:mode=="legacy"?null:[Sample()]);var before=Wire.Write(history.Journal);var client=Guid.NewGuid().ToString("N");
+        using var history=new ElectronicsHistoryStore(root,context,json);for(var i=0;i<(mode=="ahead"?20:1);i++)history.Record(json,mode=="legacy"?"work-open":"spi-transfer",true,spiIo:mode=="legacy"?null:[Sample() with{Software=mode=="old-gpio"}]);var before=Wire.Write(history.Journal);var client=Guid.NewGuid().ToString("N");
         if(mode=="legacy"){Assert.True(await history.Deliver(api,client));Assert.False(history.Pending);Assert.Equal(0,receiver.Capabilities);Assert.Equal(1,receiver.Payloads);}
         else if(mode=="ahead"){Assert.True(await history.Deliver(api,client));Assert.False(history.Pending);Assert.Equal(20,history.DeliveryState!.Acknowledged);Assert.Equal(3,receiver.Payloads);}
         else{Assert.Contains("сервер",(await Assert.ThrowsAsync<InvalidDataException>(()=>history.Deliver(api,client))).Message,StringComparison.OrdinalIgnoreCase);Assert.True(history.Pending);Assert.Equal(before,Wire.Write(history.Journal));Assert.Equal(0,history.DeliveryState?.Acknowledged??0);Assert.Equal(mode=="drops-spi"?1:0,receiver.Payloads);}

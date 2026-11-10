@@ -77,34 +77,38 @@ public sealed class TftNativeTests
     [InlineData("mega2560",0,1320)]
     [InlineData("pico",0,1320)]
     [InlineData("pico",1,900)]
+    [InlineData("pico",-1,900)]
     public async Task GeneratedSketchRunsThroughNativeEditorAndStopsWithoutChangingTheProject(string board,int bus,int width)
     {
-        var project=Project(board,bus);var guide=CircuitCodeGuide.Build(project);Assert.NotNull(guide.Sketch);project.Code=guide.Sketch;
+        var project=bus<0?SoftwareSpiTests.Project(board):Project(board,bus);var guide=CircuitCodeGuide.Build(project);Assert.NotNull(guide.Sketch);project.Code=guide.Sketch;
         var directory=Path.Combine(Path.GetTempPath(),"classroom-tft-native-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);var file=Path.Combine(directory,"work.json");File.WriteAllText(file,project.Serialize());
         var window=new MainWindow(true,false){Width=width,Height=900};using var view=new ElectronicsScreen(window,file,teacher:true);window.Preview(view);window.Show();window.UpdateLayout();await Run(view);
         var scene=(Canvas)typeof(ElectronicsScreen).GetField("canvas",Flags)!.GetValue(view)!;Assert.Single(scene.GetVisualDescendants().OfType<TftDisplayFace>());Assert.DoesNotContain("Unimplemented",Status(view));
         view.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()=="Вписать").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
         var viewport=view.GetVisualDescendants().OfType<CircuitViewport>().Single();foreach(var part in project.Parts)foreach(var point in PartArtwork.Corners(part))Assert.InRange(point.Y*viewport.Zoom+viewport.Pan.Y,56,viewport.Bounds.Height-60);
-        Capture(window,$"tft-{board}-spi{bus}-{width}.png");var svg=(string)typeof(ElectronicsScreen).GetMethod("Svg",Flags)!.Invoke(view,null)!;System.Xml.Linq.XDocument.Parse(svg);Assert.Contains("#17639a",svg);
+        Capture(window,$"tft-{board}-{(bus<0?"gpio":"spi"+bus)}-{width}.png");var svg=(string)typeof(ElectronicsScreen).GetMethod("Svg",Flags)!.Invoke(view,null)!;System.Xml.Linq.XDocument.Parse(svg);Assert.Contains("#17639a",svg);
         view.Suspend();Assert.Empty(Displays(view));Assert.Equal(project.Serialize(),File.ReadAllText(file));window.Close();
     }
     [AvaloniaFact]
-    public async Task SubmittedSpi1WorkReplaysInTeacherWorkspaceAndSurvivesBackup()
+    public Task SubmittedSpi1WorkReplaysInTeacherWorkspaceAndSurvivesBackup()=>AssignedReview(false);
+    [AvaloniaFact]
+    public Task SubmittedGpioWorkReplaysInTeacherWorkspaceAndSurvivesBackup()=>AssignedReview(true);
+    async Task AssignedReview(bool software)
     {
-        await using var f=await LiveClassroom.Start();var project=Project("pico",1);project.Code=CircuitCodeGuide.Build(project).Sketch!;var json=project.Serialize();var task=Guid.NewGuid().ToString("N");
-        await f.Admin.Put<ElectronicsTaskDto>("teacher/electronics/tasks/"+task,new ElectronicsTaskRequest("TFT SPI1","Подключите дисплей и нарисуйте фигуры.",json));var lesson=(await f.Admin.Get<LessonDashboard>("teacher/lessons")).Current!;
+        await using var f=await LiveClassroom.Start();var project=software?SoftwareSpiTests.Project("pico"):Project("pico",1);project.Code=CircuitCodeGuide.Build(project).Sketch!;var json=project.Serialize();var task=Guid.NewGuid().ToString("N");
+        await f.Admin.Put<ElectronicsTaskDto>("teacher/electronics/tasks/"+task,new ElectronicsTaskRequest(software?"TFT GPIO":"TFT SPI1","Подключите дисплей и нарисуйте фигуры.",json));var lesson=(await f.Admin.Get<LessonDashboard>("teacher/lessons")).Current!;
         await f.Admin.Put<ElectronicsSelection>($"teacher/lessons/{lesson.Id}/electronics-tasks",new ElectronicsSelectionRequest([task]));var assignment=await f.Student.Get<ElectronicsAssignmentDto>("electronics/tasks/"+task);
         var directory=Path.Combine(Path.GetTempPath(),"classroom-tft-review-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);var file=Path.Combine(directory,"student.json");
         var window=new MainWindow(false,false){Width=1320,Height=900};using var view=new ElectronicsScreen(window,file,f.Student,assignment:assignment);window.Preview(view);window.Show();window.UpdateLayout();await Run(view);view.Suspend();Assert.True(await view.Synchronize());
         var sync=(ElectronicsSync)typeof(ElectronicsScreen).GetField("sync",Flags)!.GetValue(view)!;var report=Guid.NewGuid().ToString("N");sync.Record("submitted",json,expectedAssignmentVersion:assignment.StateVersion,reportId:report);Assert.True(await view.Synchronize());
         var stream=Assert.Single(await f.Admin.Get<ElectronicsJournalInfo[]>($"teacher/electronics-journal/{f.StudentId}?assignmentId={assignment.Id}"));var history=await f.Admin.Get<ElectronicsJournalEvents>($"teacher/electronics-journal/{f.StudentId}/{stream.Id}/changes");Assert.Contains(history.Events,e=>e.Change.Kind=="run-request");
-        var trace=history.Events.SelectMany(e=>e.Change.SpiIo??[]).ToArray();Assert.Contains(trace,t=>t.Controller==1&&t.Commands>0);Assert.Contains(trace,t=>t.Bytes>0&&t.DataBytes>0);Assert.All(trace,t=>Assert.InRange(t.TxPrefix.Length,0,32));
+        var trace=history.Events.SelectMany(e=>e.Change.SpiIo??[]).ToArray();Assert.Contains(trace,t=>t.Software==software&&(software||t.Controller==1)&&t.Commands>0);Assert.Contains(trace,t=>t.Bytes>0&&t.DataBytes>0);Assert.All(trace,t=>Assert.InRange(t.TxPrefix.Length,0,32));
         var detail=await f.Admin.Get<ElectronicsReviewDetail>($"teacher/reviews/electronics/{f.StudentId}/{report}");Assert.Equal(json,detail.ProjectJson);
-        var teacher=new MainWindow(true,false){Width=1320,Height=900};using var review=new ElectronicsReviewWorkspace(teacher,detail);teacher.Preview(review);teacher.Show();teacher.UpdateLayout();var copy=review.GetVisualDescendants().OfType<ElectronicsScreen>().Single();await Run(copy);Capture(teacher,"tft-teacher-spi1-review.png");copy.Suspend();teacher.Close();
+        var teacher=new MainWindow(true,false){Width=1320,Height=900};using var review=new ElectronicsReviewWorkspace(teacher,detail);teacher.Preview(review);teacher.Show();teacher.UpdateLayout();var copy=review.GetVisualDescendants().OfType<ElectronicsScreen>().Single();await Run(copy);Capture(teacher,software?"tft-teacher-gpio-review.png":"tft-teacher-spi1-review.png");copy.Suspend();teacher.Close();
         var historyWindow=new MainWindow(true,false){Width=1320,Height=900};using(var journalView=new ElectronicsJournalView(historyWindow,f.Admin,f.StudentId,"Тестовый ученик",assignmentId:assignment.Id)){
             historyWindow.Preview(journalView);historyWindow.Show();await journalView.Load();historyWindow.UpdateLayout();var steps=journalView.GetVisualDescendants().OfType<ListBox>().Single();steps.SelectedItem=steps.Items.Cast<object>().Last(s=>s.ToString()!.Contains("Обмен SPI"));
             var metadata=(TextBox)typeof(ElectronicsJournalView).GetField("serialDetail",Flags)!.GetValue(journalView)!;
-            for(var i=0;i<150&&metadata.Text?.Contains("CRC32")!=true;i++)await Task.Delay(25);Assert.True(metadata.IsVisible);Assert.Contains("не полный поток пикселей",metadata.Text);Capture(historyWindow,"tft-spi-history-1320.png");historyWindow.Close();
+            for(var i=0;i<150&&metadata.Text?.Contains("CRC32")!=true;i++)await Task.Delay(25);Assert.True(metadata.IsVisible);Assert.Contains("не полный поток пикселей",metadata.Text);if(software)Assert.Contains("программный SPI",metadata.Text);Capture(historyWindow,software?"tft-gpio-history-1320.png":"tft-spi-history-1320.png");historyWindow.Close();
         }
         await f.Admin.Put<ElectronicsReviewDecision>($"teacher/reviews/electronics/{f.StudentId}/{report}/decisions/"+Guid.NewGuid().ToString("N"),new ElectronicsReviewRequest("accepted","Цвета и SPI1 проверены.",5,null,detail.AssignmentVersion));
         view.IsEnabled=false;view.Suspend();Assert.True(await view.Synchronize());

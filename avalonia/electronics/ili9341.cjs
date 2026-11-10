@@ -22,6 +22,11 @@ class Ili9341 {
     this.powered=powered;this.resetHigh=resetHigh;this.backlight=backlight;
   }
   get visible(){return this.powered&&this.resetHigh&&this.backlight&&!this.asleep&&this.displayOn&&this.now()>=this.readyAt;}
+  peek(dc){
+    if(!this.powered||!this.resetHigh)return 255;
+    if(!dc||![0x04,0x09,0x0a,0x0b,0x0c,0xda,0xdb,0xdc,0xd3,0x2e,0x3e].includes(this.command))return 0;
+    const {readIndex,x,y}=this;const value=this.read();this.readIndex=readIndex;this.x=x;this.y=y;return value;
+  }
   transfer(data,dc){
     if(!Number.isInteger(data)||data<0||data>255||typeof dc!=='boolean')throw Error('Invalid ILI9341 SPI byte');
     if(!this.powered||!this.resetHigh)return 255;

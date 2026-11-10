@@ -10,7 +10,7 @@ public static class ElectronicsJournalRoutes
         new ElectronicsJournal(1, stream.Id, stream.StartedAt, json, [change with { Sequence = 1 }]).Replay();
     public static void Map(RouteGroupBuilder api, ServerState state)
     {
-        api.MapGet("/electronics-journal/capabilities",(HttpContext ctx)=>{state.Authorize(ctx,"student");return new ElectronicsJournalCapabilities([ElectronicsJournalProtocol.SpiSummary]);});
+        api.MapGet("/electronics-journal/capabilities",(HttpContext ctx)=>{state.Authorize(ctx,"student");return new ElectronicsJournalCapabilities([ElectronicsJournalProtocol.SpiSummary,ElectronicsJournalProtocol.SpiGpio]);});
         api.MapPost("/electronics-journal/sync", (HttpContext ctx, ElectronicsJournalBatch input) =>
         {
             var session = state.Authorize(ctx, "student");

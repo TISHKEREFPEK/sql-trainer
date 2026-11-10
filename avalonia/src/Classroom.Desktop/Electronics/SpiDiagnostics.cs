@@ -11,7 +11,7 @@ public static class SpiDiagnostics
     public static string Describe(IEnumerable<ElectronicsSpiIo> entries)=>string.Join("\n\n",entries.Select(t=>
         $"TFT ILI9341 · {(t.Software?"программный SPI":$"SPI{t.Controller}")} · MOSI {t.Mosi}, SCK {t.Sck}"+(t.Miso is {}rx?$", MISO {rx}":", без MISO")+
         $"\nСводка с фрагментом данных — не полный поток пикселей.\nПолучено байтов: {t.Bytes} (команд {t.Commands}, данных {t.DataBytes}). Слов: {t.CompletedWords}; без выбора/связи: {t.IgnoredWords}; прервано: {t.AbortedWords}."+
-        $"\nНачальные параметры: mode {t.Mode}, {t.Bits} бит, {t.ClockHz/1e6:F3} МГц, {(t.LsbFirst?"LSB first":"MSB first")}. Слов с другими параметрами: {t.ParameterChanges}."+
+        $"\nНачальные параметры: mode {t.Mode}, {t.Bits} бит, "+(t.ClockHz==0?"частота не определена":$"{t.ClockHz/1e6:F3} МГц"+(t.Software?" (оценка по фронтам)":""))+$", {(t.LsbFirst?"LSB first":"MSB first")}. Слов с другими параметрами: {t.ParameterChanges}."+
         $"\nВремя модели: {t.StartedMs:F3}–{t.EndedMs:F3} мс. Календарное время — в записи истории."+
         $"\nНачало команд (hex, {t.CommandPrefix.Length} из {t.Commands}): {Hex(t.CommandPrefix)}"+
         $"\nНачало TX (hex, {t.TxPrefix.Length} из {t.Bytes}): {Hex(t.TxPrefix)}\nНачало RX (hex, {t.RxPrefix.Length} из {t.Bytes}): {Hex(t.RxPrefix)}"+

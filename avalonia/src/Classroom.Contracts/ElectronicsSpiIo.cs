@@ -12,7 +12,7 @@ internal static class ElectronicsSpiValidation
     public static void Validate(string json,string kind,ElectronicsSpiIo[]? data)
     {
         if(data is null)return;
-        if(kind!="spi-transfer"||data.Length is <1 or >2||data.Any(t=>t is null))throw new InvalidDataException("Некорректная сводка SPI в истории.");
+        if(kind!="spi-transfer"||data.Length is <1 or >4||data.Any(t=>t is null))throw new InvalidDataException("Некорректная сводка SPI в истории.");
         using var doc=System.Text.Json.JsonDocument.Parse(json);
         var parts=doc.RootElement.GetProperty("parts").EnumerateArray().ToArray();
         var board=parts.Where(p=>p.GetProperty("kind").GetString() is "Uno" or "Mega" or "Pico").ToArray();
@@ -22,7 +22,7 @@ internal static class ElectronicsSpiValidation
         foreach(var t in data){
             if(string.IsNullOrEmpty(t.DeviceId)||t.DeviceId.Length>64||!parts.Any(p=>p.GetProperty("id").GetString()==t.DeviceId&&p.GetProperty("kind").GetString()=="TftSpi")||
                 t.Controller<0||t.Controller>(boardKind=="Pico"?1:0)||t.Mosi<0||t.Mosi>=limit||t.Sck<0||t.Sck>=limit||t.Mosi==t.Sck||t.Miso is {}miso&&(miso<0||miso>=limit)||
-                t.Mode is <0 or >3||t.Bits is <4 or >16||!double.IsFinite(t.ClockHz)||t.ClockHz<=0||t.ClockHz>1_000_000_000||
+                t.Mode is <0 or >3||t.Bits is <4 or >16||!double.IsFinite(t.ClockHz)||t.ClockHz<0||t.ClockHz==0&&(!t.Software||t.CompletedWords>0)||t.ClockHz>1_000_000_000||
                 !double.IsFinite(t.StartedMs)||!double.IsFinite(t.EndedMs)||t.StartedMs<0||t.EndedMs<t.StartedMs||t.EndedMs>9_000_000_000_000||
                 new[]{t.Words,t.CompletedWords,t.Bytes,t.Commands,t.DataBytes,t.IgnoredWords,t.AbortedWords,t.ParameterChanges}.Any(n=>n is <0 or >1_000_000)||t.Words<1||
                 t.Words!=t.CompletedWords+t.IgnoredWords+t.AbortedWords||t.Bytes<t.CompletedWords||t.Bytes>t.CompletedWords*2||t.Commands+t.DataBytes!=t.Bytes||t.ParameterChanges>=t.Words||
@@ -30,6 +30,6 @@ internal static class ElectronicsSpiValidation
                 t.Issues is null||t.Issues.Length>8||t.Issues.Distinct().Count()!=t.Issues.Length||t.Issues.Any(i=>i is not ("wiring" or "power" or "reset" or "not-selected" or "interrupted" or "no-miso")))
                 throw new InvalidDataException("Повреждены счётчики, выводы или фрагмент SPI в истории.");
         }
-        if(data.Select(t=>t.DeviceId).Distinct().Count()!=data.Length)throw new InvalidDataException("Повтор устройства в сводке SPI.");
+        if(data.Select(t=>(t.DeviceId,t.Software)).Distinct().Count()!=data.Length)throw new InvalidDataException("Повтор устройства/способа обмена в сводке SPI.");
     }
 }

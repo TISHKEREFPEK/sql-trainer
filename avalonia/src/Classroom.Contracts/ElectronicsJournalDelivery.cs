@@ -3,7 +3,7 @@ namespace Classroom.Contracts;
 public record ElectronicsJournalBatch(string StreamId, string ClientId, string LessonId, string? AssignmentId, long StartedAt, string BaseJson,
     long KnownSequence, ElectronicsChange[] Changes, string? ForkedFrom = null);
 public record ElectronicsJournalCapabilities(string[] Features);
-public static class ElectronicsJournalProtocol { public const string SpiSummary="spi-summary-v1"; }
+public static class ElectronicsJournalProtocol { public const string SpiSummary="spi-summary-v1",SpiGpio="spi-gpio-v1"; }
 public record ElectronicsJournalAck(string StreamId, string Status, long Sequence, string StateHash,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ChangesHash=null);
 public record ElectronicsJournalInfo(string Id, string ClientId, string LessonId, string? AssignmentId, string Title, long StartedAt, long ReceivedAt, long Sequence, string? ForkedFrom);

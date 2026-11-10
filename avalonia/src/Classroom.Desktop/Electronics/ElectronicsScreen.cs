@@ -460,9 +460,9 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         properties.Children.Add(Ui.Muted("СВОЙСТВА ДЕТАЛИ",10));properties.Children.Add(Ui.Text(PartLibrary.Name(p), 18));
         if(p.Kind==PartKind.Pico)properties.Children.Add(Ui.Muted("GPIO — 3,3 В. Питание от виртуального USB. Доступны GPIO, ADC, PWM, UART, USB Serial, I2C и TFT по аппаратному SPI; остальные режимы ещё в разработке.",12));
         if(p.Kind==PartKind.TftSpi){
-            properties.Children.Add(Ui.Muted("ILI9341 · 240×320 · 9 контактов. VCC 3–5,5 В; входы модуля согласованы по уровням, MISO — 3,3 В. LED управляет подсветкой; MISO нужен для чтения. Поддержаны аппаратный SPI и до двух дисплеев. Touch и SD отсутствуют.",12));
+            properties.Children.Add(Ui.Muted("ILI9341 · 240×320 · 9 контактов. VCC 3–5,5 В; входы модуля согласованы по уровням, MISO — 3,3 В. LED управляет подсветкой; MISO нужен для чтения. Поддержаны аппаратный и программный SPI, до двух дисплеев. Touch и SD отсутствуют.",12));
             var device=CircuitSpi.Devices(project).FirstOrDefault(d=>d.Id==p.Id);
-            properties.Children.Add(Ui.Text(device is null?"Добавьте исполняемую плату.":!device.Powered?"Проверьте VCC и общую GND.":!device.Connected?"Проверьте MOSI, SCK, CS, D/C и RST.":!CircuitSpi.Hardware(project.Parts.Single(CircuitBoards.IsBoard),device)?"MOSI/SCK не соответствуют аппаратному SPI этой платы.":"Питание и сигнальные соединения определены.",12));
+            properties.Children.Add(Ui.Text(device is null?"Добавьте исполняемую плату.":!device.Powered?"Проверьте VCC и общую GND.":!device.Connected?"Проверьте MOSI, SCK, CS, D/C и RST.":!CircuitSpi.Hardware(project.Parts.Single(CircuitBoards.IsBoard),device)?"Для этих GPIO используйте программный SPI; шаблон учитывает соединения.":"Питание и сигнальные соединения определены.",12));
         }
         if (!PartCatalog.CanSimulate(p)){var badge=Ui.Muted("Только схема · без симуляции",12);ToolTip.SetTip(badge,"Симуляция поведения этой модели ещё не реализована.");properties.Children.Add(badge);}
         if (p.Kind == PartKind.Visual)

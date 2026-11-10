@@ -1,8 +1,8 @@
 # Архитектура
 
-## SPI metadata и подтверждение пакета · 10 ноября 2026
+## Программный SPI · 10 ноября 2026
 
-Optional ElectronicsChange.SpiIo содержит bounded summary на TFT/worker response: счётчики, префиксы, CRC32, параметры и время модели. Календарное время остаётся ElectronicsChange.At. Replay/server validation проверяют размеры, счётчики, GPIO и связь с TftSpi; старый JSON без поля не меняется, SQLite-миграции нет. Перед SPI-доставкой проверяется capabilities; ACK ChangesHash охватывает полный canonical batch, включая metadata. Неполное/старое подтверждение оставляет очередь pending. [Контракт и пределы](../avalonia/docs/ili9341-spi-2026-11-10.md). Обновлять Server и роли совместно.
+GpioSpi декодирует фронты MCU GPIO независимо от Arduino API: MOSI rising, MISO falling, mode0/3, atomic complete-byte commit и abort по CS/reset/DC/mux. AVR использует port.lastValue/PIN hooks, Pico — SIO resolver после I2C. Hardware word bridge не подменяется GPIO. TftCodeGuide выбирает реальный software constructor при несовместимых hardware GPIO/MISO. Metadata различает software/hardware и требует spi-gpio-v1 при передаче; старые записи/SQLite не меняются. [Точные ограничения/проверки](../avalonia/docs/ili9341-spi-2026-11-10.md).
 
 ## Warm reset Pico · 10 ноября 2026
 

@@ -1,8 +1,8 @@
 # Изменения
 
-## Диагностика и надёжная доставка SPI · 10 ноября 2026
+## GPIO SPI для ILI9341 · 10 ноября 2026
 
-Добавлены ограниченные SPI summaries, optional SpiIo в истории, валидация/локальные сегменты/передача/учительский просмотр. Callback завершения слова корректно учитывает переход через границу кадра и watchdog abort. Capabilities и ChangesHash защищают очередь от старого/теряющего metadata получателя. Повторный пакет сравнивается структурно, включая массивы, без ложной ветви по ссылочному равенству. [Доказательства/границы](avalonia/docs/ili9341-spi-2026-11-10.md). SQLite не меняется, GitHub/рабочие установки отложены.
+Добавлен декодер rising/falling GPIO edges, model readback peek, AVR PIN и Pico SIO input paths, partial-byte abort/cross-frame continuity, software Adafruit code guide. MISO тоже учитывается при выборе hardware/software шаблона. Сводки разделяют способы обмена; неизвестная частота прерванного software byte явно обозначается. Новая capability spi-gpio-v1 защищает доставку этого формата. [Доказательства/пределы](avalonia/docs/ili9341-spi-2026-11-10.md); SQLite, данные пользователя и GitHub не менялись.
 
 ## Watchdog Pico · 10 ноября 2026
 

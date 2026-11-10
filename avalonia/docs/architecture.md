@@ -1,8 +1,8 @@
 # Архитектура Avalonia Classroom
 
-## SPI history summaries · 10 ноября 2026
+## GPIO SPI · 10 ноября 2026
 
-SpiTrace агрегирует завершённые/игнорируемые/прерванные слова, полный byte/command count и CRC32, но хранит только 32 TX/RX и 16 command prefix. Завершение через frame boundary попадает в следующий ответ, watchdog abort финализирует pending word. Optional SpiIo проходит общий Record/Replay/segmented store/server/teacher history; CRC32 — диагностика, не подпись. Capabilities и SHA256 ChangesHash подтверждают полный полученный пакет; canonical structural equality исправляет сравнение повторов с массивами. [Детали, тесты и остаток](ili9341-spi-2026-11-10.md).
+Shared GpioSpi живёт рядом с hardware SpiDisplays и использует тот же controller/GRAM/trace. Peek читает следующий MISO byte без продвижения pointer, commit происходит на восьмом rising edge; последний MISO bit удерживается до falling edge. AVR callbacks видят фактический port output до PIN update; Pico resolver сохраняет цепочку I2C и input override. Idle/no-TFT path не создаёт per-pin input arrays; GPIO callback cache учитывает value/ctrl/pad/input. Связанные summaries разделяются по device/method, неизвестная partial-byte частота разрешена только software без completed words. [Контракт/ограничения](ili9341-spi-2026-11-10.md).
 
 ## Watchdog warm reset · 10 ноября 2026
 

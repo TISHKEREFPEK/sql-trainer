@@ -39,8 +39,8 @@ public static class CircuitSpi
         }).ToArray();
     }
     public static bool Hardware(CircuitPart board,SpiDisplayDevice device)=>board.Kind==PartKind.Pico
-        ?device.Sck%4==2&&device.Mosi%4==3&&((device.Mosi>>3)&1)==device.Controller
-        :device.Sck==(board.Kind==PartKind.Mega?52:13)&&device.Mosi==(board.Kind==PartKind.Mega?51:11);
+        ?device.Sck%4==2&&device.Mosi%4==3&&((device.Mosi>>3)&1)==device.Controller&&(device.Miso is null||device.Miso%4==0&&((device.Miso>>3)&1)==device.Controller)
+        :device.Sck==(board.Kind==PartKind.Mega?52:13)&&device.Mosi==(board.Kind==PartKind.Mega?51:11)&&(device.Miso is null||device.Miso==(board.Kind==PartKind.Mega?50:12));
     public static void ValidateRun(CircuitProject project)
     {
         if(project.Parts.Count(IsDevice)>2)throw new InvalidDataException("Одновременно доступны два TFT-дисплея. Остальные можно сохранить в схеме.");

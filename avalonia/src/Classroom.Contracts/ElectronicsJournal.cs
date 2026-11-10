@@ -12,7 +12,8 @@ public sealed record ElectronicsChange(string Id, long Sequence, long At, string
     int Offset, int Removed, string Inserted, string? Checkpoint = null, string? GestureId = null, string? ReportId = null, string? ReportHash = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsSerialIo? SerialIo = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsI2cIo[]? I2cIo = null,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsActiveSpan? ActiveSpan = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsActiveSpan? ActiveSpan = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ElectronicsSpiIo[]? SpiIo = null);
 
 public sealed record ElectronicsJournal(int Version, string StreamId, long StartedAt, string BaseJson, ElectronicsChange[] Changes)
 {
@@ -20,7 +21,7 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
     {
         if(change.ActiveSpan is not { }span)return;
         if(change.Kind!="activity"||change.Actor!="student"||span.StartedAt<=0||span.EndedAt<span.StartedAt||span.EndedAt-span.StartedAt>15000||span.EndedAt>DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()||
-            span.EndedAt>change.At||change.BeforeHash!=change.AfterHash||change.Removed!=0||change.Inserted.Length!=0||change.SerialIo is not null||change.I2cIo is not null||change.ReportId is not null)
+            span.EndedAt>change.At||change.BeforeHash!=change.AfterHash||change.Removed!=0||change.Inserted.Length!=0||change.SerialIo is not null||change.I2cIo is not null||change.SpiIo is not null||change.ReportId is not null)
             throw new InvalidDataException("Некорректный интервал активности в истории схемы.");
     }
     static void ValidateI2c(string json,string kind,ElectronicsI2cIo[]? data)
@@ -56,11 +57,12 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
     public static ElectronicsJournal Start(string json, long at)
     { Validate(json); return new(1, Guid.NewGuid().ToString("N"), at, json, []); }
     public static ElectronicsJournal Record(ElectronicsJournal journal, string before, string after, string kind, long at,
-        string actor = "student", bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, ElectronicsSerialIo? serialIo = null,ElectronicsI2cIo[]? i2cIo = null,ElectronicsActiveSpan? activeSpan=null)
+        string actor = "student", bool force = false, string? gestureId = null, string? reportId = null, string? reportHash = null, ElectronicsSerialIo? serialIo = null,ElectronicsI2cIo[]? i2cIo = null,ElectronicsActiveSpan? activeSpan=null,ElectronicsSpiIo[]? spiIo=null)
     {
         Validate(after);
         ValidateSerial(after,kind,serialIo);
         ValidateI2c(after,kind,i2cIo);
+        ElectronicsSpiValidation.Validate(after,kind,spiIo);
         if (journal.Version != 1 || SqlSyncHash.Text(before) != (journal.Changes.Length == 0 ? SqlSyncHash.Text(journal.BaseJson) : journal.Changes[^1].AfterHash))
             throw new InvalidDataException("Исходное состояние не совпадает с историей схемы.");
         if (kind.Length is < 1 or > 80 || actor is not ("student" or "teacher" or "server" or "recovery") || at <= 0 || at > DateTimeOffset.MaxValue.ToUnixTimeMilliseconds() ||
@@ -75,7 +77,7 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
         if (suffix > 0 && (suffix < before.Length && char.IsSurrogatePair(before, before.Length - suffix - 1) || suffix < after.Length && char.IsSurrogatePair(after, after.Length - suffix - 1))) suffix--;
         var sequence = journal.Changes.LongLength + 1;
         var step = new ElectronicsChange(Guid.NewGuid().ToString("N"), sequence, at, actor, kind, SqlSyncHash.Text(before), SqlSyncHash.Text(after),
-            prefix, before.Length - prefix - suffix, after.Substring(prefix, after.Length - prefix - suffix), sequence % 64 == 0 ? after : null, gestureId, reportId, reportHash,serialIo,i2cIo,activeSpan);
+            prefix, before.Length - prefix - suffix, after.Substring(prefix, after.Length - prefix - suffix), sequence % 64 == 0 ? after : null, gestureId, reportId, reportHash,serialIo,i2cIo,activeSpan,spiIo);
         ValidateActivity(step);
         return journal with { Changes = journal.Changes.Append(step).ToArray() };
     }
@@ -97,6 +99,7 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
             json = json.Remove(step.Offset, step.Removed).Insert(step.Offset, step.Inserted); Validate(json);
             ValidateSerial(json,step.Kind,step.SerialIo);
             ValidateI2c(json,step.Kind,step.I2cIo);
+            ElectronicsSpiValidation.Validate(json,step.Kind,step.SpiIo);
             ValidateActivity(step);
             if (SqlSyncHash.Text(json) != step.AfterHash || step.Checkpoint is { } checkpoint && checkpoint != json)
                 throw new InvalidDataException("История не восстанавливает сохранённую схему.");

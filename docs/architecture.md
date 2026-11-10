@@ -1,8 +1,8 @@
 # Архитектура
 
-## TFT ILI9341: native и SPI · 10 ноября 2026
+## SPI metadata и подтверждение пакета · 10 ноября 2026
 
-Append-only TftSpi / tft-ili9341-spi проходит через общий project inspector; SQLite не меняется. CircuitSpi строит bindings только из физических wire/breadboard nets, различает питание, обрыв, GPIO и константы. Оригинальный TftDisplayFace выводит RGB888 кадр с освобождением bitmap; геометрия 9-pin header не меняет старый Visual. CodeGuide использует действительные SPI/GPIO Uno/Mega/Pico; редактор и независимая teacher-copy работают одинаково. [Контракты, доказательства и открытые режимы](../avalonia/docs/ili9341-spi-2026-11-10.md). Сервер и роли нужно обновлять совместно.
+Optional ElectronicsChange.SpiIo содержит bounded summary на TFT/worker response: счётчики, префиксы, CRC32, параметры и время модели. Календарное время остаётся ElectronicsChange.At. Replay/server validation проверяют размеры, счётчики, GPIO и связь с TftSpi; старый JSON без поля не меняется, SQLite-миграции нет. Перед SPI-доставкой проверяется capabilities; ACK ChangesHash охватывает полный canonical batch, включая metadata. Неполное/старое подтверждение оставляет очередь pending. [Контракт и пределы](../avalonia/docs/ili9341-spi-2026-11-10.md). Обновлять Server и роли совместно.
 
 ## Warm reset Pico · 10 ноября 2026
 

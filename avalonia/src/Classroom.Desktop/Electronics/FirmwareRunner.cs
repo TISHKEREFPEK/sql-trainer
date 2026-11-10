@@ -4,7 +4,7 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null,LcdFrame[]? Displays=null,ElectronicsI2cIo[]? I2c=null,OledFrame[]? OledDisplays=null,TftDisplayFrame[]? TftDisplays=null);
+public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null,LcdFrame[]? Displays=null,ElectronicsI2cIo[]? I2c=null,OledFrame[]? OledDisplays=null,TftDisplayFrame[]? TftDisplays=null,ElectronicsSpiIo[]? Spi=null);
 
 public sealed class FirmwareRunner : IDisposable
 {

@@ -746,6 +746,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
                 outputs=frame.Pins;picoUsbReady=frame.UsbReady;ReceiveSerial(frame.SerialPorts,frame.SerialPending);
                 if(frame.I2c.Length>0)RecordHistory("i2c-transfer",true,i2cIo:frame.I2c.Select(t=>new ElectronicsI2cIo(t.Address,t.Read,t.Data,t.Ack,t.RepeatedStart,t.Controller,t.Software,t.Sda,t.Scl)).ToArray());
+                if(frame.Spi is {Length:>0} spi)RecordHistory("spi-transfer",true,spiIo:spi);
                 displays=frame.Displays.ToDictionary(d=>d.Id);oledDisplays=frame.OledDisplays.ToDictionary(d=>d.Id);
                 tftDisplays=(frame.TftDisplays??[]).ToDictionary(d=>d.Id);
                 if(frame.Diagnostics.Length>0)status.Text=string.Join(" ",frame.Diagnostics);
@@ -763,6 +764,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 outputs = frame.Pins;
                 ReceiveSerial(frame);
                 if(frame.I2c is {Length:>0} transfers)RecordHistory("i2c-transfer",true,i2cIo:transfers);
+                if(frame.Spi is {Length:>0} spi)RecordHistory("spi-transfer",true,spiIo:spi);
                 displays=(frame.Displays??[]).ToDictionary(d=>d.Id);
                 oledDisplays=(frame.OledDisplays??[]).ToDictionary(d=>d.Id);
                 tftDisplays=(frame.TftDisplays??[]).ToDictionary(d=>d.Id);

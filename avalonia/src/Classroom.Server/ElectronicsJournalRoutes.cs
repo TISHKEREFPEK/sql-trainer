@@ -10,6 +10,7 @@ public static class ElectronicsJournalRoutes
         new ElectronicsJournal(1, stream.Id, stream.StartedAt, json, [change with { Sequence = 1 }]).Replay();
     public static void Map(RouteGroupBuilder api, ServerState state)
     {
+        api.MapGet("/electronics-journal/capabilities",(HttpContext ctx)=>{state.Authorize(ctx,"student");return new ElectronicsJournalCapabilities([ElectronicsJournalProtocol.SpiSummary]);});
         api.MapPost("/electronics-journal/sync", (HttpContext ctx, ElectronicsJournalBatch input) =>
         {
             var session = state.Authorize(ctx, "student");
@@ -44,7 +45,7 @@ public static class ElectronicsJournalRoutes
                 }
                 else if (row.ClientId != input.ClientId || row.LessonId != input.LessonId || row.AssignmentId != input.AssignmentId || row.StartedAt != input.StartedAt || row.BaseJson != input.BaseJson || row.ForkedFrom != input.ForkedFrom)
                     throw new HttpFault(409, "Номер истории уже связан с другой исходной работой.");
-                ElectronicsJournalAck Ack(string status) => new(row.Id, status, row.Sequence, SqlSyncHash.Text(row.TipJson));
+                ElectronicsJournalAck Ack(string status) => new(row.Id, status, row.Sequence, SqlSyncHash.Text(row.TipJson),SqlSyncHash.Text(Wire.Write(input.Changes)));
                 if (row.Sequence > input.KnownSequence) return Ack("fork");
                 var json = row.TipJson; var sequence = row.Sequence; long previous = 0; var ids = new HashSet<string>(); var additions = new List<ElectronicsJournalChangeEntity>();
                 foreach (var change in input.Changes)
@@ -55,7 +56,7 @@ public static class ElectronicsJournalRoutes
                     if (change.Sequence <= row.Sequence)
                     {
                         var accepted = await db.ElectronicsJournalChanges.FindAsync(session.ProfileId, row.Id, change.Sequence);
-                        if (accepted is null || Wire.Read<ElectronicsChange>(accepted.ChangeJson) != change) return Ack("fork");
+                        if (accepted is null || Wire.Write(Wire.Read<ElectronicsChange>(accepted.ChangeJson)) != Wire.Write(change)) return Ack("fork");
                         continue;
                     }
                     if (change.Sequence != sequence + 1) throw new HttpFault(409, "Сначала передайте предыдущие шаги схемы.");

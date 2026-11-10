@@ -1,8 +1,8 @@
 # Архитектура Avalonia Classroom
 
-## Native TFT и SPI · 10 ноября 2026
+## SPI history summaries · 10 ноября 2026
 
-SpiDisplays/Ili9341 связываются с append-only TftSpi через CircuitSpi: физические wire/strip nets, MCU pin roles, отдельные power/connected/backlight. Потеря MOSI/SCK не стирает запитанную GRAM. TftDisplayFace — оригинальный вектор и освобождаемый RGB bitmap; PartArtwork переносит header вместе с геометрией и экспортирует схему. TftCodeGuide общий для Uno/Mega/Pico SPI0/SPI1, контролирует конфликты с другими деталями. Server inspector допускает новый kind без миграции; старый Visual остаётся отдельно. Worker words/clock/epochs, отдельные SDK и ограничения из 531dbc6 сохраняются. [Подробности и непроверенные режимы](ili9341-spi-2026-11-10.md).
+SpiTrace агрегирует завершённые/игнорируемые/прерванные слова, полный byte/command count и CRC32, но хранит только 32 TX/RX и 16 command prefix. Завершение через frame boundary попадает в следующий ответ, watchdog abort финализирует pending word. Optional SpiIo проходит общий Record/Replay/segmented store/server/teacher history; CRC32 — диагностика, не подпись. Capabilities и SHA256 ChangesHash подтверждают полный полученный пакет; canonical structural equality исправляет сравнение повторов с массивами. [Детали, тесты и остаток](ili9341-spi-2026-11-10.md).
 
 ## Watchdog warm reset · 10 ноября 2026
 

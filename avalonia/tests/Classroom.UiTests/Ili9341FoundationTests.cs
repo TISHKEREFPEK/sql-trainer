@@ -27,16 +27,18 @@ public sealed class Ili9341FoundationTests
             """;
         if(pico)code=code.Replace("Serial.","Serial1.");
         SpiDisplayDevice[] devices=[new("tft",0,mosi,sck,miso,new(cs),new(dc),new(rst),new(Level:true))];
-        var output="";TftDisplayFrame? display=null;
+        var output="";TftDisplayFrame? display=null;var samples=new List<Classroom.Contracts.ElectronicsSpiIo>();
         if(pico){
             var image=await PicoCompiler.Compile(code,CancellationToken.None);using var runner=new PicoFirmwareRunner();await runner.Start(image);
-            for(var i=0;i<110&&!output.Contains("DONE");i++){var frame=await runner.Step(spiDevices:devices);output+=frame.SerialPorts[1];display=Assert.Single(frame.TftDisplays!);Assert.Empty(frame.Diagnostics);}
+            for(var i=0;i<110&&!output.Contains("DONE");i++){var frame=await runner.Step(spiDevices:devices);output+=frame.SerialPorts[1];display=Assert.Single(frame.TftDisplays!);Assert.Empty(frame.Diagnostics);samples.AddRange(frame.Spi??[]);}
         }else{
             var image=await FirmwareRunner.Compile(code,CancellationToken.None,board);using var runner=new FirmwareRunner();await runner.Start(image,board);var profile=AvrBoards.Get(board);
-            for(var i=0;i<110&&!output.Contains("DONE");i++){var frame=await runner.Step(new bool[profile.DigitalCount],new double[profile.AnalogCount],spiDevices:devices);output+=frame.Serial;display=Assert.Single(frame.TftDisplays!);}
+            for(var i=0;i<110&&!output.Contains("DONE");i++){var frame=await runner.Step(new bool[profile.DigitalCount],new double[profile.AnalogCount],spiDevices:devices);output+=frame.Serial;display=Assert.Single(frame.TftDisplays!);samples.AddRange(frame.Spi??[]);}
         }
         Assert.Equal("93;41;DONE\r\n",output);Assert.NotNull(display);Assert.True(display.Display);var pixels=Convert.FromBase64String(display.Pixels);
         Assert.Equal(new byte[]{255,0,0},pixels.Skip((2*240+1)*3).Take(3));Assert.Equal(new byte[]{0,0,0},pixels.Take(3));
+        Assert.Contains(samples,t=>t.Commands>0&&t.CommandPrefix.Contains(0xd3));Assert.Contains(samples,t=>t.DataBytes>0);var project=TftNativeTests.Project(board);project.Code=code;var json=project.Serialize();var journal=Classroom.Contracts.ElectronicsJournal.Start(json,1);
+        foreach(var sample in samples)journal=Classroom.Contracts.ElectronicsJournal.Record(journal,json,json,"spi-transfer",journal.Changes.Length+2,force:true,spiIo:[sample]);Assert.Equal(json,journal.Replay());
     }
     [Theory]
     [InlineData("uno")]

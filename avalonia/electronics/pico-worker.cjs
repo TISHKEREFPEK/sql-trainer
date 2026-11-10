@@ -88,7 +88,7 @@ function step(input) {
   const pins=mcu.gpio.map((pin,i)=>{if(levels[i])accumulated[i]+=clock.nanos-last[i];return {output:pin.outputEnable,voltage:elapsed>0?3.3*accumulated[i]/elapsed:pin.outputValue?3.3:0,pullUp:pin.value===GPIOPinState.InputPullUp,pulseUs:state.pulses[i],frequency:state.frequency[i]};});
   const serialPorts=state.serial.map((values,i)=>{const text=state.decoders[i].write(Buffer.from(values));values.length=0;return text;});state.resetTransmitted();
   const diagnostics=state.messages.splice(0),reset=state.resetPending;
-  if(reset)state.i2c.abort();
+  if(reset){state.i2c.abort();state.spi.abort();}
   const result={pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:!reset&&clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics,resetReason:reset?.reason??null,...state.i2c.frame(),...state.spi.frame()};
   if(reset){
     // Retire every old peripheral callback before the new CPU is attached.

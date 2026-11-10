@@ -1,10 +1,11 @@
 'use strict';
 const {Ili9341}=require('./ili9341.cjs');
+const {SpiTrace}=require('./spi-trace.cjs');
 // Hardware SPI word bridge. Software-clocked GPIO SPI is a separate pending
 // adapter, not silently interpreted as hardware peripheral traffic.
 class SpiDisplays {
   constructor(now,level,pinCount,controllers,accepts,panels=new Map(),readable=c=>c.miso!=null){
-    this.now=now;this.level=level;this.pinCount=pinCount;this.controllers=controllers;this.accepts=accepts;this.readable=readable;this.panels=panels;this.records=[];
+    this.now=now;this.level=level;this.pinCount=pinCount;this.controllers=controllers;this.accepts=accepts;this.readable=readable;this.panels=panels;this.records=[];this.trace=new SpiTrace(now);this.pending=new Set();
   }
   signal(s){return s?.level??(s?.pin!=null?this.level(s.pin):null);}
   validSignal(s){return s==null||typeof s==='object'&&((Number.isInteger(s.pin)&&s.pin>=0&&s.pin<this.pinCount&&s.level==null)||(s.pin==null&&typeof s.level==='boolean'));}
@@ -40,6 +41,12 @@ class SpiDisplays {
   begin(controller,value,bits,mode,hz,lsb=false){
     this.refresh();
     const selected=this.records.filter(r=>r.config.connected&&r.config.controller===controller&&r.panel.powered&&r.panel.resetHigh&&this.signal(r.config.cs)===false&&this.accepts(r.config));
+    const started=this.now(),parameters={bits,mode,hz,lsb};
+    for(const r of this.records.filter(r=>r.config.controller===controller&&!selected.includes(r))){
+      const c=r.config;const issues=[];
+      if(!c.connected||!this.accepts(c))issues.push('wiring');if(!r.panel.powered)issues.push('power');if(!r.panel.resetHigh)issues.push('reset');if(this.signal(c.cs)!==false)issues.push('not-selected');
+      this.trace.record(c,parameters,started,'ignored',[],[],false,issues);
+    }
     if(!selected.length)return ()=>bits===16?65535:(1<<bits)-1;
     if(bits!==8&&bits!==16)throw Error('TFT hardware SPI currently supports 8/16-bit words');
     if(mode!==0&&mode!==3)throw Error('ILI9341 requires SPI mode 0 or 3');
@@ -48,19 +55,26 @@ class SpiDisplays {
     const epochs=selected.map(r=>r.epoch);
     function reverse(v,n){let result=0;for(let i=0;i<n;i++){result=result<<1|v&1;v>>>=1;}return result;}
     const wire=lsb?reverse(value,bits):value;
+    let finished=false;
+    const abort=()=>{if(finished)return;finished=true;this.pending.delete(abort);for(const r of selected)this.trace.record(r.config,parameters,started,'aborted',[],[],false,['interrupted']);};
+    this.pending.add(abort);
     return ()=>{
+      if(finished)return bits===16?65535:(1<<bits)-1;
+      finished=true;this.pending.delete(abort);
       this.refresh();const replies=[];
       selected.forEach((r,index)=>{
         const c=r.config;
-        if(!this.records.includes(r)||r.epoch!==epochs[index]||!r.panel.powered||!r.panel.resetHigh||this.signal(c.cs)!==false||this.signal(c.dc)!==directions[index]||!this.accepts(c)||directions[index]===null)return;
-        let reply=0;
-        for(let shift=bits-8;shift>=0;shift-=8)reply=(reply<<8)|r.panel.transfer(wire>>>shift&255,directions[index]);
-        if(this.readable(c))replies.push(reply);
+        if(!this.records.includes(r)||r.epoch!==epochs[index]||!r.panel.powered||!r.panel.resetHigh||this.signal(c.cs)!==false||this.signal(c.dc)!==directions[index]||!this.accepts(c)||directions[index]===null){this.trace.record(c,parameters,started,'aborted',[],[],false,['interrupted']);return;}
+        let reply=0;const tx=[],rx=[],readable=this.readable(c);
+        for(let shift=bits-8;shift>=0;shift-=8){const value=wire>>>shift&255;const response=r.panel.transfer(value,directions[index]);reply=(reply<<8)|response;tx.push(value);rx.push(readable?response:255);}
+        this.trace.record(c,parameters,started,'completed',tx,rx,directions[index],readable?[]:['no-miso']);
+        if(readable)replies.push(reply);
       });
       if(replies.some(v=>v!==replies[0]))throw Error('SPI MISO contention between selected displays');
       const response=replies[0]??(bits===16?65535:255);return lsb?reverse(response,bits):response;
     };
   }
-  frame(){this.refresh();return {tftDisplays:[...this.panels.values()].map(p=>p.frame())};}
+  abort(){for(const abort of [...this.pending])abort();}
+  frame(){this.refresh();return {tftDisplays:[...this.panels.values()].map(p=>p.frame()),spi:this.trace.frame()};}
 }
 module.exports={SpiDisplays};

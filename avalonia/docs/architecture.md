@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## SPI display foundation · 10 ноября 2026
+
+SpiDisplays/Ili9341 — общий цифровой controller/GRAM; AVR SPDR/clock events и RP2040 FIFO/clock alarms передают настоящие words без перехвата Arduino API. Аппаратные GPIO roles/control lines и cancellation epoch исключают ответы по неправильной проводке/после CS pulse. Ограничены две панели, 8/16-bit word и mode 0/3; software GPIO SPI ещё не подключён. Цветные RGB888 frames и typed spiDevices optional в локальном worker DTO. Pico reset переносит внешнюю panel Map на physical clock, не прежние MCU bindings. Новая library 1.7.0 готовится отдельным supplement, marker/copy scripts обновлены. Native part/solver/renderer и server project kind ещё прежние. [Подробности/границы](ili9341-spi-2026-11-10.md).
+
 ## Watchdog warm reset · 10 ноября 2026
 
 Worker разделяет load и boot. При штатном watchdog request завершает текущий bounded frame, отменяет старые alarms и создаёт новые MCU/ROM/UART/RTC/I2C bindings на том же physical clock. Clock domain нового MCU даёт аппаратным timer registers новое начало. Flash/SRAM/8 scratch/reason переносятся; BootROM handoff проверяет magic/checksum/PC/SP и погашает scratch4 при использовании. Physical I2C Map/модель времени дисплеев сохраняются без удерживания прежних CPU bindings, trace очереди не обрезаются. ResetReason отражается в нейтральных kind watchdog-timer-reset/watchdog-forced-reset и русских подписях журнала. JSON проекта/контракты доставки/SQLite прежние. [Доказательства, 1 MHz/WDSEL границы](pico-foundation-2026-11-08.md).

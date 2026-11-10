@@ -11,7 +11,7 @@ if($Source -eq $Destination -or $Source.StartsWith($Destination+'\',[StringCompa
 if(Test-Path -LiteralPath $Destination){if(Get-ChildItem -LiteralPath $Destination -Force | Select-Object -First 1){throw 'SDK destination is not empty. Choose a new output folder; existing files were preserved.'}}
 $items=@('arduino-cli.exe','node.exe','ArduinoCLI-LICENSE.txt','Node-LICENSE.txt','data')
 $items+=if($Profile -eq 'avr'){@('offline-ready-v4.json','sandbox-avr','user/libraries/Servo')}else{@('offline-pico-v1.json','offline-pico-libraries-v1.json','sandbox-arm')}
-$items+=@('user/libraries/Adafruit_SSD1306','user/libraries/Adafruit_GFX_Library','user/libraries/Adafruit_BusIO')
+$items+=@('user/libraries/Adafruit_SSD1306','user/libraries/Adafruit_GFX_Library','user/libraries/Adafruit_BusIO','user/libraries/Adafruit_ILI9341','offline-spi-libraries-v1.json')
 foreach($item in $items){if(-not(Test-Path -LiteralPath (Join-Path $Source $item))){throw "Incomplete $Profile SDK: $item"}}
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 @{version=1;profile=$Profile;state='copying'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Destination 'classroom-sdk-copy.json') -Encoding UTF8

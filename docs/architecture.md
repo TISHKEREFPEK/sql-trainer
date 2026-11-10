@@ -1,5 +1,9 @@
 # Архитектура
 
+## TFT hardware SPI foundation · 10 ноября 2026
+
+Worker-only spiDevices связывает GPIO/constant controls и реальные SPI peripheral words с оригинальной ILI9341 GRAM. Время передачи, режим/битовый порядок/roles, completed-byte response, cancellation epoch и RGB frames реализованы отдельно от native project kind. Старые Step вызовы совместимы; optional DTO не меняет JSON проектов/SQLite/API. SDK получил library supplement Adafruit ILI9341 1.7.0 с отдельным marker и полной лицензированной папкой; runtime download не добавлен. [Контракт, доказательства и обязательные дальнейшие слои](../avalonia/docs/ili9341-spi-2026-11-10.md). Это ещё не пользовательская деталь редактора.
+
 ## Warm reset Pico · 10 ноября 2026
 
 Watchdog запрашивает смену MCU на границе инструкции; его alarm останавливается немедленно, чтобы simulation-clock не повторял срабатывание на нуле. Новые CPU/периферия получают сохранённые flash/SRAM/reason/scratch и проверенный flash vector либо однократный magic PC/SP. Старые периферийные callbacks отменяются; physical clock и powered I2C devices сохраняются, аппаратный clock domain начинается с нуля. Незавершённые I2C-пакеты отмечаются прерванными и попадают в bounded trace. Optional ResetReason существует только в worker-frame; native журнал использует обычные нейтральные kind-строки, JSON проектов/SQLite не меняются. [Проверки и неподдержанные режимы](../avalonia/docs/pico-foundation-2026-11-08.md).

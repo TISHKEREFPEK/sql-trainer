@@ -4,7 +4,7 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null,LcdFrame[]? Displays=null,ElectronicsI2cIo[]? I2c=null,OledFrame[]? OledDisplays=null);
+public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null,LcdFrame[]? Displays=null,ElectronicsI2cIo[]? I2c=null,OledFrame[]? OledDisplays=null,TftDisplayFrame[]? TftDisplays=null);
 
 public sealed class FirmwareRunner : IDisposable
 {
@@ -76,7 +76,7 @@ public sealed class FirmwareRunner : IDisposable
         process.ErrorDataReceived += (_, _) => { }; process.BeginErrorReadLine();
         try{await Exchange<JsonElement>(new { hex, board=boardId });}catch{Dispose();throw;}
     }
-    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0,I2cDevice[]? devices=null) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort,devices });
+    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0,I2cDevice[]? devices=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort,devices,spiDevices });
     async Task<T> Exchange<T>(object request)
     {
         var active = process ?? throw new IOException("Симулятор не запущен.");

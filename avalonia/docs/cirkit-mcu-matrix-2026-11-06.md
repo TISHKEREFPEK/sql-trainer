@@ -1,5 +1,9 @@
 # Матрица MCU для E01/E11 · 6 ноября 2026
 
+## Аппаратный TFT/SPI слой · 10 ноября 2026
+
+Uno/Mega/Pico получили hardware SPI backend для оригинальной ILI9341-модели с реальной Adafruit library 1.7.0: byte/word peripheral callbacks, роли, время, MISO и colour frames проверены скетчами. Это не готовая native-деталь: каталог/solver/renderer/review, software SPI и расширенные режимы открыты. [Контракт/план](ili9341-spi-2026-11-10.md), [21 начальный пример компонентов](cirkit-components-2026-11-10.md). Полная MCU/компонентная матрица, графика, ESP32/многоплатность и Win10/LAN по-прежнему не приняты; импорт/GitHub отложены.
+
 ## Дополнение watchdog · 10 ноября 2026
 
 В Pico работает штатный 1 MHz SDK watchdog/update/disable/reboot с полным WDSEL: настоящая повторная загрузка ARM, причина/scratch, проверенный PC/SP handoff в SRAM, сохранённые NOR/RAM и powered LCD/OLED. Перезапуск виден в native/server history. [Доказательства](pico-foundation-2026-11-08.md): 38 Pico regression и отдельные ресурс/SRAM проверки; variable/stopped tick, selective reset, debug и точные domain/clock режимы ещё не приняты. Остальная полная матрица/графика/ESP32/многоплатность/Win10/LAN остаются открыты, импорт отложен.

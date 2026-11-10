@@ -4,8 +4,9 @@ const avr = require('./vendor/avr8js/cjs/index.js');
 const {getBoard,configure} = require('./avr-devices.cjs');
 const {StringDecoder} = require('node:string_decoder');
 const {I2cBus} = require('./i2c-bus.cjs');
+const {installAvrSpi}=require('./avr-spi.cjs');
 const readline = require('node:readline');
-let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, transmitted=0;
+let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, spiBus, transmitted=0;
 function load(hex, id='uno') {
   board=getBoard(id);
   if(typeof hex!=='string'||hex.length>1000000)throw Error('Firmware is too large');
@@ -25,6 +26,7 @@ function load(hex, id='uno') {
   cpu=new avr.CPU(program,board.ramStart+board.ramBytes-0x100);
   const peripherals=configure(cpu,board);({ports,adc,usarts}=peripherals);lcdBus=new I2cBus(cpu,board.clockHz,peripherals.twi);
   pinMap=board.pinMap.map(pin=>({port:ports[pin[0]],bit:Number(pin.slice(1))}));
+  spiBus=installAvrSpi(cpu,board,ports,peripherals.spi,pinMap);
   serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);transmitted=0;
   usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{serial[index].push(value);transmitted++;};uart.onRxComplete=()=>feed(index);});
   rising=pinMap.map(()=>null);pulses=pinMap.map(()=>null);frequencies=pinMap.map(()=>null);
@@ -33,6 +35,7 @@ function load(hex, id='uno') {
 function feed(index){if(incoming[index].length&&!usarts[index].rxBusy&&usarts[index].writeByte(incoming[index][0]))incoming[index].shift();}
 function step(input) {
   if(!cpu)throw Error('Load firmware first');
+  spiBus.update(input.spiDevices??[]);
   lcdBus.update(input.devices??[]);
   if(input.digital!=null&&(!Array.isArray(input.digital)||input.digital.length>board.digitalCount))throw Error('Invalid digital input count');
   if(input.analog!=null&&(!Array.isArray(input.analog)||input.analog.length>board.analogCount))throw Error('Invalid analog input count');
@@ -67,7 +70,7 @@ function step(input) {
     return {output:state===avr.PinState.High||state===avr.PinState.Low,voltage:5*accumulated[index]/(cpu.cycles-start),pullUp:state===avr.PinState.InputPullUp,pulseUs:pulses[index],frequency:frequencies[index]};
   });
   const serialPorts=serial.map((values,index)=>decoders[index].write(Buffer.from(values)));serial=usarts.map(()=>[]);transmitted=0;
-  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz,...lcdBus.frame()};
+  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz,...lcdBus.frame(),...spiBus.frame()};
 }
 readline.createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{
   try{if(line.length>1100000)throw Error('Request too large');const input=JSON.parse(line);const output=input.hex!=null?load(input.hex,input.board??'uno'):step(input);process.stdout.write(JSON.stringify(output)+'\n');}

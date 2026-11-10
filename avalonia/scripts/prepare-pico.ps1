@@ -16,7 +16,7 @@ $core=Join-Path $RuntimePath "data/packages/rp2040/hardware/rp2040/$coreVersion/
 $arm=Join-Path $RuntimePath 'sandbox-arm'
 $marker=Join-Path $RuntimePath 'offline-pico-v1.json'
 function Ensure-PicoLibraries {
-    $libraries=@{Adafruit_SSD1306='2.5.17';Adafruit_GFX_Library='1.13.0';Adafruit_BusIO='1.17.4'}
+    $libraries=@{Adafruit_SSD1306='2.5.17';Adafruit_GFX_Library='1.13.0';Adafruit_BusIO='1.17.4';Adafruit_ILI9341='1.7.0'}
     $root=Join-Path $RuntimePath 'user/libraries'
     foreach($entry in $libraries.GetEnumerator()){
         $source=Join-Path $BaseRuntimePath "user/libraries/$($entry.Key)"
@@ -35,6 +35,10 @@ function Ensure-PicoLibraries {
     $libraryMarker=Join-Path $RuntimePath 'offline-pico-libraries-v1.json'
     if(-not(Test-Path -LiteralPath $libraryMarker)){
         @{version=1;libraries=$libraries;source='prepare-electronics.ps1 pinned libraries; complete folders including licenses';sandbox='AppContainer read-only SDK'} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $libraryMarker -Encoding UTF8
+    }
+    $spiMarker=Join-Path $RuntimePath 'offline-spi-libraries-v1.json'
+    if(-not(Test-Path -LiteralPath $spiMarker)){
+        @{version=1;Adafruit_ILI9341='1.7.0';source='complete pinned library from base runtime, including license';interface='SPI display; touch/SD libraries are not included'} | ConvertTo-Json | Set-Content -LiteralPath $spiMarker -Encoding UTF8
     }
 }
 if((Test-Path -LiteralPath $marker) -and (Test-Path -LiteralPath $core) -and (Test-Path -LiteralPath (Join-Path $arm 'bin/arm-none-eabi-g++.exe')) -and (Test-Path -LiteralPath (Join-Path $arm 'ctags.exe')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'arduino-cli.exe')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'node.exe'))){

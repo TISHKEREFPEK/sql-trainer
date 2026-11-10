@@ -1,5 +1,9 @@
 # SQL Classroom · Avalonia
 
+## ILI9341 hardware foundation · 10 ноября 2026
+
+После обновления prepare-electronics/prepare-pico доступна закреплённая Adafruit ILI9341 1.7.0. Worker API может связать hardware SPI с оригинальной моделью цветного дисплея; три реальных скетча Uno/Mega/Pico проверены. Native-каталог/проводка/render/teacher-copy пока не подключены. [Проверки, скрипты и необходимые следующие слои](docs/ili9341-spi-2026-11-10.md). Старые core markers сохранены, SPI library supplement включается в обе поставки; прежние установщики/рабочие приложения не заменялись, GitHub отложен.
+
 ## Watchdog Pico · 10 ноября 2026
 
 Работают SDK watchdog_enable/update/reboot в штатном 1 MHz/полном reset-профиле, сохранение flash/RAM/scratch и внешних LCD/OLED. Native показывает/записывает причину перезапуска, преподаватель получает этот шаг истории. Для проверки — `PicoWatchdogTests` и `node tests/check-pico-watchdog.cjs` из avalonia. [Границы и результаты](docs/pico-foundation-2026-11-08.md). Рабочие приложения/старые установщики/GitHub не обновлены.

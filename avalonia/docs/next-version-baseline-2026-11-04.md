@@ -1,5 +1,15 @@
 # Следующая версия · исходная проверка и первые макеты
 
+## ILI9341 hardware SPI foundation · 10 ноября 2026
+
+После `bdb5a32` выполнено точечное сравнение официального ILI9341 (карточка/версия/9 pins/source state/SVG), создан независимый controller и hardware SPI backend Uno/Mega/Pico. Нет нового PartKind/catalog/solver/native renderer: это не end-to-end пользовательская готовность и не полный E01/E11. [Источники/план/пределы](ili9341-spi-2026-11-10.md), [начальная матрица примеров](cirkit-components-2026-11-10.md). Импорт не трогался; прямой source/SVG transfer не принят; установки/данные/GitHub не обновлялись.
+
+- Adafruit ILI9341 **1.7.0** установлен/скопирован полными папками в AVR/Pico, включая license, с offline-spi-libraries-v1.json. Повторная подготовка проходит без download, готовый Pico проверен с отсутствующим base path. Неполная/другая версия в собственной sentinel-папке отклонена без перезаписи. Parser всех PowerShell scripts и `git diff --check` прошли.
+- `check-ili9341.cjs`: RGB565/RGB666, windows/readback, 4 rotations, sleep/120 ms, inversion/backlight, scroll/partial area. `check-spi-displays.cjs`: roles/MISO/power, invalid bindings, transient CS pulse abort, сохранение in-flight transfer при эквивалентном frame binding, mode/rate bounds. Оба Node-прогона прошли; это чистые controller/bus проверки, не UI.
+- `ili9341-library-foundation`: **3 passed / 0 skipped**, 2 м 54 с — настоящая Adafruit header/source/GFX компиляция offline AppContainer на Uno/Mega/Pico; source SDK/cache fingerprint действительно обновлён новой библиотекой. Компиляция не объявлялась успешной симуляцией.
+- `ili9341-spi-first`: **3 passed / 0 skipped**, 56 с — реальный C++/hardware SPI рисует красные пиксели заданного окна, возвращает ID 93/41, чёрный фон; Pico без diagnostics. После уточнения cancellation/binding epoch `ili9341-spi-regression`: **29 passed / 0 skipped**, 4 м 24 с — actual TFT SPI (3), PicoNative (4), PicoWatchdog (6, включая memory/SRAM), MegaIntegration (4), LcdI2c (5), Oled (7). Состав подтверждён TRX; это выбранные семейства, не вся solution suite. Все прогоны пересекаются; не суммировать как уникальные проверки.
+- Release build всего Classroom.sln: **0 warnings / 0 errors**, 9,22 с. Новая публикация/установщик/Win10/LAN и native TFT скриншоты не запускались.
+
 ## Watchdog Pico · 10 ноября 2026
 
 После `1864744` добавлен настоящий SDK watchdog warm reset: CPU/периферия заново, flash/SRAM/scratch/reason и powered LCD/OLED сохраняются; physical time монотонно, hardware time_us начинается с нуля. Native reset event доставляется в teacher journal. [Архитектура/источники/точные открытые режимы](pico-foundation-2026-11-08.md). Профиль ограничен 1 MHz tick и SDK WDSEL; вся Pico/Cirkit/Win10/LAN-приёмка не завершена. Установщики `6406e6d`, рабочие приложения/базы и GitHub не обновлялись.

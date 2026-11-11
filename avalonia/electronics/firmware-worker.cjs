@@ -5,8 +5,9 @@ const {getBoard,configure} = require('./avr-devices.cjs');
 const {StringDecoder} = require('node:string_decoder');
 const {I2cBus} = require('./i2c-bus.cjs');
 const {installAvrSpi}=require('./avr-spi.cjs');
+const {installAvrDht11}=require('./dht11-gpio.cjs');
 const readline = require('node:readline');
-let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, spiBus, transmitted=0;
+let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, spiBus, dhtBus, transmitted=0;
 function load(hex, id='uno') {
   board=getBoard(id);
   if(typeof hex!=='string'||hex.length>1000000)throw Error('Firmware is too large');
@@ -27,6 +28,7 @@ function load(hex, id='uno') {
   const peripherals=configure(cpu,board);({ports,adc,usarts}=peripherals);lcdBus=new I2cBus(cpu,board.clockHz,peripherals.twi);
   pinMap=board.pinMap.map(pin=>({port:ports[pin[0]],bit:Number(pin.slice(1))}));
   spiBus=installAvrSpi(cpu,board,ports,peripherals.spi,pinMap);
+  dhtBus=installAvrDht11(cpu,board,pinMap,ports);
   serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);transmitted=0;
   usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{serial[index].push(value);transmitted++;};uart.onRxComplete=()=>feed(index);});
   rising=pinMap.map(()=>null);pulses=pinMap.map(()=>null);frequencies=pinMap.map(()=>null);
@@ -35,6 +37,7 @@ function load(hex, id='uno') {
 function feed(index){if(incoming[index].length&&!usarts[index].rxBusy&&usarts[index].writeByte(incoming[index][0]))incoming[index].shift();}
 function step(input) {
   if(!cpu)throw Error('Load firmware first');
+  const dhtDevices=dhtBus.prepare(input.dht11Devices??[]);
   spiBus.update(input.spiDevices??[]);
   lcdBus.update(input.devices??[]);
   if(input.digital!=null&&(!Array.isArray(input.digital)||input.digital.length>board.digitalCount))throw Error('Invalid digital input count');
@@ -49,6 +52,7 @@ function step(input) {
     const value=input.analog?.[i]??0;if(typeof value!=='number'||!Number.isFinite(value))throw Error('Invalid analog voltage');
     adc.channelValues[i]=Math.max(0,Math.min(5,value));const pin=pinMap[board.digitalCount+i];pin.port.setPin(pin.bit,value>2.5);
   }
+  dhtBus.update(dhtDevices);dhtBus.sync();
   const start=cpu.cycles,target=start+board.clockHz/20;
   const accumulated=pinMap.map(()=>0),last=pinMap.map(()=>start),levels=pinMap.map(pin=>pin.port.pinState(pin.bit)===avr.PinState.High);
   const listeners=Object.values(ports).map(port=>{

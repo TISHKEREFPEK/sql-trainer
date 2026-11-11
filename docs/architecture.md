@@ -1,5 +1,9 @@
 # Архитектура
 
+## DHT11 · 11 ноября 2026
+
+Собственная модель single-wire использует clock events/alarms и GPIO inputs, без подмены функций скетча. CircuitDht11 определяет подключения по физическим nets; отдельный enum/modelId сохраняет старые Visual-идентичности. Новых SQLite-таблиц нет, серверный inspector и роли обновляются совместно. Показания/правки и serial проходят через прежнюю историю/immutable review. [SDK, протокол, проверки и границы](../avalonia/docs/dht11-2026-11-11.md).
+
 ## Общий RST/DC у TFT · 10 ноября 2026
 
 Generator claims GPIO по роли: data/control collisions и CS conflicts отклоняются, одноимённые DC/RST/LED допускаются. До begin все CS выставляются HIGH; shared RST получает одного hardware-reset owner, остальные используют library SWRESET с собственным CS. Это сохраняет первое изображение при инициализации второго. [Матрица проверок/остаток](../avalonia/docs/ili9341-spi-2026-11-10.md). Model/SQLite не меняются. Защита файлов/ключей и неповреждение старых serialized formats добавлены в E14, шифрование пока не реализовано.

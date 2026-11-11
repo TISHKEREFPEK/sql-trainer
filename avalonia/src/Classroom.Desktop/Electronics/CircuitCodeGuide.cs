@@ -42,7 +42,7 @@ public static class CircuitCodeGuide
         }
         bool Ground(Terminal terminal) => Reach(terminal).Any(t=>t.Pin=="GND" && (t.Part==uno.Id || parts[t.Part].Kind==PartKind.Ground));
         var declarations=new List<string>(); var setup=new List<string>(); var loop=new List<string>(); var used=new Dictionary<string,string>();
-        var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var i2c=false;var oled=false;var count=0;
+        var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var i2c=false;var oled=false;var dht=false;var count=0;
         var i2cDevices=CircuitI2c.Devices(project);
         bool Claim(string? pin,CircuitPart part)
         {
@@ -55,6 +55,14 @@ public static class CircuitCodeGuide
             var n=++count;
             switch(part.Kind)
             {
+                case PartKind.Dht11:
+                {
+                    var device=CircuitDht11.Devices(project).Single(d=>d.Id==part.Id);var pin=Pin(new(part.Id,"DATA"));
+                    notes.Add("DHT11: VDD 3–5,5 В, общая GND, отдельный DATA; NC не подключать. Рекомендуется подтяжка 5,1 кОм. DHT.h 1.4.7 установлена локально; прогрев 1 с, чтение раз в 2 с, возвращается предыдущее измерение.");
+                    if(!device.Powered||!device.Connected){notes.Add("DHT11: исправьте питание и DATA.");ready=false;break;}
+                    if(!Claim(pin,part))break;dht=true;serial=true;declarations.Add($"DHT dht{n}({pin},DHT11);");setup.Add($"dht{n}.begin();");
+                    loop.Add($"{{ float h=dht{n}.readHumidity(), t=dht{n}.readTemperature(); if(isnan(h)||isnan(t)) Serial.println(\"DHT11: read error\"); else {{ Serial.print(\"DHT11 RH=\"); Serial.print(h); Serial.print(\" T=\"); Serial.println(t); }} }}");break;
+                }
                 case PartKind.OledI2c:
                 {
                     var device=i2cDevices.Single(d=>d.Id==part.Id);var data=uno.Kind==PartKind.Mega?"20":"A4";var clock=uno.Kind==PartKind.Mega?"21":"A5";
@@ -111,13 +119,15 @@ public static class CircuitCodeGuide
         declarations.AddRange(tft.Declarations);setup.AddRange(tft.Setup);
         var code=new StringBuilder($"// Начальный шаблон по текущим соединениям {profile.Name}.\n");
         if(tft.Declarations.Length>0)code.Append(TftCodeGuide.Includes);
+        if(dht)code.Append("#include <DHT.h>\n");
         if(servo) code.Append("#include <Servo.h>\n");
         if(oled)code.Append("#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n");
         if(i2c)code.AppendLine(I2cSketch.Helpers);
         foreach(var line in declarations) code.AppendLine(line);
         code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n");if(i2c)code.Append("  Wire.begin();\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);
+        if(dht)code.Append("  delay(1100);\n");
         code.Append("}\n\nvoid loop() {\n"); if(blink) code.Append("  static bool ledOn = false;\n  ledOn = !ledOn;\n"); foreach(var line in loop) code.Append("  ").AppendLine(line);
-        code.Append("  delay(500);\n}\n");
+        code.Append(dht?"  delay(2000);\n}\n":"  delay(500);\n}\n");
         return new(string.Join("\n",notes),code.ToString());
     }
 }

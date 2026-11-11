@@ -76,7 +76,7 @@ public sealed class FirmwareRunner : IDisposable
         process.ErrorDataReceived += (_, _) => { }; process.BeginErrorReadLine();
         try{await Exchange<JsonElement>(new { hex, board=boardId });}catch{Dispose();throw;}
     }
-    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0,I2cDevice[]? devices=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort,devices,spiDevices });
+    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0,I2cDevice[]? devices=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null,IReadOnlyList<Dht11Device>? dht11Devices=null) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort,devices,spiDevices,dht11Devices });
     async Task<T> Exchange<T>(object request)
     {
         var active = process ?? throw new IOException("Симулятор не запущен.");

@@ -15,6 +15,7 @@ foreach ($library in $libraries.GetEnumerator()) {
 }
 if ($librariesReady -and (Test-Path -LiteralPath $marker) -and (Test-Path -LiteralPath $cli) -and (Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $core) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/sandbox-ready.json')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/bin/avr-g++.exe')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/ctags.exe'))) {
     & (Join-Path $PSScriptRoot 'prepare-spi-libraries.ps1') -RuntimePath $RuntimePath
+    & (Join-Path $PSScriptRoot 'prepare-dht-libraries.ps1') -RuntimePath $RuntimePath
     Write-Output 'Offline AVR runtime is already prepared.'
     return
 }
@@ -58,3 +59,4 @@ Run-Cli @('lib', 'install', '--no-deps', 'Adafruit BusIO@1.17.4', 'Adafruit GFX 
 Set-Content -LiteralPath $marker -Value '{"version":4,"arduinoCli":"1.5.1","avrCore":"1.8.6","avrGcc":"16.1.0","node":"24.19.0","avr8js":"0.21.0","servo":"1.2.2","adafruitSsd1306":"2.5.17","adafruitGfx":"1.13.0","adafruitBusIo":"1.17.4","sandbox":"AppContainer"}'
 Write-Output 'Prepared offline AVR toolchain. Internet is not needed for sketch compilation or simulation.'
 & (Join-Path $PSScriptRoot 'prepare-spi-libraries.ps1') -RuntimePath $RuntimePath
+& (Join-Path $PSScriptRoot 'prepare-dht-libraries.ps1') -RuntimePath $RuntimePath

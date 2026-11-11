@@ -16,7 +16,7 @@
 | ILI9341 Display | [Hardware/software GPIO SPI и native TftSpi](ili9341-spi-2026-11-10.md): отдельная 9-pin модель/проводка/RGB/шаблон; полные режимы/две панели/точный ресурс Cirkit ещё открыты |
 | Bipolar Stepper Motor (NEMA 17) | Visual, отдельная модель открыта |
 | A4988 Stepper Motor Driver Carrier | Visual, step/current/driver модель открыта |
-| DHT11 Humidity and Temperature Sensor | Visual, протокол/параметры открыты |
+| DHT11 Humidity and Temperature Sensor | [Отдельный four-pin Dht11](dht11-2026-11-11.md): GPIO-протокол, питание/показания, native и закреплённые библиотеки; приёмка/аналоговая точность/точная графика открыты |
 | DS18B20 Temperature Sensor | Visual, 1-Wire открыт |
 | MPU6050 Accelerometer + Gyroscope | Visual, I2C/registers/controls открыты |
 | OLED 128x64 I2C Monochrome Display VDD-GND | Есть SSD1306/GFX и native/teacher scenarios; полные режимы/графика ещё не приняты |

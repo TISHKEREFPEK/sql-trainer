@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11 }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
 public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1);
@@ -45,6 +45,7 @@ public sealed record CircuitProject
         foreach (var p in Parts)
         {
             if(p.Kind==PartKind.LcdI2c&&(p.Value!=Math.Truncate(p.Value)||!(p.Value is >=32 and <=39 or >=56 and <=63)))throw new InvalidDataException("Адрес PCF8574: 0x20–0x27 или 0x38–0x3F.");
+            if(p.Kind==PartKind.Dht11&&(p.Value<0||p.Value>50||p.Value!=Math.Truncate(p.Value)))throw new InvalidDataException("DHT11: температура от 0 до 50 °C, целое число.");
             if(p.Kind==PartKind.OledI2c&&p.Value is not (60 or 61))throw new InvalidDataException("Адрес SSD1306: 0x3C или 0x3D.");
             if (!double.IsFinite(p.Scale) || p.Scale is < 0.4 or > 2 || p.QuarterTurns is < 0 or > 3)
                 throw new InvalidDataException("Размер детали: 40–200%, поворот: 0, 90, 180 или 270 градусов.");
@@ -85,6 +86,7 @@ public static class PartLibrary
         PartKind.Pico => "Raspberry Pi Pico",
         PartKind.LcdI2c => "LCD · I2C",
         PartKind.OledI2c => "OLED 128×64 · I2C",
+        PartKind.Dht11 => "DHT11 · температура и влажность",
         PartKind.TftSpi => "TFT 240×320 · ILI9341 · SPI",
         PartKind.Switch => "Кнопка", PartKind.Battery => "Источник питания", PartKind.Ground => "Земля",
         PartKind.Potentiometer => "Переменный резистор", PartKind.AnalogSensor => "Аналоговый датчик",
@@ -97,6 +99,7 @@ public static class PartLibrary
         PartKind.Pico => PicoBoard.Pins,
         PartKind.LcdI2c => ["GND","VCC","SDA","SCL"],
         PartKind.OledI2c => ["VDD","GND","SCL","SDA"],
+        PartKind.Dht11 => ["VDD","DATA","NC","GND"],
         PartKind.TftSpi => ["VCC","GND","CS","RST","D/C","MOSI","SCK","LED","MISO"],
         PartKind.Led => ["A", "K"], PartKind.Ground => ["GND"],
         PartKind.Diode => ["A", "K"], PartKind.Motor or PartKind.Buzzer => ["+", "−"],
@@ -106,7 +109,7 @@ public static class PartLibrary
         PartKind.Visual => [],
         PartKind.Battery or PartKind.AnalogSensor => ["+", "−"], _ => ["1", "2"]
     };
-    public static double Default(PartKind kind) => kind switch { PartKind.Resistor => 330, PartKind.Potentiometer or PartKind.Pot3 => 10000, PartKind.Led => 2, PartKind.Diode => 0.7, PartKind.Motor => 50, PartKind.Buzzer => 200, PartKind.Battery => 5, PartKind.AnalogSensor => 2.5, _ => 0 };
+    public static double Default(PartKind kind) => kind switch { PartKind.Resistor => 330, PartKind.Potentiometer or PartKind.Pot3 => 10000, PartKind.Led => 2, PartKind.Diode => 0.7, PartKind.Motor => 50, PartKind.Buzzer => 200, PartKind.Battery => 5, PartKind.AnalogSensor => 2.5, PartKind.Dht11 => 25, _ => 0 };
 }
 
 public record PinDrive(bool Output, double Voltage, bool PullUp = false, double? PulseUs = null, double? Frequency = null);
@@ -159,6 +162,8 @@ public static class CircuitSolver
                     branches.Add((part,T("SDA"),T("VCC"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VCC"),1.0/4700,0,false));break;
                 case PartKind.OledI2c:
                     branches.Add((part,T("VDD"),T("GND"),1.0/330,0,false));branches.Add((part,T("SDA"),T("VDD"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VDD"),1.0/4700,0,false));break;
+                case PartKind.Dht11:
+                    branches.Add((part,T("VDD"),T("GND"),1.0/10000,0,false));break;
                 case PartKind.TftSpi:
                     branches.Add((part,T("VCC"),T("GND"),1.0/1000,0,false));
                     branches.Add((part,T("LED"),T("GND"),1.0/330,0,false));break;

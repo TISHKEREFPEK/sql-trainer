@@ -1,5 +1,6 @@
 'use strict';
 const {Dht11Bus}=require('./dht11.cjs');
+const {setPicoInput}=require('./pico-gpio-input.cjs');
 function installAvrDht11(cpu,board,pinMap,ports){
   const master=i=>{const p=pinMap[i],mask=1<<p.bit;return cpu.data[p.port.portConfig.DDR]&mask?!!(p.port.lastValue&mask):null;};
   const pullup=i=>{const p=pinMap[i];return !!(cpu.data[p.port.portConfig.PORT]&(1<<p.bit));};
@@ -18,7 +19,7 @@ function installPicoDht11(mcu,clock,devices){
   const pullup=i=>mcu.gpio[i].pullupEnabled;
   function sync(){if(busy||!bus)return;busy=true;try{for(const d of bus.devices.values()){
     const i=d.config.pin;if(mcu.gpio[i].functionSelect!==5)continue;
-    bus.observe(i,master(i),pullup(i));const value=bus.input(i,master(i),pullup(i));if(value!==null)mcu.gpio[i].setInputValue(value);
+    bus.observe(i,master(i),pullup(i));const value=bus.input(i,master(i),pullup(i));if(value!==null)setPicoInput(mcu.gpio[i],value);
   }}finally{busy=false;}}
   bus=new Dht11Bus(()=>clock.nanos,(at,callback)=>{const alarm=clock.createAlarm(callback);alarm.schedule(Math.max(1,at-clock.nanos));return ()=>alarm.cancel();},sync,30,devices);
   for(const p of mcu.gpio){const previous=p.checkForUpdates.bind(p);p.checkForUpdates=()=>{previous();sync();};}

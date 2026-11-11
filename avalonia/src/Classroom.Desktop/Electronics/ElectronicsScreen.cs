@@ -396,7 +396,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         if (kind is PartKind.Uno or PartKind.Mega or PartKind.Pico && project.Parts.Any(CircuitBoards.IsBoard)) throw new InvalidDataException("Пока доступна одна исполняемая плата на схеме.");
         Checkpoint(); var id = Guid.NewGuid().ToString("N");
         var center=viewport.ToWorld(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2));
-        var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null,Setting:kind==PartKind.Dht11?4.0/7:0.5);
+        var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null,Setting:kind==PartKind.Dht11?4.0/7:0.5,Active:kind==PartKind.Hcsr04);
         var trial = CircuitProject.Parse(project.Serialize()); trial.Parts.Add(part); trial.Validate();
         project.Parts.Add(part);
         selected = id; selectedWire = null; Refresh(); Save("part-add");
@@ -480,6 +480,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         if(CircuitI2c.IsDevice(p))InspectI2c(p);
         if(p.Kind==PartKind.Dht11)InspectDht11(p);
+        if(p.Kind==PartKind.Hcsr04)InspectHcsr04(p);
         if (p.Kind is PartKind.Resistor or PartKind.Potentiometer or PartKind.Pot3 or PartKind.Led or PartKind.Diode or PartKind.Battery or PartKind.AnalogSensor or PartKind.Motor or PartKind.Buzzer)
         {
             var input = Ui.Input(p.Value.ToString(CultureInfo.InvariantCulture));
@@ -618,7 +619,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 ToolTip.SetTip(button, pin + (result?.Voltages.TryGetValue(new(p.Id, pin), out var v) == true ? $" · {v:F2} В" : ""));
                 Avalonia.Automation.AutomationProperties.SetName(button, PartLibrary.Name(p) + ": " + pin);
                 Canvas.SetLeft(button, (point.X - p.X) * zoom - diameter / 2); Canvas.SetTop(button, (point.Y - p.Y) * zoom - diameter / 2); group.Children.Add(button);
-                if (!hole&&p.Kind is not (PartKind.TftSpi or PartKind.Dht11))
+                if (!hole&&p.Kind is not (PartKind.TftSpi or PartKind.Dht11 or PartKind.Hcsr04))
                 {
                     var pico = (p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && PartLibrary.Pins(p).Length == 40;
                     var left = point.X - p.X < size.Width / 2;
@@ -703,7 +704,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             try
             {
                 var hasUno = controller is not null;
-                if(run){CircuitSpi.ValidateRun(project);CircuitDht11.ValidateRun(project);}
+                if(run){CircuitSpi.ValidateRun(project);CircuitDht11.ValidateRun(project);CircuitHcsr04.ValidateRun(project);}
                 if (run && project.Parts.FirstOrDefault(p => !PartCatalog.CanSimulate(p)) is { } unsupported)
                     throw new InvalidDataException($"«{PartLibrary.Name(unsupported)}» добавлена для схемы. Её симуляция пока не реализована. Уберите такие детали или работайте в режиме схемы.");
                 if (!hasUno && !run) throw new InvalidDataException("Для проверки кода добавьте исполняемую плату на схему.");
@@ -740,9 +741,9 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
             var uno = project.Parts.FirstOrDefault(CircuitBoards.IsBoard);
             if(uno?.Kind==PartKind.Pico){
-                result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var spiDevices=CircuitSpi.Devices(project,result);var dht11Devices=CircuitDht11.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices,spiDevices,dht11Devices);
+                result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var spiDevices=CircuitSpi.Devices(project,result);var dht11Devices=CircuitDht11.Devices(project,result);var hcsr04Devices=CircuitHcsr04.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices,spiDevices,dht11Devices,hcsr04Devices);
                 var serial=pendingSerial;pendingSerial=null;
-                var frame=await picoFirmware.Step(analog:inputs.Analog,serialInput:serial?.Text,serialPort:serial?.Port??0,devices:devices,gpioInputs:inputs.Digital,spiDevices:spiDevices,dht11Devices:dht11Devices);
+                var frame=await picoFirmware.Step(analog:inputs.Analog,serialInput:serial?.Text,serialPort:serial?.Port??0,devices:devices,gpioInputs:inputs.Digital,spiDevices:spiDevices,dht11Devices:dht11Devices,hcsr04Devices:hcsr04Devices);
                 if(generation!=runId||disposed)return;
                 if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
                 outputs=frame.Pins;picoUsbReady=frame.UsbReady;ReceiveSerial(frame.SerialPorts,frame.SerialPending);
@@ -759,7 +760,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 var inputs = Enumerable.Range(0, board.DigitalCount).Select(i => result.Voltages.GetValueOrDefault(new(uno.Id, "D" + i)) > 2.5).ToArray();
                 var analog = Enumerable.Range(0, board.AnalogCount).Select(i => result.Voltages.GetValueOrDefault(new(uno.Id, "A" + i))).ToArray();
                 var serial=pendingSerial;pendingSerial=null;
-                var frame = await firmware.Step(inputs, analog,serial?.Text,serial?.Port??0,CircuitI2c.Devices(project,result),CircuitSpi.Devices(project,result),CircuitDht11.Devices(project,result));
+                var frame = await firmware.Step(inputs, analog,serial?.Text,serial?.Port??0,CircuitI2c.Devices(project,result),CircuitSpi.Devices(project,result),CircuitDht11.Devices(project,result),CircuitHcsr04.Devices(project,result));
                 if (generation != runId || disposed) return;
                 if(serial is not null)RecordHistory("serial-input",true,serialIo:serial);
                 outputs = frame.Pins;

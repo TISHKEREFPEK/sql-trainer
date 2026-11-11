@@ -12,6 +12,8 @@ const {installRtc}=require('./pico-rtc.cjs');
 const {installWatchdog,bootTarget,clockDomain}=require('./pico-watchdog.cjs');
 const {installSpi}=require('./pico-spi.cjs');
 const {installPicoDht11}=require('./dht11-gpio.cjs');
+const {installPicoHcsr04}=require('./hcsr04-gpio.cjs');
+const {setPicoInput}=require('./pico-gpio-input.cjs');
 let state;
 function load(uf2) {
   const image=decodeUf2(uf2);state=boot(image,new SimulationClock());
@@ -53,7 +55,8 @@ function boot(image,clock,previous=null) {
   }
   const spi=installSpi(mcu,clock,previous?.spi.panels);
   const dht11=installPicoDht11(mcu,clock,previous?.dht11.devices);
-  return {image,mcu,clock,rom,serial,incoming,usb,messages,i2c,spi,dht11,decoders:previous?.decoders??serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},get resetPending(){return resetPending;},
+  const hcsr04=installPicoHcsr04(mcu,clock,previous?.hcsr04.devices);
+  return {image,mcu,clock,rom,serial,incoming,usb,messages,i2c,spi,dht11,hcsr04,decoders:previous?.decoders??serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},get resetPending(){return resetPending;},
     get transmitted(){return transmitted;},resetTransmitted(){transmitted=0;},resumeUsbRead};
 }
 function step(input) {
@@ -65,14 +68,15 @@ function step(input) {
   if(!Number.isFinite(duration)||duration<=0||duration>50)throw Error('Pico step must be 0..50 ms');
   const bytes=Buffer.from(input.serialInput??'','utf8');if(bytes.length+incoming[port].length>4096)throw Error('Pico serial input queue is full');
   if(port===0&&bytes.length&&!state.usbReady)throw Error('Pico USB CDC has not initialized');
+  const hcsrDevices=state.hcsr04.prepare(input.hcsr04Devices??[]);
   const dhtDevices=state.dht11.prepare(input.dht11Devices??[]);
   const spiDevices=state.spi.prepare(input.spiDevices??[]);const devices=state.i2c.prepare(input.devices??[]);state.i2c.update(devices,digital);state.spi.setInputs(digital);state.spi.update(spiDevices);
-  digital.forEach((v,i)=>{if(v!==null)mcu.gpio[i].setInputValue(v);});analog.forEach((v,i)=>mcu.adc.channelValues[i]=Math.round(v*4095/3.3));incoming[port].push(...bytes);
+  digital.forEach((v,i)=>{if(v!==null)setPicoInput(mcu.gpio[i],v);});analog.forEach((v,i)=>mcu.adc.channelValues[i]=Math.round(v*4095/3.3));incoming[port].push(...bytes);
   function feed(){
     while(incoming[0].length&&state.usbReady&&!state.usb.txFIFO.full)state.usb.sendSerialByte(incoming[0].shift());state.resumeUsbRead();
     mcu.uart.forEach((uart,i)=>{if(incoming[i+1].length&&uart.enabled&&uart.rxEnabled&&!(uart.flags&64))uart.feedByte(incoming[i+1].shift());});
   }
-  state.dht11.update(dhtDevices);state.dht11.sync();
+  state.dht11.update(dhtDevices);state.dht11.sync();state.hcsr04.update(hcsrDevices);state.hcsr04.sync();
   const start=clock.nanos,target=start+duration*1e6,levels=mcu.gpio.map(p=>p.value===GPIOPinState.High),last=Array(30).fill(start),accumulated=Array(30).fill(0);
   const release=mcu.gpio.map((pin,i)=>pin.addListener(value=>{
     const now=clock.nanos,high=value===GPIOPinState.High;if(levels[i])accumulated[i]+=now-last[i];

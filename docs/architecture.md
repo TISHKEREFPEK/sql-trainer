@@ -1,5 +1,9 @@
 # Архитектура
 
+## HC-SR04 · 11 ноября 2026
+
+Собственный pico-gpio-input разделяет повторные host samples, реальные фронты и level flags без изменения vendor; его используют worker и HC/DHT. Optional signals в CircuitSolver позволяет вычислить GPIO-уровни Echo через резистивную цепь для LOW/HIGH. Собственная GPIO/clock модель формирует реальный импульс; runtime input resolver не подменяет pulseIn. Новый Kind добавлен в конец, серверный inspector принимает его, формат хранения/SQLite прежние. Сервер/роли обновлять вместе. [Подробности и границы](../avalonia/docs/hcsr04-2026-11-11.md).
+
 ## DHT11 · 11 ноября 2026
 
 Собственная модель single-wire использует clock events/alarms и GPIO inputs, без подмены функций скетча. CircuitDht11 определяет подключения по физическим nets; отдельный enum/modelId сохраняет старые Visual-идентичности. Новых SQLite-таблиц нет, серверный inspector и роли обновляются совместно. Показания/правки и serial проходят через прежнюю историю/immutable review. [SDK, протокол, проверки и границы](../avalonia/docs/dht11-2026-11-11.md).

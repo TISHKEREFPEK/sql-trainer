@@ -8,7 +8,7 @@
 | 8 Position DIP Switch | Visual, отдельная модель не подключена |
 | 4x4 Membrane Matrix Keypad | Visual, матрица клавиш/сканирование открыты |
 | Analog Joystick | Visual, отдельные оси/кнопка открыты |
-| HC-SR04 Ultrasonic Distance Sensor | Visual, timing/расстояние открыты |
+| HC-SR04 Ultrasonic Distance Sensor | [Отдельный Hcsr04](hcsr04-2026-11-11.md): GPIO Trig/Echo, расстояние/цель и делитель для Pico; акустика/полная аппаратная/графическая приёмка открыты |
 | Seven Segment Display | Visual, segment driver открыт |
 | 4 Digit Seven Segment Display | Visual, multiplexing открыт |
 | 16x2 LCD Display | Parallel/16-pin модель не подключена |

@@ -55,6 +55,15 @@ public static class CircuitCodeGuide
             var n=++count;
             switch(part.Kind)
             {
+                case PartKind.Hcsr04:
+                {
+                    notes.Add(Hcsr04CodeGuide.Note);var d=CircuitHcsr04.Devices(project).Single(d=>d.Id==part.Id);
+                    if(!d.Powered||!d.Connected||!d.Echoes.Any(e=>e.High&&!e.Low)){notes.Add("HC-SR04: исправьте питание, Trig и уровни Echo.");ready=false;break;}
+                    string Number(int i)=>i<profile.DigitalCount?i.ToString():"A"+(i-profile.DigitalCount);
+                    var trig=Number(d.Trig);var echo=Number(d.Echoes.First(e=>e.High&&!e.Low).Pin);var claimed=Claim(trig,part);
+                    foreach(var e in d.Echoes)claimed=Claim(Number(e.Pin),part)&&claimed;
+                    if(claimed){serial=true;setup.Add(Hcsr04CodeGuide.Setup(trig,echo));loop.Add(Hcsr04CodeGuide.Loop(trig,echo));}break;
+                }
                 case PartKind.Dht11:
                 {
                     var device=CircuitDht11.Devices(project).Single(d=>d.Id==part.Id);var pin=Pin(new(part.Id,"DATA"));

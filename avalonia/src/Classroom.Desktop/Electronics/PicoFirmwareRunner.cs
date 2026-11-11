@@ -23,7 +23,7 @@ public sealed class PicoFirmwareRunner : IDisposable
         process.ErrorDataReceived+=(_,_)=>{};process.BeginErrorReadLine();
         try{await Exchange<JsonElement>(new{uf2=Convert.ToBase64String(uf2)});}catch{Dispose();throw;}
     }
-    public Task<PicoFrame> Step(bool[]? digital=null,double[]? analog=null,string? serialInput=null,int serialPort=0,double milliseconds=10,IReadOnlyList<PicoI2cDevice>? devices=null,bool?[]? gpioInputs=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null,IReadOnlyList<Dht11Device>? dht11Devices=null)=>Exchange<PicoFrame>(new{digital,analog,serialInput,serialPort,milliseconds,devices,gpioInputs,spiDevices,dht11Devices});
+    public Task<PicoFrame> Step(bool[]? digital=null,double[]? analog=null,string? serialInput=null,int serialPort=0,double milliseconds=10,IReadOnlyList<PicoI2cDevice>? devices=null,bool?[]? gpioInputs=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null,IReadOnlyList<Dht11Device>? dht11Devices=null,IReadOnlyList<Hcsr04Device>? hcsr04Devices=null)=>Exchange<PicoFrame>(new{digital,analog,serialInput,serialPort,milliseconds,devices,gpioInputs,spiDevices,dht11Devices,hcsr04Devices});
     async Task<T> Exchange<T>(object request)
     {
         await exchange.WaitAsync();

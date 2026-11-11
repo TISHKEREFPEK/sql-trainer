@@ -6,7 +6,7 @@ public static class PicoCodeGuide
     {
         var board=project.Parts.Single(p=>p.Kind==PartKind.Pico);var nets=new CircuitConnections(project);
         var notes=new List<string>{"Pico: GPIO и ADC работают на 3,3 В. Serial — USB, Serial1 — UART0, Serial2 — UART1. Шаблон меняет код только по вашей команде."};
-        try{PicoBoard.ValidateRun(project);var dc=CircuitSolver.Solve(project);_=CircuitPico.Inputs(project,dc,CircuitPico.Devices(project,dc));}catch(InvalidDataException e){return new(e.Message,null);}
+        try{PicoBoard.ValidateRun(project);var dc=CircuitSolver.Solve(project);_=CircuitHcsr04.Devices(project,dc);_=CircuitPico.Inputs(project,dc,CircuitPico.Devices(project,dc));}catch(InvalidDataException e){return new(e.Message,null);}
         var setup=new List<string>{"Serial.begin(115200);","analogReadResolution(12);"};var loop=new List<string>();var globals=new List<string>();var claimed=new HashSet<int>();var ready=true;var oled=false;var dht=false;
         int? Pin(Terminal terminal,bool resistors=false){
             var reached=new HashSet<Terminal>{nets.Root(terminal)};bool more;
@@ -18,7 +18,13 @@ public static class PicoCodeGuide
         var buses=new Dictionary<int,(int Sda,int Scl)>();var devices=CircuitPico.Devices(project);
         foreach(var part in project.Parts){
             if(!PartCatalog.CanSimulate(part)){notes.Add(PartLibrary.Name(part)+": пока только схема.");ready=false;continue;}
-            if(part.Kind==PartKind.Dht11){
+            if(part.Kind==PartKind.Hcsr04){
+                notes.Add(Hcsr04CodeGuide.Note);var d=CircuitHcsr04.Devices(project).Single(d=>d.Id==part.Id);
+                if(!d.Powered||!d.Connected||!d.Echoes.Any(e=>e.High&&!e.Low)){notes.Add("HC-SR04: исправьте питание, Trig и уровни Echo.");ready=false;continue;}
+                var valid=Claim(d.Trig,part);foreach(var e in d.Echoes)valid=Claim(e.Pin,part)&&valid;
+                if(valid){setup.Add(Hcsr04CodeGuide.Setup(d.Trig.ToString(),d.Echoes.First(e=>e.High&&!e.Low).Pin.ToString()));loop.Add(Hcsr04CodeGuide.Loop(d.Trig.ToString(),d.Echoes.First(e=>e.High&&!e.Low).Pin.ToString()));}
+            }
+            else if(part.Kind==PartKind.Dht11){
                 var device=CircuitDht11.Devices(project).Single(d=>d.Id==part.Id);var pin=Pin(new(part.Id,"DATA"));
                 notes.Add("DHT11: питание 3,3 В, общая GND, отдельный DATA, NC не подключать; рекомендуется подтяжка 5,1 кОм. Библиотека DHT.h доступна автономно; после прогрева возвращается предыдущее измерение.");
                 if(!device.Powered||!device.Connected){notes.Add("DHT11: исправьте питание и DATA.");ready=false;continue;}

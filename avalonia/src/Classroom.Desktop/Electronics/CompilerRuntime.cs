@@ -36,7 +36,7 @@ public static class CompilerRuntime
     }
     public static async Task<string> Prepare(string source, CancellationToken cancellation,string? extraDirectory="sandbox-avr")
     {
-        if(extraDirectory is not(null or "sandbox-avr" or "sandbox-arm"))throw new InvalidDataException("Неизвестный профиль комплекта компилятора.");
+        if(extraDirectory is not(null or "sandbox-avr" or "sandbox-arm" or "sandbox-xtensa"))throw new InvalidDataException("Неизвестный профиль комплекта компилятора.");
         if (!OperatingSystem.IsWindows()) throw new IOException("Изолированная компиляция требует Windows 10 или новее.");
         source = Path.GetFullPath(source);
         var cache = Path.GetFullPath(Environment.GetEnvironmentVariable("CLASSROOM_COMPILER_CACHE") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "compiler-runtime"));

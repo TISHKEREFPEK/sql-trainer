@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## Основание ESP32-S3 · 16 ноября 2026
+
+Новый отдельный CompilerRuntime profile `sandbox-xtensa` копирует закреплённый Espressif Clang bundle/QEMU в read-only compiler cache. Esp32S3Compiler собирает ограниченный bare-metal call0 ELF штатным Clang integrated cc1/assembler + GNU ld; no-canonical-prefixes/явный ld path сохраняют безопасные drive aliases в пути с кириллицей. Esp32S3Image проверяет формат/сегменты/entry, Foundation клонирует образ и запускает QEMU TCG 32 MiB в прежнем AppContainer/job без сети/monitor. UART0/1 отдельно от diagnostics, файлы ограничиваются и отменяют job, дерево завершается до cleanup. Semihosting не расширяет разрешения Windows. Это ограниченная проба, не редактор/Arduino/полная периферия. [Профиль, source/licenses gate, проверки и следующая работа](esp32s3-foundation-2026-11-16.md). Новых типов проекта/SQLite нет.
+
 ## DS18B20 / 1-Wire · 16 ноября 2026
 
 Добавлены отдельный PartKind в конце enum, собственный standard-speed bit engine и DDR/PORT AVR / SIO Pico bridges. Настоящие закреплённые OneWire/DallasTemperature исполняют multidrop/CRC/convert/scratchpad; EEPROM отражается в nullable DeviceMemory, отсутствующем в старом JSON. Descriptor задаёт ROM из part ID, температуру среды, физическую проводку/питание/подтяжку; существующая память работающего датчика не сбрасывается входным descriptor. CPU backpressure и выдача максимум восьми memory events за RPC сохраняют остаток при тёплом MCU reset. UI пишет device-memory-write через прежний журнал/сдачи/backup. SQLite/версия проекта не меняются; inspector и роли обновлять совместно. [Канонический профиль, подготовка SDK и открытые границы](ds18b20-2026-11-16.md).

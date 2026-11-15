@@ -1,5 +1,9 @@
 # Архитектура
 
+## Основание ESP32-S3 · 16 ноября 2026
+
+Esp32S3Compiler/Foundation используют отдельный `sandbox-xtensa` snapshot и прежний Windows AppContainer/job, без повышения лимитов и host networking. Clang integrated frontend/assembler + штатный GNU ld собирают проверяемый ELF, QEMU TCG 32 MiB исполняет его с раздельными UART0/1. Bare-metal startup завершает ограниченную пробу через semihosting; это не Step runner/Arduino/периферия/native-плата. [Каноническая подготовка, ELF-границы, безопасность и открытая работа](../avalonia/docs/esp32s3-foundation-2026-11-16.md). JSON/SQLite/существующие MCU не меняются.
+
 ## DS18B20 / 1-Wire · 16 ноября 2026
 
 Собственный временной bit engine связан с DDR/PORT AVR и SIO Pico; реальные OneWire/DallasTemperature проходят ROM search/CRC/convert/scratchpad/EEPROM. CircuitDs18b20 определяет физические nets/подтяжку/питание; optional CircuitPart.DeviceMemory отсутствует при null, валидируется в desktop/contracts и записывается в историю без миграции SQLite/версии JSON. Backpressure ограничивает CPU, до восьми EEPROM events на ответ с сохранением остатка при тёплом MCU reset. SDK включает полные закреплённые библиотеки и hash-checked reset-500us-v1; старый JSON/Visual не меняется. [Профиль, границы и подготовка](../avalonia/docs/ds18b20-2026-11-16.md).

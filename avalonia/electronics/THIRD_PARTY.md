@@ -1,5 +1,9 @@
 # Offline firmware runtime
 
+ESP32-S3 bare-metal foundation (2026-11-16) prepares a separate, unmodified Espressif Clang 19.1.2_20250312 bundle (including its native GNU ld 2.43.1) and Espressif QEMU 9.2.2_20260417 Windows x64 distribution. Preserve the complete Clang LICENSE.txt, THIRD-PARTY-LICENSES.txt, VERSION.txt and third-party-licenses, including LLVM exceptions, GNU binutils, Picolibc and MinGW notices. QEMU COPYING/COPYING.LIB are fetched from the exact upstream tag with SHA256 checks. These are separate processes, not source copied into the app. Exact archives, license boundaries, rejected GCC/PE/LLD probes, and the mandatory corresponding-source/dependency/ROM audit before redistributable packaging are documented in ../docs/esp32s3-foundation-2026-11-16.md. No ESP32 SDK is yet included in build-windows/installers; do not label this foundation full Arduino/Cirkit compatibility.
+
+DS18B20/1-Wire model and GPIO bridge are original code based on the Analog Devices datasheet (https://www.analog.com/media/en/technical-documentation/data-sheets/ds18b20.pdf). Separately prepared OneWire 2.3.8 and DallasTemperature 4.0.5 preserve complete MIT source/notices. OneWire has an explicitly documented, SHA256-checked reset-500us-v1 correction; it must not be described as an unmodified upstream source. Details and hashes: ../docs/ds18b20-2026-11-16.md. Cirkit implementation/graphics were not copied.
+
 SSD1306/I2C model in ssd1306.cjs and i2c-bus.cjs is original code based on Solomon Systech SSD1306 Rev 1.1 register/interface facts, distributed by Adafruit at https://cdn-shop.adafruit.com/datasheets/SSD1306.pdf. Cirkit documentation was consulted as a functional reference, without copying application/model code or graphics.
 
 Offline runtime v4 adds these pinned Arduino libraries with all upstream sources/notices copied under user/libraries in the distributed runtime (archives/checksums from the Arduino library index):

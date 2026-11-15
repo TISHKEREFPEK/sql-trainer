@@ -16,6 +16,7 @@ foreach ($library in $libraries.GetEnumerator()) {
 if ($librariesReady -and (Test-Path -LiteralPath $marker) -and (Test-Path -LiteralPath $cli) -and (Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $core) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/sandbox-ready.json')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/bin/avr-g++.exe')) -and (Test-Path -LiteralPath (Join-Path $RuntimePath 'sandbox-avr/ctags.exe'))) {
     & (Join-Path $PSScriptRoot 'prepare-spi-libraries.ps1') -RuntimePath $RuntimePath
     & (Join-Path $PSScriptRoot 'prepare-dht-libraries.ps1') -RuntimePath $RuntimePath
+    & (Join-Path $PSScriptRoot 'prepare-onewire-libraries.ps1') -RuntimePath $RuntimePath
     Write-Output 'Offline AVR runtime is already prepared.'
     return
 }
@@ -60,3 +61,4 @@ Set-Content -LiteralPath $marker -Value '{"version":4,"arduinoCli":"1.5.1","avrC
 Write-Output 'Prepared offline AVR toolchain. Internet is not needed for sketch compilation or simulation.'
 & (Join-Path $PSScriptRoot 'prepare-spi-libraries.ps1') -RuntimePath $RuntimePath
 & (Join-Path $PSScriptRoot 'prepare-dht-libraries.ps1') -RuntimePath $RuntimePath
+& (Join-Path $PSScriptRoot 'prepare-onewire-libraries.ps1') -RuntimePath $RuntimePath

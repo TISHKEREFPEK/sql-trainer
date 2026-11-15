@@ -123,17 +123,23 @@ public static class CircuitCodeGuide
             }
         }
         if(!ready) return new(string.Join("\n",notes),null);
+        var ds18=Ds18b20CodeGuide.Build(project,uno);notes.AddRange(ds18.Notes);
+        if(!ds18.Ready||ds18.Pins.Any(pin=>used.ContainsKey(pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount))))return new(string.Join("\n",notes.Append("DS18B20: вывод шины занят другой деталью.")),null);
+        foreach(var pin in ds18.Pins)used[pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount)]="1-Wire";
+        declarations.AddRange(ds18.Declarations);setup.AddRange(ds18.Setup);loop.AddRange(ds18.Loop);serial|=ds18.Pins.Length>0;
         var tft=TftCodeGuide.Build(project,uno);notes.AddRange(tft.Notes);
         if(!tft.Ready||tft.Pins.Any(pin=>used.ContainsKey(pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount))))return new(string.Join("\n",notes.Append("Совместные выводы TFT и других деталей настройте вручную; шаблон не изменяет проводку.")),null);
         declarations.AddRange(tft.Declarations);setup.AddRange(tft.Setup);
         var code=new StringBuilder($"// Начальный шаблон по текущим соединениям {profile.Name}.\n");
         if(tft.Declarations.Length>0)code.Append(TftCodeGuide.Includes);
+        if(ds18.Pins.Length>0)code.Append(Ds18b20CodeGuide.Includes);
         if(dht)code.Append("#include <DHT.h>\n");
         if(servo) code.Append("#include <Servo.h>\n");
         if(oled)code.Append("#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n");
         if(i2c)code.AppendLine(I2cSketch.Helpers);
         foreach(var line in declarations) code.AppendLine(line);
         code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n");if(i2c)code.Append("  Wire.begin();\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);
+        if(ds18.Pins.Length>0)code.Append(Ds18b20CodeGuide.Includes);
         if(dht)code.Append("  delay(1100);\n");
         code.Append("}\n\nvoid loop() {\n"); if(blink) code.Append("  static bool ledOn = false;\n  ledOn = !ledOn;\n"); foreach(var line in loop) code.Append("  ").AppendLine(line);
         code.Append(dht?"  delay(2000);\n}\n":"  delay(500);\n}\n");

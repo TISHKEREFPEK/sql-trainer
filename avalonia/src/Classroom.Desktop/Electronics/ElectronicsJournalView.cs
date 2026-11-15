@@ -38,7 +38,7 @@ public sealed class ElectronicsJournalView : UserControl, IDisposable
         "serial-input-request"=>"Запрошен ввод в порт","serial-input"=>"Ввод принят моделью порта","serial-output"=>"Вывод последовательного порта","serial-clear"=>"Очищен экран порта","serial-channel"=>"Выбран последовательный порт",
         "i2c-transfer"=>"Обмен по I2C","i2c-address"=>"Адрес I2C","spi-transfer"=>"Обмен SPI · сводка",
         "run-request" => "Запрошен запуск", "compile-request" => "Запрошена компиляция", "simulation-stop" => "Симуляция остановлена", "report-submitted" => "Намерение сдачи", "report-received" => "Получен ответ сервера",
-        "report-compiled" => "Сообщена компиляция", "report-started" => "Сообщён запуск", "report-compile-error" => "Сообщена ошибка компиляции", "report-run-error" => "Сообщена ошибка запуска", "control-change" => "Регулятор", "part-add" => "Добавлена деталь", "project-replace" => "Замена схемы", "code-template" => "Шаблон кода", _ => kind };
+        "report-compiled" => "Сообщена компиляция", "report-started" => "Сообщён запуск", "report-compile-error" => "Сообщена ошибка компиляции", "report-run-error" => "Сообщена ошибка запуска", "device-memory-write" => "Запись памяти датчика", "control-change" => "Регулятор", "part-add" => "Добавлена деталь", "project-replace" => "Замена схемы", "code-template" => "Шаблон кода", _ => kind };
     readonly string? assignmentId, lessonId,projectId;
     public ElectronicsJournalView(MainWindow owner, ClassroomApi api, string studentId, string studentName, string? assignmentId = null, string? lessonId = null,string? projectId=null)
     {

@@ -1,5 +1,9 @@
 # Архитектура
 
+## DS18B20 / 1-Wire · 16 ноября 2026
+
+Собственный временной bit engine связан с DDR/PORT AVR и SIO Pico; реальные OneWire/DallasTemperature проходят ROM search/CRC/convert/scratchpad/EEPROM. CircuitDs18b20 определяет физические nets/подтяжку/питание; optional CircuitPart.DeviceMemory отсутствует при null, валидируется в desktop/contracts и записывается в историю без миграции SQLite/версии JSON. Backpressure ограничивает CPU, до восьми EEPROM events на ответ с сохранением остатка при тёплом MCU reset. SDK включает полные закреплённые библиотеки и hash-checked reset-500us-v1; старый JSON/Visual не меняется. [Профиль, границы и подготовка](../avalonia/docs/ds18b20-2026-11-16.md).
+
 ## HC-SR04 · 11 ноября 2026
 
 Собственный pico-gpio-input разделяет повторные host samples, реальные фронты и level flags без изменения vendor; его используют worker и HC/DHT. Optional signals в CircuitSolver позволяет вычислить GPIO-уровни Echo через резистивную цепь для LOW/HIGH. Собственная GPIO/clock модель формирует реальный импульс; runtime input resolver не подменяет pulseIn. Новый Kind добавлен в конец, серверный inspector принимает его, формат хранения/SQLite прежние. Сервер/роли обновлять вместе. [Подробности и границы](../avalonia/docs/hcsr04-2026-11-11.md).

@@ -7,8 +7,9 @@ const {I2cBus} = require('./i2c-bus.cjs');
 const {installAvrSpi}=require('./avr-spi.cjs');
 const {installAvrDht11}=require('./dht11-gpio.cjs');
 const {installAvrHcsr04}=require('./hcsr04-gpio.cjs');
+const {installAvrDs18b20}=require('./ds18b20-gpio.cjs');
 const readline = require('node:readline');
-let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, spiBus, dhtBus, hcsrBus, transmitted=0;
+let cpu, board, ports, adc, usarts, serial, decoders, incoming, pinMap, rising, pulses, frequencies, lcdBus, spiBus, dhtBus, hcsrBus, oneWireBus, transmitted=0;
 function load(hex, id='uno') {
   board=getBoard(id);
   if(typeof hex!=='string'||hex.length>1000000)throw Error('Firmware is too large');
@@ -31,6 +32,7 @@ function load(hex, id='uno') {
   spiBus=installAvrSpi(cpu,board,ports,peripherals.spi,pinMap);
   dhtBus=installAvrDht11(cpu,board,pinMap,ports);
   hcsrBus=installAvrHcsr04(cpu,board,pinMap,ports);
+  oneWireBus=installAvrDs18b20(cpu,board,pinMap,ports);
   serial=usarts.map(()=>[]);decoders=usarts.map(()=>new StringDecoder('utf8'));incoming=usarts.map(()=>[]);transmitted=0;
   usarts.forEach((uart,index)=>{uart.onByteTransmit=value=>{serial[index].push(value);transmitted++;};uart.onRxComplete=()=>feed(index);});
   rising=pinMap.map(()=>null);pulses=pinMap.map(()=>null);frequencies=pinMap.map(()=>null);
@@ -39,6 +41,7 @@ function load(hex, id='uno') {
 function feed(index){if(incoming[index].length&&!usarts[index].rxBusy&&usarts[index].writeByte(incoming[index][0]))incoming[index].shift();}
 function step(input) {
   if(!cpu)throw Error('Load firmware first');
+  const ds18Devices=oneWireBus.prepare(input.ds18b20Devices??[]);
   const hcsrDevices=hcsrBus.prepare(input.hcsr04Devices??[]);
   const dhtDevices=dhtBus.prepare(input.dht11Devices??[]);
   spiBus.update(input.spiDevices??[]);
@@ -55,7 +58,7 @@ function step(input) {
     const value=input.analog?.[i]??0;if(typeof value!=='number'||!Number.isFinite(value))throw Error('Invalid analog voltage');
     adc.channelValues[i]=Math.max(0,Math.min(5,value));const pin=pinMap[board.digitalCount+i];pin.port.setPin(pin.bit,value>2.5);
   }
-  dhtBus.update(dhtDevices);dhtBus.sync();hcsrBus.update(hcsrDevices);hcsrBus.sync();
+  dhtBus.update(dhtDevices);dhtBus.sync();hcsrBus.update(hcsrDevices);hcsrBus.sync();oneWireBus.update(ds18Devices);oneWireBus.sync();
   const start=cpu.cycles,target=start+board.clockHz/20;
   const accumulated=pinMap.map(()=>0),last=pinMap.map(()=>start),levels=pinMap.map(pin=>pin.port.pinState(pin.bit)===avr.PinState.High);
   const listeners=Object.values(ports).map(port=>{
@@ -70,14 +73,14 @@ function step(input) {
   });
   // Finish a frame early under heavy serial traffic, preserving every byte
   // rather than silently dropping output when a host-side buffer fills.
-  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192&&lcdBus.trace.length<128&&lcdBus.traceBytes<32768){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
+  try {let instructions=0;while(cpu.cycles<target&&transmitted<8192&&lcdBus.trace.length<128&&lcdBus.traceBytes<32768&&!oneWireBus.full){if((instructions++&127)===0)usarts.forEach((_,i)=>feed(i));avr.avrInstruction(cpu);cpu.tick();}}
   finally{listeners.forEach(({port,listener})=>port.removeListener(listener));}
   const pins=pinMap.map((pin,index)=>{
     if(levels[index])accumulated[index]+=cpu.cycles-last[index];const state=pin.port.pinState(pin.bit);
     return {output:state===avr.PinState.High||state===avr.PinState.Low,voltage:5*accumulated[index]/(cpu.cycles-start),pullUp:state===avr.PinState.InputPullUp,pulseUs:pulses[index],frequency:frequencies[index]};
   });
   const serialPorts=serial.map((values,index)=>decoders[index].write(Buffer.from(values)));serial=usarts.map(()=>[]);transmitted=0;
-  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz,...lcdBus.frame(),...spiBus.frame()};
+  return {pins,serial:serialPorts[0],serialPorts,serialPending:incoming.map(values=>values.length),milliseconds:cpu.cycles*1000/board.clockHz,...lcdBus.frame(),...spiBus.frame(),...oneWireBus.frame()};
 }
 readline.createInterface({input:process.stdin,crlfDelay:Infinity}).on('line',line=>{
   try{if(line.length>1100000)throw Error('Request too large');const input=JSON.parse(line);const output=input.hex!=null?load(input.hex,input.board??'uno'):step(input);process.stdout.write(JSON.stringify(output)+'\n');}

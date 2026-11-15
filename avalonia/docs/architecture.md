@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## DS18B20 / 1-Wire · 16 ноября 2026
+
+Добавлены отдельный PartKind в конце enum, собственный standard-speed bit engine и DDR/PORT AVR / SIO Pico bridges. Настоящие закреплённые OneWire/DallasTemperature исполняют multidrop/CRC/convert/scratchpad; EEPROM отражается в nullable DeviceMemory, отсутствующем в старом JSON. Descriptor задаёт ROM из part ID, температуру среды, физическую проводку/питание/подтяжку; существующая память работающего датчика не сбрасывается входным descriptor. CPU backpressure и выдача максимум восьми memory events за RPC сохраняют остаток при тёплом MCU reset. UI пишет device-memory-write через прежний журнал/сдачи/backup. SQLite/версия проекта не меняются; inspector и роли обновлять совместно. [Канонический профиль, подготовка SDK и открытые границы](ds18b20-2026-11-16.md).
+
 ## TFT shared control initialisation · 10 ноября 2026
 
 TftCodeGuide хранит роль GPIO и способ SPI, заранее deasserts CS, выделяет первого владельца общего RST; второй Adafruit object использует -1 и software reset по выбранному CS. Матрица подтверждает две панели на Uno/Mega/Pico и I2C LCD/OLED рядом на Mega, а native renderer принимает четыре surface frames без подмены. [Ресурсы/пределы](ili9341-spi-2026-11-10.md). Контракты/SQLite/SDK не меняются.

@@ -26,7 +26,11 @@ public static class ElectronicsProjectFormat
             {
                 if(!ids.Add(Text(p.GetProperty("id"),64))) throw new InvalidDataException("Повтор компонента.");
                 var kind=Text(p.GetProperty("kind"),32);
-                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c","OledI2c","Pico","TftSpi","Dht11","Hcsr04"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c","OledI2c","Pico","TftSpi","Dht11","Hcsr04","Ds18b20"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if(p.TryGetProperty("deviceMemory",out var memory)&&memory.ValueKind!=JsonValueKind.Null){
+                    if(kind!="Ds18b20"||memory.ValueKind!=JsonValueKind.Array||memory.GetArrayLength()!=3||memory.EnumerateArray().Any(b=>!b.TryGetInt32(out var n)||n<0||n>255))throw new InvalidDataException("Некорректная память устройства.");
+                    if((memory[2].GetInt32()&0x9f)!=0x1f)throw new InvalidDataException("Некорректная конфигурация DS18B20.");
+                }
                 Number(p.GetProperty("x"),-CoordinateLimit,CoordinateLimit); Number(p.GetProperty("y"),-CoordinateLimit,CoordinateLimit);
                 if(p.TryGetProperty("value",out var value)) Number(value,-1_000_000,1_000_000);
                 if(p.TryGetProperty("scale",out var scale)) Number(scale,0.4,2);

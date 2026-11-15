@@ -52,7 +52,9 @@ public static class PartArtwork
         var h = Math.Min(source.PixelSize.Height - y, (int)(r.Height / 1280 * source.PixelSize.Height));
         return Cache[key] = new CroppedBitmap { Source = source, SourceRect = new PixelRect(x, y, w, h) };
     }
-    public static Control Thumbnail(string key, double width = 90, double height = 70) => key=="hcsr04-native"
+    public static Control Thumbnail(string key, double width = 90, double height = 70) => key=="ds18b20-native"
+        ? new Viewbox { Child=new Ds18b20Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
+        : key=="hcsr04-native"
         ? new Viewbox { Child=new Hcsr04Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
         : key=="dht11-native"
         ? new Viewbox { Child=new Dht11Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
@@ -67,6 +69,7 @@ public static class PartArtwork
         if (p.Kind == PartKind.Mega) return new(500,270);
         if (p.Kind == PartKind.LcdI2c) return p.ModelId=="lcd-i2c-20x4"?new(360,190):new(300,150);
         if (p.Kind == PartKind.OledI2c) return new(220,200);
+        if (p.Kind == PartKind.Ds18b20) return new(100,140);
         if (p.Kind == PartKind.Hcsr04) return new(260,140);
         if (p.Kind == PartKind.Dht11) return new(120,160);
         if (p.Kind == PartKind.TftSpi) return TftDisplayFace.ModuleSize;
@@ -144,6 +147,7 @@ public static class PartArtwork
         }
         else if(p.Kind==PartKind.LcdI2c){x=7;y=40+i*20;}
         else if(p.Kind==PartKind.OledI2c){x=43+i*44;y=8;}
+        else if(p.Kind==PartKind.Ds18b20){x=25+i*25;y=132;}
         else if(p.Kind==PartKind.Hcsr04){x=102+i*20;y=134;}
         else if(p.Kind==PartKind.Dht11){x=32+i*20;y=155;}
         else if(p.Kind==PartKind.TftSpi){var header=TftDisplayFace.Header(i);x=header.X;y=header.Y;}
@@ -199,6 +203,7 @@ public static class PartArtwork
         if (p.Kind == PartKind.Breadboard) return prefix + FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"8\" fill=\"#fafafa\" stroke=\"#b8c0c8\"/>") + "</g>";
         if(p.Kind==PartKind.LcdI2c)return prefix+FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"6\" fill=\"#17664d\"/><rect x=\"24\" y=\"24\" width=\"{size.Width-48}\" height=\"{size.Height-58}\" fill=\"#293d48\"/>")+"</g>";
         if(p.Kind==PartKind.OledI2c)return prefix+"<rect width=\"220\" height=\"200\" rx=\"5\" fill=\"#174965\"/><rect x=\"12\" y=\"48\" width=\"196\" height=\"108\" fill=\"#010306\"/></g>";
+        if(p.Kind==PartKind.Ds18b20)return prefix+Ds18b20Face.Svg()+"</g>";
         if(p.Kind==PartKind.Hcsr04)return prefix+Hcsr04Face.Svg()+"</g>";
         if(p.Kind==PartKind.Dht11)return prefix+Dht11Face.Svg()+"</g>";
         if(p.Kind==PartKind.TftSpi)return prefix+"<rect width=\"240\" height=\"400.5\" rx=\"5\" fill=\"#17639a\"/><rect x=\"10\" y=\"85\" width=\"220\" height=\"290\" fill=\"#b8bfc4\"/><rect x=\"15\" y=\"90\" width=\"210\" height=\"280\" fill=\"#03070a\"/></g>";

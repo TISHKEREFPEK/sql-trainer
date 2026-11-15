@@ -4,7 +4,7 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null,LcdFrame[]? Displays=null,ElectronicsI2cIo[]? I2c=null,OledFrame[]? OledDisplays=null,TftDisplayFrame[]? TftDisplays=null,ElectronicsSpiIo[]? Spi=null);
+public record FirmwareFrame(PinDrive[] Pins, string Serial, double Milliseconds, string[]? SerialPorts = null, int[]? SerialPending = null,LcdFrame[]? Displays=null,ElectronicsI2cIo[]? I2c=null,OledFrame[]? OledDisplays=null,TftDisplayFrame[]? TftDisplays=null,ElectronicsSpiIo[]? Spi=null,Ds18b20Frame[]? Ds18b20=null,OneWireMemoryWrite[]? OneWireWrites=null);
 
 public sealed class FirmwareRunner : IDisposable
 {
@@ -76,7 +76,7 @@ public sealed class FirmwareRunner : IDisposable
         process.ErrorDataReceived += (_, _) => { }; process.BeginErrorReadLine();
         try{await Exchange<JsonElement>(new { hex, board=boardId });}catch{Dispose();throw;}
     }
-    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0,I2cDevice[]? devices=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null,IReadOnlyList<Dht11Device>? dht11Devices=null,IReadOnlyList<Hcsr04Device>? hcsr04Devices=null) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort,devices,spiDevices,dht11Devices,hcsr04Devices });
+    public Task<FirmwareFrame> Step(bool[] digital, double[] analog, string? serialInput = null, int serialPort = 0,I2cDevice[]? devices=null,IReadOnlyList<SpiDisplayDevice>? spiDevices=null,IReadOnlyList<Dht11Device>? dht11Devices=null,IReadOnlyList<Hcsr04Device>? hcsr04Devices=null,IReadOnlyList<Ds18b20Device>? ds18b20Devices=null) => Exchange<FirmwareFrame>(new { digital, analog, serialInput, serialPort,devices,spiDevices,dht11Devices,hcsr04Devices,ds18b20Devices });
     async Task<T> Exchange<T>(object request)
     {
         var active = process ?? throw new IOException("Симулятор не запущен.");

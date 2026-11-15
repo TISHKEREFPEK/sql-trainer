@@ -13,6 +13,7 @@ const {installWatchdog,bootTarget,clockDomain}=require('./pico-watchdog.cjs');
 const {installSpi}=require('./pico-spi.cjs');
 const {installPicoDht11}=require('./dht11-gpio.cjs');
 const {installPicoHcsr04}=require('./hcsr04-gpio.cjs');
+const {installPicoDs18b20}=require('./ds18b20-gpio.cjs');
 const {setPicoInput}=require('./pico-gpio-input.cjs');
 let state;
 function load(uf2) {
@@ -56,7 +57,8 @@ function boot(image,clock,previous=null) {
   const spi=installSpi(mcu,clock,previous?.spi.panels);
   const dht11=installPicoDht11(mcu,clock,previous?.dht11.devices);
   const hcsr04=installPicoHcsr04(mcu,clock,previous?.hcsr04.devices);
-  return {image,mcu,clock,rom,serial,incoming,usb,messages,i2c,spi,dht11,hcsr04,decoders:previous?.decoders??serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},get resetPending(){return resetPending;},
+  const ds18b20=installPicoDs18b20(mcu,clock,previous?.ds18b20.devices,previous?.ds18b20.writes);
+  return {image,mcu,clock,rom,serial,incoming,usb,messages,i2c,spi,dht11,hcsr04,ds18b20,decoders:previous?.decoders??serial.map(()=>new StringDecoder('utf8')),rising:Array(30).fill(null),pulses:Array(30).fill(null),frequency:Array(30).fill(null),failed:false,get usbReady(){return usbReady;},get resetPending(){return resetPending;},
     get transmitted(){return transmitted;},resetTransmitted(){transmitted=0;},resumeUsbRead};
 }
 function step(input) {
@@ -68,6 +70,7 @@ function step(input) {
   if(!Number.isFinite(duration)||duration<=0||duration>50)throw Error('Pico step must be 0..50 ms');
   const bytes=Buffer.from(input.serialInput??'','utf8');if(bytes.length+incoming[port].length>4096)throw Error('Pico serial input queue is full');
   if(port===0&&bytes.length&&!state.usbReady)throw Error('Pico USB CDC has not initialized');
+  const ds18Devices=state.ds18b20.prepare(input.ds18b20Devices??[]);
   const hcsrDevices=state.hcsr04.prepare(input.hcsr04Devices??[]);
   const dhtDevices=state.dht11.prepare(input.dht11Devices??[]);
   const spiDevices=state.spi.prepare(input.spiDevices??[]);const devices=state.i2c.prepare(input.devices??[]);state.i2c.update(devices,digital);state.spi.setInputs(digital);state.spi.update(spiDevices);
@@ -76,7 +79,7 @@ function step(input) {
     while(incoming[0].length&&state.usbReady&&!state.usb.txFIFO.full)state.usb.sendSerialByte(incoming[0].shift());state.resumeUsbRead();
     mcu.uart.forEach((uart,i)=>{if(incoming[i+1].length&&uart.enabled&&uart.rxEnabled&&!(uart.flags&64))uart.feedByte(incoming[i+1].shift());});
   }
-  state.dht11.update(dhtDevices);state.dht11.sync();state.hcsr04.update(hcsrDevices);state.hcsr04.sync();
+  state.dht11.update(dhtDevices);state.dht11.sync();state.hcsr04.update(hcsrDevices);state.hcsr04.sync();state.ds18b20.update(ds18Devices);state.ds18b20.sync();
   const start=clock.nanos,target=start+duration*1e6,levels=mcu.gpio.map(p=>p.value===GPIOPinState.High),last=Array(30).fill(start),accumulated=Array(30).fill(0);
   const release=mcu.gpio.map((pin,i)=>pin.addListener(value=>{
     const now=clock.nanos,high=value===GPIOPinState.High;if(levels[i])accumulated[i]+=now-last[i];
@@ -86,7 +89,7 @@ function step(input) {
   }));
   let instructions=0;
   try {
-    while(clock.nanos<target&&instructions<1000000&&state.transmitted<8192&&!state.i2c.full&&!state.resetPending) {
+    while(clock.nanos<target&&instructions<1000000&&state.transmitted<8192&&!state.i2c.full&&!state.resetPending&&!state.ds18b20.full) {
       if((instructions&127)===0)feed();
       if(mcu.core.waiting){const next=clock.nanosToNextAlarm;clock.tick(Math.min(target-clock.nanos,next>0?next:target-clock.nanos));}
       else{const cycles=mcu.core.executeInstruction();clock.tick(cycles*1e9/mcu.clkSys);instructions++;}
@@ -97,7 +100,7 @@ function step(input) {
   const serialPorts=state.serial.map((values,i)=>{const text=state.decoders[i].write(Buffer.from(values));values.length=0;return text;});state.resetTransmitted();
   const diagnostics=state.messages.splice(0),reset=state.resetPending;
   if(reset){state.i2c.abort();state.spi.abort();}
-  const result={pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:!reset&&clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics,resetReason:reset?.reason??null,...state.i2c.frame(),...state.spi.frame()};
+  const result={pins,serialPorts,serialPending:incoming.map(values=>values.length),usbReady:state.usbReady,milliseconds:clock.nanos/1e6,complete:!reset&&clock.nanos>=target,instructions,clockHz:mcu.clkSys,diagnostics,resetReason:reset?.reason??null,...state.i2c.frame(),...state.spi.frame(),...state.ds18b20.frame()};
   if(reset){
     // Retire every old peripheral callback before the new CPU is attached.
     // Keep the same physical clock and external device models, not a power cut.

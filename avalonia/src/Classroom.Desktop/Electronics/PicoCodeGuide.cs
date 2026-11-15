@@ -43,11 +43,15 @@ public static class PicoCodeGuide
             }else if(part.Kind is PartKind.LcdI2c or PartKind.Servo or PartKind.Motor or PartKind.Buzzer){notes.Add(PartLibrary.Name(part)+": для этой комбинации подготовьте код вручную; автоматический шаблон ещё не подключён.");ready=false;}
         }
         if(!ready)return new(string.Join('\n',notes),null);
+        var ds18=Ds18b20CodeGuide.Build(project,board);notes.AddRange(ds18.Notes);
+        if(!ds18.Ready||ds18.Pins.Any(claimed.Contains))return new(string.Join('\n',notes.Append("DS18B20: вывод шины занят другой деталью.")),null);
+        foreach(var pin in ds18.Pins)claimed.Add(pin);globals.AddRange(ds18.Declarations);setup.AddRange(ds18.Setup);loop.AddRange(ds18.Loop);
         var tft=TftCodeGuide.Build(project,board);notes.AddRange(tft.Notes);
         if(!tft.Ready||tft.Pins.Any(claimed.Contains))return new(string.Join('\n',notes.Append("Совместные выводы TFT и других деталей настройте вручную; шаблон не изменяет проводку.")),null);
         globals.AddRange(tft.Declarations);setup.AddRange(tft.Setup);
         var includes=oled?"#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n":"";
         if(tft.Declarations.Length>0)includes+=TftCodeGuide.Includes;
+        if(ds18.Pins.Length>0)includes+=Ds18b20CodeGuide.Includes;
         if(dht){includes+="#include <DHT.h>\n";setup.Add("delay(1100);");loop.Add("delay(2000);");}
         return new(string.Join('\n',notes),includes+string.Join('\n',globals)+"\nvoid setup(){\n  "+string.Join("\n  ",setup)+"\n}\nvoid loop(){\n  "+string.Join("\n  ",loop)+"\n  delay(20);\n}\n");
     }

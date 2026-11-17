@@ -1,5 +1,9 @@
 # Архитектура
 
+## Дизайн без изменения протокола · 17 ноября 2026
+
+[Спецификация «Мягкий графит»](design/soft-graphite-2026-11-17.md) уточняет E13 для Avalonia. План: общие ресурсы, ограниченная SQL Grid-композиция, прежний AvaloniaEdit и реальные статусы SqlLocalStore/ACK/pending execute. Worker, backend, UUID/контексты, схемы БД и сохранения не заменяются макетом. Это пока план, код интерфейса не изменён.
+
 ## Основание ESP32-S3 · 16 ноября 2026
 
 Esp32S3Compiler/Foundation используют отдельный `sandbox-xtensa` snapshot и прежний Windows AppContainer/job, без повышения лимитов и host networking. Clang integrated frontend/assembler + штатный GNU ld собирают проверяемый ELF, QEMU TCG 32 MiB исполняет его с раздельными UART0/1. Bare-metal startup завершает ограниченную пробу через semihosting; это не Step runner/Arduino/периферия/native-плата. [Каноническая подготовка, ELF-границы, безопасность и открытая работа](../avalonia/docs/esp32s3-foundation-2026-11-16.md). JSON/SQLite/существующие MCU не меняются.

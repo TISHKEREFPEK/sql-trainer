@@ -1,5 +1,9 @@
 # Архитектура Avalonia Classroom
 
+## Дополнение E13 · 17 ноября 2026
+
+[«Мягкий графит»: исходник, токены и план](../../docs/design/soft-graphite-2026-11-17.md). Внедрять через Ui/ресурсы и текущие StudentScreen/StudentHome/MainWindow, сохраняя редактор, DTO, CanExecute и реальную сохранность. Светлый default не отменяет личные настройки; преподаватель получает общий стиль без удаления функций. Протокол, native SQLite worker и модель хранения прежние; реализация дизайна пока открыта.
+
 ## Основание ESP32-S3 · 16 ноября 2026
 
 Новый отдельный CompilerRuntime profile `sandbox-xtensa` копирует закреплённый Espressif Clang bundle/QEMU в read-only compiler cache. Esp32S3Compiler собирает ограниченный bare-metal call0 ELF штатным Clang integrated cc1/assembler + GNU ld; no-canonical-prefixes/явный ld path сохраняют безопасные drive aliases в пути с кириллицей. Esp32S3Image проверяет формат/сегменты/entry, Foundation клонирует образ и запускает QEMU TCG 32 MiB в прежнем AppContainer/job без сети/monitor. UART0/1 отдельно от diagnostics, файлы ограничиваются и отменяют job, дерево завершается до cleanup. Semihosting не расширяет разрешения Windows. Это ограниченная проба, не редактор/Arduino/полная периферия. [Профиль, source/licenses gate, проверки и следующая работа](esp32s3-foundation-2026-11-16.md). Новых типов проекта/SQLite нет.

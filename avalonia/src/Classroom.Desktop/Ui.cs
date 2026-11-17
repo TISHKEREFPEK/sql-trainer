@@ -52,13 +52,16 @@ public static class Ui
         };
         button.Click += async (_, _) =>
         {
+            if (!button.IsEffectivelyEnabled) return;
             button.IsEnabled = false;
+            button.Classes.Add("busy");
             try
             {
                 await action();
             }
             finally
             {
+                button.Classes.Remove("busy");
                 button.IsEnabled = enabledAfter?.Invoke() ?? true;
             }
         };

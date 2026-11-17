@@ -4,6 +4,8 @@
 
 [Спецификация «Мягкий графит»](design/soft-graphite-2026-11-17.md) уточняет E13 для Avalonia. Начальный слой: новый `ThemePreference` default/whitelist `graphite`, общий ThemeManager, шрифт и gutter; явные старые JSON-настройки сохраняются. Схема EF/SQLite прежняя; Server/роли обновлять вместе из-за нового ID. Ограниченная SQL Grid-композиция ещё в плане. Worker, UUID/контексты, реальные статусы SqlLocalStore/ACK/pending execute и сохранения не заменяются макетом.
 
+Общие GraphiteUi/WebStyles используют текущие ресурсы темы. StudentHomeControl отображает прежний StudentHomeDto, сериализует открытия и после ожидания сверяет текущую возможность работы; Ui.Button блокирует повторный вызов и учитывает disabled-родителя. Список прокручивается при паузе, команды недоступны. API/хранение/форматы схем этим слоем не меняются; боковая оболочка и SQL-сетка ещё открыты.
+
 ## Основание ESP32-S3 · 16 ноября 2026
 
 Esp32S3Compiler/Foundation используют отдельный `sandbox-xtensa` snapshot и прежний Windows AppContainer/job, без повышения лимитов и host networking. Clang integrated frontend/assembler + штатный GNU ld собирают проверяемый ELF, QEMU TCG 32 MiB исполняет его с раздельными UART0/1. Bare-metal startup завершает ограниченную пробу через semihosting; это не Step runner/Arduino/периферия/native-плата. [Каноническая подготовка, ELF-границы, безопасность и открытая работа](../avalonia/docs/esp32s3-foundation-2026-11-16.md). JSON/SQLite/существующие MCU не меняются.

@@ -1,11 +1,12 @@
 <Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <!-- Ported from origin/main app/interface.css (loaded after globals.css). -->
+  <!-- Shared native controls. Soft Graphite layout helpers are opt-in; theme
+       resources continue to honour the previous named/custom palettes. -->
   <Style Selector="Button">
     <Setter Property="FontSize" Value="14"/>
     <Setter Property="FontWeight" Value="Medium"/>
     <Setter Property="MinHeight" Value="38"/>
     <Setter Property="Padding" Value="14,9"/>
-    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="CornerRadius" Value="10"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
     <Setter Property="Foreground" Value="{DynamicResource InkBrush}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
@@ -22,9 +23,47 @@
     <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}"/>
   </Style>
   <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource PrimaryHoverBrush}"/>
     <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}"/>
-    <Setter Property="Opacity" Value="0.88"/>
+    <Setter Property="Opacity" Value="1"/>
+  </Style>
+  <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SubtleBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource InkBrush}"/>
+  </Style>
+  <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource PrimaryHoverBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}"/>
+  </Style>
+  <Style Selector="Button:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="{DynamicResource FocusBrush}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+  <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SubtleBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+    <Setter Property="Opacity" Value="1"/>
+  </Style>
+  <Style Selector="Button.primary:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource SubtleBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+    <Setter Property="Opacity" Value="1"/>
+  </Style>
+  <Style Selector="Button.busy">
+    <Setter Property="Cursor" Value="Wait"/>
+  </Style>
+  <Style Selector="Button.graphite-action">
+    <Setter Property="FontSize" Value="12"/>
+  </Style>
+  <Style Selector="Border.graphite-panel">
+    <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="20"/>
+    <Setter Property="Padding" Value="20,16"/>
+    <Setter Property="BoxShadow" Value="0 5 16 0 #0B232327"/>
   </Style>
   <Style Selector="TextBox">
     <Setter Property="CornerRadius" Value="8"/>

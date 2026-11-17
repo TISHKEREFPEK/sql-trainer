@@ -27,7 +27,7 @@ public record ColumnDefinition(string Name, string Type, bool NotNull, bool Prim
 public record ForeignKeyDefinition(string Column, string Table, string Target);
 public record TablePreview(string Name, SqlResult Data, ColumnDefinition[]? Columns = null, ForeignKeyDefinition[]? ForeignKeys = null);
 public record ExecutionDto(bool Correct, SqlResult Output, TablePreview[] Tables, string? Error, string? Explanation);
-public record ThemePreference(string Preset = "light", Dictionary<string, string>? Colors = null);
+public record ThemePreference(string Preset = "graphite", Dictionary<string, string>? Colors = null);
 public record ThemePreset(string Id, string Name, ThemePreference Theme);
 public record ThemePresetRequest(string Name, ThemePreference Theme);
 public record GroupDto(string Id, string Name);

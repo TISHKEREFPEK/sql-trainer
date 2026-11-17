@@ -243,6 +243,7 @@ public sealed partial class StudentScreen : UserControl, IDisposable
     {
         editor.Background = Application.Current!.Resources["EditorBrush"] as IBrush;
         editor.Foreground = Application.Current.Resources["EditorInkBrush"] as IBrush;
+        editor.LineNumbersForeground = Application.Current.Resources["LineNumbersBrush"] as IBrush;
         editor.SyntaxHighlighting = SqlHighlighting.Create(ThemeManager.Ink(((SolidColorBrush)editor.Background!).Color.ToString()));
     }
 

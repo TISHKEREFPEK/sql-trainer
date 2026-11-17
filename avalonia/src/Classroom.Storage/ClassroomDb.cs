@@ -17,7 +17,7 @@ public sealed class ProfileEntity
     public string? GroupId { get; set; }
     public int Slot { get; set; }
     public long LockedUntil { get; set; }
-    public string ThemeJson { get; set; } = "{\"preset\":\"light\"}";
+    public string ThemeJson { get; set; } = "{\"preset\":\"graphite\"}";
     public string PresetsJson { get; set; } = "[]";
     public string ResultsMode { get; set; } = "lesson";
 }

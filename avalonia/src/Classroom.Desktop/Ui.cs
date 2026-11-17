@@ -122,6 +122,7 @@ public static class ThemeManager
     public static event Action? Changed;
     public static readonly Dictionary<string, (string Name, string Background, string Surface, string Accent, string Editor)> Presets = new()
     {
+        ["graphite"] = ("Мягкий графит", "#EDEDF0", "#F8F8FA", "#232327", "#FCFCFD"),
         ["light"] = ("Светлая", "#F6F7F9", "#FFFFFF", "#705CC6", "#242938"),
         ["mist"] = ("Туман", "#E9EDF5", "#F7F9FF", "#5267AA", "#28334F"),
         ["paper"] = ("Бумага", "#EFECE5", "#FFFCF5", "#71613D", "#36362F"),
@@ -145,7 +146,7 @@ public static class ThemeManager
     public static void Apply(ThemePreference theme)
     {
         var app = Application.Current!;
-        var p = Presets.GetValueOrDefault(theme.Preset, Presets["light"]);
+        var p = Presets.GetValueOrDefault(theme.Preset, Presets["graphite"]);
         var colors = theme.Colors ?? new();
         string Resolve(string name, string value) => colors.GetValueOrDefault(name, value);
         var surface = Resolve("surface", p.Surface);
@@ -153,7 +154,7 @@ public static class ThemeManager
         var accent = Resolve("accent", p.Accent);
         var editor = Resolve("editor", p.Editor);
         app.RequestedThemeVariant = Ink(surface) == "#FFFFFF" ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
-        foreach (var(name, value)in new[]
+        var brushes = new Dictionary<string,string>(new[]
         {
             ("Background", background),
             ("BackgroundInk", Ink(background)=="#000000"?"#292B38":Ink(background)),
@@ -167,9 +168,39 @@ public static class ThemeManager
             ("Hover",Ink(surface)=="#FFFFFF"?"#343346":"#F3F1FB"),
             ("Subtle",Ink(surface)=="#FFFFFF"?"#242A38":"#F0F1F5"),
             ("Line", Ink(surface) == "#FFFFFF" ? "#454B53" : "#E3E5EB")
+        }.ToDictionary(p=>p.Item1,p=>p.Item2));
+        // Keep existing named themes intact. Only the new preset supplies the
+        // approved graphite tokens; explicit user colours still take precedence.
+        if(theme.Preset=="graphite")
+        {
+            if(background==p.Background)brushes["BackgroundInk"]="#232327";
+            if(surface==p.Surface)
+            {
+                brushes["Ink"]="#232327";brushes["Muted"]="#63636E";
+                brushes["Hover"]="#EAEAF0";brushes["Subtle"]="#ECECF2";brushes["Line"]="#D9D9E1";
+            }
+            else brushes["Muted"]=brushes["Ink"]=Ink(surface);
+            if(editor==p.Editor)brushes["EditorInk"]="#303038";
+            else brushes["EditorInk"]=Ink(editor);
+            if(background!=p.Background)brushes["BackgroundInk"]=Ink(background);
         }
-
-        )
+        var graphite=theme.Preset=="graphite";
+        foreach(var (name,value) in new Dictionary<string,string>
+        {
+            ["SelectedTask"]=graphite&&surface==p.Surface?"#E0E0E7":brushes["Hover"],
+            ["LineNumbers"]=graphite&&editor==p.Editor?"#737380":brushes["EditorInk"],
+            ["InlineCodeInk"]=graphite&&surface==p.Surface?"#43434E":brushes["Ink"],
+            ["InlineCodeBackground"]=brushes["Subtle"],
+            ["PrimaryHover"]=graphite&&accent==p.Accent?"#3A3A40":accent,
+            ["Connected"]="#55715D",["ProgressTrack"]=graphite&&surface==p.Surface?"#D8D8DF":brushes["Line"],
+            ["ProgressFill"]=graphite&&accent==p.Accent?"#55555F":accent,
+            ["StaleResultInk"]="#876337",["Focus"]=graphite&&surface==p.Surface?"#797984":brushes["Ink"],
+            ["EditorFocus"]=graphite&&editor==p.Editor?"#8A8A98":brushes["EditorInk"],
+            ["SuccessInk"]="#405747",["SuccessBackground"]="#E3E9E3",["SuccessLine"]="#D2DFD3",
+            ["ErrorInk"]="#85474F",["ErrorBackground"]="#F0E6E7",["ErrorLine"]="#E6D4D6",
+            ["InfoInk"]="#555564",["InfoBackground"]="#E7E7ED",["InfoLine"]="#D8D8E1"
+        })brushes[name]=value;
+        foreach (var(name, value)in brushes)
             app.Resources[name + "Brush"] = new SolidColorBrush(Color.Parse(value));
         app.Resources["SystemAccentColor"] = Color.Parse(accent);
         foreach(var key in new[]{"SystemAccentColorLight1","SystemAccentColorLight2","SystemAccentColorDark1","SystemAccentColorDark2"})app.Resources[key]=Color.Parse(accent);

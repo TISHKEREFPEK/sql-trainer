@@ -16,7 +16,7 @@ public sealed class ClassroomApplication : Application
         Styles.Add(new StyleInclude(new Uri("avares://Classroom.Desktop/")) { Source = new Uri("avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml") });
         Styles.Add(new StyleInclude(new Uri("avares://Classroom.Desktop/")) { Source = new Uri("avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml") });
         var style = new Style(x => x.OfType<Window>());
-        style.Setters.Add(new Setter(Window.FontFamilyProperty, new Avalonia.Media.FontFamily("Segoe UI, Arial")));
+        style.Setters.Add(new Setter(Window.FontFamilyProperty, new Avalonia.Media.FontFamily("Segoe UI Variable, Segoe UI, Arial")));
         style.Setters.Add(new Setter(Window.FontSizeProperty, 14d));
         style.Setters.Add(new Setter(Window.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BackgroundBrush")));
         style.Setters.Add(new Setter(Window.ForegroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("InkBrush")));

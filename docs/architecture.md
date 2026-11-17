@@ -2,7 +2,7 @@
 
 ## Дизайн без изменения протокола · 17 ноября 2026
 
-[Спецификация «Мягкий графит»](design/soft-graphite-2026-11-17.md) уточняет E13 для Avalonia. План: общие ресурсы, ограниченная SQL Grid-композиция, прежний AvaloniaEdit и реальные статусы SqlLocalStore/ACK/pending execute. Worker, backend, UUID/контексты, схемы БД и сохранения не заменяются макетом. Это пока план, код интерфейса не изменён.
+[Спецификация «Мягкий графит»](design/soft-graphite-2026-11-17.md) уточняет E13 для Avalonia. Начальный слой: новый `ThemePreference` default/whitelist `graphite`, общий ThemeManager, шрифт и gutter; явные старые JSON-настройки сохраняются. Схема EF/SQLite прежняя; Server/роли обновлять вместе из-за нового ID. Ограниченная SQL Grid-композиция ещё в плане. Worker, UUID/контексты, реальные статусы SqlLocalStore/ACK/pending execute и сохранения не заменяются макетом.
 
 ## Основание ESP32-S3 · 16 ноября 2026
 

@@ -205,6 +205,14 @@ public static class ThemeManager
         })brushes[name]=value;
         foreach (var(name, value)in brushes)
             app.Resources[name + "Brush"] = new SolidColorBrush(Color.Parse(value));
+        var graphiteNavigation=graphite&&surface==p.Surface&&background==p.Background;
+        app.Resources["NavigationSelectionBrush"]=graphiteNavigation?new LinearGradientBrush
+        {
+            StartPoint=new RelativePoint(0,0,RelativeUnit.Relative),EndPoint=new RelativePoint(1,1,RelativeUnit.Relative),
+            GradientStops=new GradientStops{new(Color.Parse("#F5F5F8"),0),new(Color.Parse("#E2E2E9"),1)}
+        }:new SolidColorBrush(Color.Parse(brushes["Hover"]));
+        app.Resources["NavigationShadow"]=BoxShadows.Parse(graphiteNavigation?"5 7 18 0 #D3D3DB, -4 -4 13 0 #FFFFFF":"0 3 12 0 #18000000");
+        app.Resources["NavigationSelectedShadow"]=BoxShadows.Parse(graphiteNavigation?"3 4 10 0 #D1D1D8, -2 -2 7 0 #FFFFFF":"0 2 6 0 #10000000");
         app.Resources["SystemAccentColor"] = Color.Parse(accent);
         foreach(var key in new[]{"SystemAccentColorLight1","SystemAccentColorLight2","SystemAccentColorDark1","SystemAccentColorDark2"})app.Resources[key]=Color.Parse(accent);
         Changed?.Invoke();

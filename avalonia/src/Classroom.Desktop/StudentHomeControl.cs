@@ -14,6 +14,9 @@ public sealed class StudentHomeControl : UserControl
     readonly StackPanel page = Ui.Stack();
     readonly List<Button> workActions = new();
     bool canWork,opening;
+    internal event Action<string,string>? ProfileChanged;
+    internal event Action<bool>? OpeningChanged;
+    internal bool ProfileInNavigation{get;set;}
     string? previous;
     public StudentHomeControl(MainWindow owner, ClassroomApi api, Func<string, string?, Task> open)
     {
@@ -26,9 +29,9 @@ public sealed class StudentHomeControl : UserControl
         var action=GraphiteUi.Action(label,async()=>
         {
             if(!canWork||opening)return;
-            opening=true;EnableActions();
+            opening=true;EnableActions();OpeningChanged?.Invoke(true);
             try{await owner.Safe(()=>open(subject,id));}
-            finally{opening=false;EnableActions();}
+            finally{opening=false;EnableActions();OpeningChanged?.Invoke(false);}
         },()=>canWork&&!opening,primary);
         action.IsEnabled=canWork&&!opening;workActions.Add(action);return action;
     }
@@ -39,6 +42,7 @@ public sealed class StudentHomeControl : UserControl
         var fingerprint = Wire.Write(data);
         if (fingerprint == previous) return;
         previous = fingerprint; page.Children.Clear();workActions.Clear();
+        ProfileChanged?.Invoke(data.Name,data.Group);
         canWork = data.Lesson.Activated && data.Lesson.State == "running";
         page.Children.Add(Ui.Text("Моё занятие",26));
         var lessonState=!data.Lesson.Activated ? "Дождитесь начала или восстановления занятия преподавателем."
@@ -46,7 +50,7 @@ public sealed class StudentHomeControl : UserControl
             : data.Lesson.State == "finished" ? "Занятие завершено. Работы сохранены." : "Занятие идёт";
         var subjects=(data.Lesson.AllowSql,data.Lesson.AllowElectronics) switch
         {(true,true)=>"SQL и электроника",(true,false)=>"Практика SQL",(false,true)=>"Электроника",_=>"Занятие"};
-        var lesson=new Grid{ColumnDefinitions=new("*,Auto"),ColumnSpacing=18};
+        var lesson=new Grid{ColumnDefinitions=new("*,Auto"),RowDefinitions=new("Auto,0"),ColumnSpacing=18};
         lesson.Children.Add(Ui.Stack(Ui.Text(subjects,18),Ui.Muted(data.Lesson.GroupName,14)));
         var state=Ui.Text(lessonState,14);state.MaxWidth=340;state.VerticalAlignment=VerticalAlignment.Center;
         Grid.SetColumn(state,1);lesson.Children.Add(state);
@@ -54,7 +58,9 @@ public sealed class StudentHomeControl : UserControl
         lesson.SizeChanged+=(_,_)=>
         {
             var compact=lesson.Bounds.Width<600;if(lessonCompact==compact)return;lessonCompact=compact;
-            lesson.ColumnDefinitions=new(compact?"*":"*,Auto");lesson.RowDefinitions=new(compact?"Auto,Auto":"Auto");
+            lesson.ColumnDefinitions[1].Width=compact?new GridLength(0):GridLength.Auto;
+            lesson.RowDefinitions[1].Height=compact?GridLength.Auto:new GridLength(0);
+            lesson.ColumnSpacing=compact?0:18;
             Grid.SetColumn(state,compact?0:1);Grid.SetRow(state,compact?1:0);lesson.RowSpacing=compact?12:0;
         };
         page.Children.Add(GraphiteUi.Panel(lesson));
@@ -99,6 +105,6 @@ public sealed class StudentHomeControl : UserControl
                 practice.Children.Add(GraphiteUi.WorkRow("Мои схемы","Свободные проекты по электронике",Action("Открыть электронику","electronics",null)));
             page.Children.Add(GraphiteUi.Panel(practice));
         }
-        page.Children.Add(Ui.Muted(data.Name+" · "+data.Group,12));
+        if(!ProfileInNavigation)page.Children.Add(Ui.Muted(data.Name+" · "+data.Group,12));
     }
 }

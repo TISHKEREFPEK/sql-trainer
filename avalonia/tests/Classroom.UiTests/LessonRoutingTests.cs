@@ -12,7 +12,7 @@ using Xunit;
 namespace Classroom.UiTests;
 public sealed class LessonRoutingTests
 {
-    static void Click(MainWindow window,string text) => window.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()==text).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    static void Click(MainWindow window,string text) => window.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()==text||Avalonia.Automation.AutomationProperties.GetName(b)==text).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     static async Task WaitFor(Func<bool> ready) { for(var i=0;i<150&&!ready();i++) await Task.Delay(50); Assert.True(ready()); }
     static async Task ShowLogin(MainWindow window,ClassroomApi api)
     {
@@ -53,6 +53,7 @@ public sealed class LessonRoutingTests
             var homeOutput=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??AppContext.BaseDirectory; Directory.CreateDirectory(homeOutput);
             using(var frame=student.CaptureRenderedFrame()) frame!.Save(Path.Combine(homeOutput,"student-home-1320.png"));
             Click(student,"SQL"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentScreen>().Any());
+            await WaitFor(()=>student.GetVisualDescendants().OfType<StudentNavigation>().Single().Entry("electronics").IsEnabled);
             Click(student,"Электроника"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsProjectPicker>().Any());student.UpdateLayout();
             student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Name=="FreeProjectName").Text="Схема маршрутизации";
             Click(student,"Создать схему");await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
@@ -79,7 +80,7 @@ public sealed class LessonRoutingTests
             Assert.Equal("sql",(await fixture.Student.Login(new("student","ui-test","synthetic-student-password"))).Destination!.StandId);
             student.GetVisualDescendants().OfType<ElectronicsScreen>().Single().Suspend(); Assert.Equal(2,Directory.GetFiles(Path.Combine(dir,"electronics"),"*.json").Count(path=>!path.EndsWith(".sync.json",StringComparison.Ordinal)));
         }
-        finally { teacher.Close(); student.Close(); Environment.SetEnvironmentVariable("CLASSROOM_DATA",previousData); Environment.SetEnvironmentVariable("CLASSROOM_STUDENT_DATA",previousStudent); }
+        finally { teacher.Close(); student.Close(); await WaitFor(()=>!teacher.IsVisible&&!student.IsVisible); Environment.SetEnvironmentVariable("CLASSROOM_DATA",previousData); Environment.SetEnvironmentVariable("CLASSROOM_STUDENT_DATA",previousStudent); }
     }
 }
 

@@ -131,9 +131,22 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         }).ToArray();
         var sections=new UniformGrid{Columns=3};foreach(var tab in categoryTabs)sections.Children.Add(tab);
         var segment=new Border{Child=sections,CornerRadius=new CornerRadius(8),Padding=new Thickness(3)};Ui.BindBrush(segment,Border.BackgroundProperty,"Subtle");
+        var categoryHost=new ContentControl{Content=segment,HorizontalContentAlignment=HorizontalAlignment.Stretch};
+        var categoryDisclosure=new Expander{Header=category.SelectedItem as string??"Курс",HorizontalContentAlignment=HorizontalAlignment.Stretch,HorizontalAlignment=HorizontalAlignment.Stretch};
+        Avalonia.Automation.AutomationProperties.SetName(categoryDisclosure,"Раздел SQL");
+        category.SelectionChanged+=(_,_)=>{categoryDisclosure.Header=category.SelectedItem as string??"Курс";categoryDisclosure.IsExpanded=false;};
         var progressHeading=new Grid{ColumnDefinitions=new("*,Auto")};progressHeading.Children.Add(Ui.Text("Задания",14));progress.FontSize=12;progress.Classes.Add("muted");Grid.SetColumn(progress,1);progressHeading.Children.Add(progress);
         Ui.BindBrush(progressBar,ProgressBar.ForegroundProperty,"Accent");Ui.BindBrush(progressBar,ProgressBar.BackgroundProperty,"Hover");
-        var nav = Ui.Stack(progressHeading,progressBar,segment,search,topicSections, Ui.Button("Справочник", () => owner.Safe(Glossary)));
+        var dictionaryButton=Ui.Button("Справочник",()=>owner.Safe(Glossary));
+        navigationBody=Ui.Scroll(Ui.Stack(categoryHost,search,topicSections,dictionaryButton));
+        // These controls can leave StudentScreen's visual subtree for the
+        // shared rail/overlay. Retain the previous activity-input semantics.
+        navigationBody.AddHandler(InputElement.KeyDownEvent,(_,_)=>lastInput=Environment.TickCount64,RoutingStrategies.Tunnel,true);
+        navigationBody.AddHandler(InputElement.PointerPressedEvent,(_,_)=>lastInput=Environment.TickCount64,RoutingStrategies.Tunnel,true);
+        navigationBody.AddHandler(InputElement.PointerWheelChangedEvent,(_,_)=>lastInput=Environment.TickCount64,RoutingStrategies.Tunnel,true);
+        navigationSummary=Ui.Stack(progressHeading,progressBar);
+        navigationContainer=new Grid{RowDefinitions=new("*,Auto"),RowSpacing=10};
+        navigationContainer.Children.Add(navigationBody);Grid.SetRow(navigationSummary,1);navigationContainer.Children.Add(navigationSummary);
         nextHint = Ui.Button("Открыть подсказку", () => owner.Safe(async () =>
         {
             if (current is null)
@@ -215,8 +228,8 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         {
             ColumnDefinitions = new("240,*")
         };
-        var sidebar=new Border{Child=Ui.Scroll(nav),Padding=new Thickness(12,24,12,16),BorderThickness=new Thickness(0,0,1,0)};Ui.BindBrush(sidebar,Border.BackgroundProperty,"Surface");Ui.BindBrush(sidebar,Border.BorderBrushProperty,"Line");grid.Children.Add(sidebar);
-        var workspace=new Grid{ColumnDefinitions=new("*,1.25*"),ColumnSpacing=24};
+        var sidebar=new Border{Child=navigationContainer,Padding=new Thickness(12,24,12,16),BorderThickness=new Thickness(0,0,1,0)};Ui.BindBrush(sidebar,Border.BackgroundProperty,"Surface");Ui.BindBrush(sidebar,Border.BorderBrushProperty,"Line");grid.Children.Add(sidebar);
+        var workspace=new Grid{ColumnDefinitions=new("*,1.25*"),RowDefinitions=new("*,0"),ColumnSpacing=24};
         var card = Ui.Card(Ui.Scroll(learning));
         workspace.Children.Add(card);
         var workstation = Ui.Card(work);
@@ -226,13 +239,28 @@ public sealed partial class StudentScreen : UserControl, IDisposable
         heading.FontSize=28;heading.LineHeight=36;heading.FontWeight=FontWeight.SemiBold;
         var content=new Grid{RowDefinitions=new("Auto,*"),RowSpacing=24,Margin=new Thickness(32)};content.Children.Add(heading);var workspaceScroll=Ui.Scroll(workspace);Grid.SetRow(workspaceScroll,1);content.Children.Add(workspaceScroll);Grid.SetColumn(content,1);grid.Children.Add(content);
         Content = grid;
-        SizeChanged += (_, _) =>
+        refreshNavigationLayout=()=>
         {
-            var narrow=Bounds.Width<1000;grid.ColumnDefinitions=new(Bounds.Width<1200?"220,*":"240,*");content.Margin=new Thickness(Bounds.Width<1200?24:32);
+            var narrow=Bounds.Width<(navigationHosted?720:1000);
+            sidebar.IsVisible=!navigationHosted;dictionaryButton.IsVisible=!navigationHosted;
+            if(navigationHosted&&!ReferenceEquals(categoryHost.Content,categoryDisclosure))
+            {
+                categoryHost.Content=null;categoryDisclosure.Content=segment;categoryHost.Content=categoryDisclosure;sections.Columns=1;
+            }
+            else if(!navigationHosted&&!ReferenceEquals(categoryHost.Content,segment))
+            {
+                categoryHost.Content=null;categoryDisclosure.Content=null;categoryHost.Content=segment;sections.Columns=3;
+            }
+            grid.ColumnDefinitions[0].Width=new GridLength(navigationHosted?0:Bounds.Width<1200?220:240);
+            content.Margin=new Thickness(navigationHosted?0:Bounds.Width<1200?24:32);
             workspace.ColumnSpacing=narrow?0:Bounds.Width<1200?16:24;
-            workspace.ColumnDefinitions=new(narrow?"*":"*,1.25*");workspace.RowDefinitions=new(narrow?"Auto,Auto":"*");Grid.SetRow(workstation,narrow?1:0);Grid.SetColumn(workstation,narrow?0:1);workspace.RowSpacing=narrow?16:0;
+            workspace.ColumnDefinitions[1].Width=narrow?new GridLength(0):new GridLength(1.25,GridUnitType.Star);
+            workspace.RowDefinitions[0].Height=narrow?GridLength.Auto:new GridLength(1,GridUnitType.Star);
+            workspace.RowDefinitions[1].Height=narrow?GridLength.Auto:new GridLength(0);
+            Grid.SetRow(workstation,narrow?1:0);Grid.SetColumn(workstation,narrow?0:1);workspace.RowSpacing=narrow?16:0;
             workstation.MinHeight=narrow?580:0;card.MaxHeight=double.PositiveInfinity;
         };
+        SizeChanged += (_, _) =>refreshNavigationLayout();
         poll.Tick += async (_, _) => await Synchronize();
         ThemeManager.Changed += ApplyTheme;
         ConfigureHistory();

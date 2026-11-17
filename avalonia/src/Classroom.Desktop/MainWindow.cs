@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
     readonly NotificationState state = new();
     readonly NotificationToast notification = new();
     bool quitting;
+    bool stopping;
     string? protectionWarning;
     bool reconnecting;
     internal string? LastTaskId { get; set; }
@@ -127,9 +128,10 @@ public sealed partial class MainWindow : Window
         message.Bind(TextBlock.TextProperty, new Binding(nameof(NotificationState.Status)) { Source = state });
         var root = new Grid
         {
-            RowDefinitions = new("Auto,*,Auto")
+            RowDefinitions = new("Auto,*,Auto"),ColumnDefinitions=new("0,*")
         };
         var headerBorder=new Border{Child=header,BorderThickness=new Thickness(0,0,0,1)};Ui.BindBrush(headerBorder,Border.BackgroundProperty,"Surface");Ui.BindBrush(headerBorder,Border.BorderBrushProperty,"Line");root.Children.Add(headerBorder);
+        shellRoot=root;shellHeader=headerBorder;
         Grid.SetRow(body, 1);
         root.Children.Add(body);
         lessonBlock.Child = lessonMessage;
@@ -144,7 +146,10 @@ public sealed partial class MainWindow : Window
         root.Children.Add(messageBorder);
         Grid.SetRow(notification,1);
         root.Children.Add(notification);
+        foreach(var child in root.Children)Grid.SetColumn(child,1);
         Content = root;
+        body.PropertyChanged+=(_,change)=>{if(change.Property==ContentControl.ContentProperty)UpdateStudentNavigation();};
+        SizeChanged+=(_,_)=>UpdateStudentNavigation();
         Closed += (_,_) => { notification.Dismiss(); admissionPoll?.Stop(); lessonPoll.Stop(); };
         lessonPoll.Tick += async (_, _) =>
         {
@@ -354,6 +359,7 @@ public sealed partial class MainWindow : Window
         await StopElectronicsDelivery();
         admissionPoll?.Stop(); lessonPoll.Stop();
         ClosePage(false);
+        StopStudentNavigation();
         body.IsEnabled = true; lessonBlock.IsVisible = false;
         screen?.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
@@ -502,11 +508,7 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                sqlSubjectButton = Ui.Button("SQL", () => Safe(() => SwitchStudentSubject("sql")));
-                electronicsSubjectButton = Ui.Button("Электроника", () => Safe(() => SwitchStudentSubject("electronics")));
-                actions.Children.Insert(0, sqlSubjectButton); actions.Children.Insert(1, electronicsSubjectButton);
-                actions.Children.Insert(0, Ui.Button("Моё занятие", () => Safe(ShowStudentHome)));
-                actions.Children.Add(Ui.Button("Проверка преподавателя", () => Safe(ShowTeacherReview)));
+                StartStudentNavigation();
                 SqlStore(api);
                 sqlDeliveryPoll.Start();
                 StartElectronicsDelivery();
@@ -584,7 +586,7 @@ public sealed partial class MainWindow : Window
             finally { StartElectronicsDelivery(); }
         }
         if (destination?.StandId is not (null or "sql")) throw new InvalidDataException("Этот стенд не поддерживается. Обновите приложение ученика.");
-        var first = student is null;
+        var first = student?.HasLoaded != true;
         student ??= new(this, api!);
         screen = student;
         body.Content = student;
@@ -687,7 +689,7 @@ public sealed partial class MainWindow : Window
 
     async Task SwitchStudentSubject(string subject, string? taskId = null)
     {
-        if (api is null) return;
+        if (api is null||stopping||quitting) return;
         var state = await api.Get<StudentLessonDto>("student/lesson");
         if (!state.CanWork || (subject == "sql" ? state.Lesson?.AllowSql != true : state.Lesson?.AllowElectronics != true))
         { Error(state.Message.Length > 0 ? state.Message : "Преподаватель не разрешил это направление."); return; }
@@ -699,11 +701,16 @@ public sealed partial class MainWindow : Window
 
     internal async Task ShowStudentHome()
     {
-        if (api is null) return;
+        if (api is null||stopping||quitting) return;
         if(screen is ElectronicsProjectPicker picker)picker.Dispose();
         if (student is not null) await student.SaveDraft();
         electronics?.Suspend(); ClosePage(false); Protect(false);
-        studentHome ??= new(this, api, (subject, id) => SwitchStudentSubject(subject, id));
+        if(studentHome is null)
+        {
+            studentHome=new(this,api,(subject,id)=>SwitchStudentSubject(subject,id)){ProfileInNavigation=studentNavigation is not null};
+            studentHome.ProfileChanged+=(name,group)=>studentNavigation?.Profile(name,group);
+            studentHome.OpeningChanged+=busy=>studentNavigation?.SetBusy(busy);
+        }
         body.Content = studentHome;
         await studentHome.Refresh();
     }
@@ -721,35 +728,48 @@ public sealed partial class MainWindow : Window
             body.IsEnabled = false; lessonBlock.IsVisible = true; lessonMessage.Text = "Проверяем доступ к занятию…";
         });
         teacherReview = view;
+        UpdateStudentNavigation();
         body.IsEnabled = true; lessonBlock.IsVisible = false; Protect(false);
     }
 
     async Task RefreshLessonPermission()
     {
-        if (api is null || login is null || teacher) return;
-        if (teacherReview is not null) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
-        var lesson = await api.Get<StudentLessonDto>("student/lesson");
+        if (api is null || login is null || teacher||quitting||stopping) return;
+        var client=api;var session=login.Token;
+        var lesson = await client.Get<StudentLessonDto>("student/lesson");
+        if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
+        if(studentNavigation is { } nav)
+        {
+            nav.Entry("glossary").IsVisible=lesson.Lesson?.AllowSql==true;nav.SetPermission(lesson.CanWork,lesson.Lesson?.AllowSql==true,lesson.Lesson?.AllowElectronics==true);
+        }
+        if (teacherReview is not null) { body.IsEnabled = studentNavigation?.IsBusy!=true; lessonBlock.IsVisible = false; return; }
         if (electronicsRecoveryOpen) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
         var currentAllowed = body.Content is ElectronicsScreen or ElectronicsProjectPicker || pageOpen&&pageReturnContent is ElectronicsScreen
             ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
         if (body.Content is ElectronicsScreen circuit && circuit.AssignmentId is { } workId)
         {
-            circuit.UpdateAssignmentStatus(await api.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + workId + "/status"));
+            var status=await client.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + workId + "/status");
+            if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
+            circuit.UpdateAssignmentStatus(status);
             currentAllowed &= circuit.AssignmentAvailable;
         }
         if(body.Content is ElectronicsScreen free&&free.FreeProjectId is { } projectId)
-            free.UpdateFreeProjectStatus(await api.Get<ElectronicsProjectStatus>($"electronics/projects/{projectId}/status"));
+        {
+            var status=await client.Get<ElectronicsProjectStatus>($"electronics/projects/{projectId}/status");
+            if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
+            free.UpdateFreeProjectStatus(status);
+        }
         var canWork = lesson.CanWork && currentAllowed;
         if (body.Content is StudentHomeControl home)
         {
-            body.IsEnabled = true; lessonBlock.IsVisible = false; await home.Refresh(); return;
+            body.IsEnabled = studentNavigation?.IsBusy!=true; lessonBlock.IsVisible = false; await home.Refresh(); return;
         }
         var wasEnabled = body.IsEnabled;
-        body.IsEnabled = canWork;
+        body.IsEnabled = canWork&&studentNavigation?.IsBusy!=true;
         lessonBlock.IsVisible = !canWork;
-        lessonMessage.Text = lesson.Message.Length > 0 ? lesson.Message : "Преподаватель отключил это направление. Выберите другое вверху.";
+        lessonMessage.Text = lesson.Message.Length > 0 ? lesson.Message : "Преподаватель отключил это направление. Выберите другое в меню.";
         if (!canWork && wasEnabled)
         {
             electronics?.Suspend();
@@ -896,22 +916,33 @@ public sealed partial class MainWindow : Window
 
     async Task Quit()
     {
-        if (quitting)
+        if (quitting||stopping)
             return;
-        if (student is not null && !discardDraft)
-            await student.SaveDraft();
-        if (electronics is not null) await electronics.Synchronize();
-        await StopElectronicsDelivery();
-        ClosePage(false);
-        screen?.Dispose();
-        foreach (var editor in assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
-        if (!ReferenceEquals(screen, student)) student?.Dispose();
-        if (host is not null)
-            await host.Stop(api);
-        quitting = true;
-        tray?.Dispose();
-        api?.Dispose();
-        Close();
+        stopping=true;var lessonWasPolling=lessonPoll.IsEnabled;var sqlWasPolling=sqlDeliveryPoll.IsEnabled;
+        studentNavigation?.SetBusy(true);
+        lessonPoll.Stop();sqlDeliveryPoll.Stop();
+        try
+        {
+            if (student is not null && !discardDraft)
+                await student.SaveDraft();
+            if (electronics is not null) await electronics.Synchronize();
+            await StopElectronicsDelivery();
+            ClosePage(false);
+            screen?.Dispose();
+            foreach (var editor in assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
+            if (!ReferenceEquals(screen, student)) student?.Dispose();
+            while(pollingLesson||deliveringSql)await Task.Delay(25);
+            if (host is not null)
+                await host.Stop(api);
+            quitting = true;
+            tray?.Dispose();
+            api?.Dispose();
+            Close();
+        }
+        catch
+        {
+            stopping=false;if(lessonWasPolling)lessonPoll.Start();if(sqlWasPolling)sqlDeliveryPoll.Start();studentNavigation?.SetBusy(false);throw;
+        }
     }
 
     public async Task<bool> Confirm(string text)

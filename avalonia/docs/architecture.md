@@ -1,10 +1,14 @@
 # Архитектура Avalonia Classroom
 
+## Sidebar ученика · 17–18 ноября 2026
+
+MainWindow.StudentNavigation управляет общей панелью/профилем и разрешёнными маршрутами. StudentScreen.Navigation переносит existing controls + progress из локальной панели; HasLoaded отделяет конструирование для справочника от первого Load. Редактор/document/selection/undo, SQL local store и история сохраняются. Compact catalogue/profile — Popup.ShouldUseOverlayLayer=true с прежними Key/clipboard/drop handlers на содержимом; отдельный popup HWND не создаётся. Layout меняет ширину/высоту существующих Grid definitions. При Quit новые переходы запрещены, lesson/SQL циклы останавливаются/дожидаются завершения, результаты сверяют client/token/stopping перед применением. [Доказательства и открытая приёмка](../../docs/design/soft-graphite-2026-11-17.md). API/SQLite прежние; новая SQL-сетка/диалог справочника ещё открыты.
+
 ## Дополнение E13 · 17 ноября 2026
 
 [«Мягкий графит»: исходник, токены и план](../../docs/design/soft-graphite-2026-11-17.md). Добавлен отдельный `graphite`: default ThemePreference и новых ProfileEntity, whitelist Themes, ресурсы ThemeManager и gutter SQL. Старый `light` и личные цвета сохранены; ElectronImport fallback прежний. EF-модель/SQLite не меняются; Server/роли обновлять совместно. G1 ещё частичный: компоновка, компоненты/состояния и нативная приёмка открыты. Прежние редактор, DTO, CanExecute, UUID и реальная сохранность сохраняются.
 
-Последующий слой: GraphiteUi — нативные панели/команды/адаптивные строки через DynamicResource; WebStyles — общие состояния кнопок. Ui.Button проверяет IsEffectivelyEnabled до запуска, выставляет busy/disabled и восстанавливает доступность по enabledAfter. StudentHomeControl блокирует конкурирующие переходы и использует актуальный canWork в finally даже после Refresh/паузы. Предыдущий DTO/fingerprint сохранены, backend/SQLite не меняются. Прежний зачёт схемы при ожидающей пересдаче отдельно в home DTO пока не представлен; не выводить из одного State выдуманные сведения. Shell/SQL-компоновка и нативная приёмка остаются открыты.
+Последующий слой: GraphiteUi — нативные панели/команды/адаптивные строки через DynamicResource; WebStyles — общие состояния кнопок. Ui.Button проверяет IsEffectivelyEnabled до запуска, выставляет busy/disabled и восстанавливает доступность по enabledAfter. StudentHomeControl блокирует конкурирующие переходы и использует актуальный canWork в finally даже после Refresh/паузы. Предыдущий DTO/fingerprint сохранены, backend/SQLite не меняются. Прежний зачёт схемы при ожидающей пересдаче отдельно в home DTO пока не представлен; не выводить из одного State выдуманные сведения. SQL-компоновка и нативная приёмка остаются открыты.
 
 ## Основание ESP32-S3 · 16 ноября 2026
 

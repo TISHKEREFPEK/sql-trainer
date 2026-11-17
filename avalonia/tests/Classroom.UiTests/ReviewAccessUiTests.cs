@@ -15,7 +15,7 @@ namespace Classroom.UiTests;
 public sealed class ReviewAccessUiTests
 {
     const BindingFlags Hidden = BindingFlags.Instance | BindingFlags.NonPublic;
-    static void Click(Control view, string label) => view.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == label).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    static void Click(Control view, string label) => view.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == label||Avalonia.Automation.AutomationProperties.GetName(b)==label).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     static async Task WaitFor(Func<Task<bool>> ready)
     { for (var i = 0; i < 240; i++) { if (await ready()) return; await Task.Delay(75); } Assert.True(await ready()); }
     static void Capture(MainWindow window, string name)

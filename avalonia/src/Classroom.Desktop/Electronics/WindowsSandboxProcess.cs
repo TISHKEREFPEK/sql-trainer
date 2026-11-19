@@ -105,11 +105,12 @@ public static class WindowsSandboxProcess
         }
         return env;
     }
-    static (SafeFileHandle Read, SafeFileHandle Write) Pipe()
+    static (SafeFileHandle Read, SafeFileHandle Write) Pipe(bool childReads = false)
     {
         var sa = new SecurityAttributes { Size = Marshal.SizeOf<SecurityAttributes>(), Inherit = 1 };
         if (!CreatePipe(out var read, out var write, ref sa, 0)) throw Failure("pipe");
-        if (!SetHandleInformation(read, 1, 0)) { read.Dispose(); write.Dispose(); throw Failure("pipe inheritance"); }
+        if (!SetHandleInformation(childReads ? write : read, 1, 0))
+        { read.Dispose(); write.Dispose(); throw Failure("pipe inheritance"); }
         return (read, write);
     }
 
@@ -123,9 +124,13 @@ public static class WindowsSandboxProcess
         string scratch, TimeSpan duration, CancellationToken cancellation)
         => RunCore(executable, arguments, readOnlyRoot, scratch, new Dictionary<string, string>(), cancellation,
             duration, null, returnAtLimit: true);
+    internal static Task<Result> RunControlled(string executable, IEnumerable<string> arguments, string readOnlyRoot,
+        string scratch, Func<StreamReader, Stream, CancellationToken, Task> exchange, CancellationToken cancellation)
+        => RunCore(executable, arguments, readOnlyRoot, scratch, new Dictionary<string, string>(), cancellation,
+            TimeSpan.FromHours(2), null, exchange: exchange);
     static async Task<Result> RunCore(string executable, IEnumerable<string> arguments, string readOnlyRoot, string scratch,
         IReadOnlyDictionary<string, string> settings, CancellationToken cancellation,TimeSpan timeLimit,Action<string>? prepareFiles,
-        bool returnAtLimit = false)
+        bool returnAtLimit = false, Func<StreamReader, Stream, CancellationToken, Task>? exchange = null)
     {
         cancellation.ThrowIfCancellationRequested();
         executable = Path.GetFullPath(executable); scratch = Path.GetFullPath(scratch); readOnlyRoot = Path.GetFullPath(readOnlyRoot);
@@ -137,7 +142,7 @@ public static class WindowsSandboxProcess
         if (hr < 0) throw new IOException($"Не удалось создать изоляцию компилятора (Windows 0x{hr:X8}).");
         nint attributes = 0, capsPointer = 0, capSid = 0, capItem = 0, handles = 0, environment = 0, job = 0;
         var pi = new ProcessInformation(); bool initialized = false;
-        SafeFileHandle? input = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
+        SafeFileHandle? input = null, inputWrite = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
         try
         {
             lease.MarkProfile();
@@ -164,8 +169,15 @@ public static class WindowsSandboxProcess
             var env = EnvironmentFor(executable, scratchDrive.Root, profile, settings.ToDictionary(p => p.Key, p => Map(p.Value)));
             environment = Marshal.StringToHGlobalUni(string.Join('\0', env.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase).Select(p => p.Key + "=" + p.Value)) + "\0\0");
             var sa = new SecurityAttributes { Size = Marshal.SizeOf<SecurityAttributes>(), Inherit = 1 };
-            input = CreateFile("NUL", 0x80000000, 3, ref sa, 3, 0, 0);
-            if (input.IsInvalid) throw Failure("stdin");
+            if (exchange is null)
+            {
+                input = CreateFile("NUL", 0x80000000, 3, ref sa, 3, 0, 0);
+                if (input.IsInvalid) throw Failure("stdin");
+            }
+            else
+            {
+                (input, inputWrite) = Pipe(childReads: true);
+            }
             capSid = Marshal.AllocHGlobal(capability.Value.Length); Marshal.Copy(capability.Value, 0, capSid, capability.Value.Length);
             capItem = Marshal.AllocHGlobal(Marshal.SizeOf<SidAndAttributes>()); Marshal.StructureToPtr(new SidAndAttributes { Sid = capSid, Attributes = 4 }, capItem, false);
             capsPointer = Marshal.AllocHGlobal(Marshal.SizeOf<SecurityCapabilities>());
@@ -188,16 +200,43 @@ public static class WindowsSandboxProcess
             outWrite.Dispose(); errWrite.Dispose(); input.Dispose();
             using var output = new StreamReader(new FileStream(outRead, FileAccess.Read), Encoding.UTF8);
             using var error = new StreamReader(new FileStream(errRead, FileAccess.Read), Encoding.UTF8);
-            var outputTask = ReadBounded(output); var errorTask = ReadBounded(error);
+            using var commandStream = inputWrite is null ? null : new FileStream(inputWrite, FileAccess.Write);
+            var outputTask = exchange is null ? ReadBounded(output) : Task.FromResult("");
+            var errorTask = ReadBounded(error);
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation); limit.CancelAfter(timeLimit);
             using var registration = limit.Token.Register(() => TerminateJobObject(job, 1));
             if (ResumeThread(pi.Thread) == uint.MaxValue) throw Failure("process resume");
-            await process.WaitForExitAsync();
+            var exit = process.WaitForExitAsync();
+            using var exchangeLifetime = exchange is null ? null : CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
+            var conversation = exchange is null ? null : Task.Run(
+                () => exchange(output, commandStream!, exchangeLifetime!.Token));
+            var closedByPeer = false;
+            if (conversation is not null)
+            {
+                closedByPeer = await Task.WhenAny(conversation, exit) == exit;
+                if (!closedByPeer) TerminateJobObject(job, 1);
+            }
+            await exit;
+            exchangeLifetime?.Cancel();
             if (returnAtLimit) limit.CancelAfter(Timeout.InfiniteTimeSpan);
             // Kill descendants retaining pipes before collecting the bounded output.
             TerminateJobObject(job, 1);
             await WaitForJob(job);
             var result = new Result(process.ExitCode, await outputTask, await errorTask);
+            if (conversation is not null)
+            {
+                try { await conversation; }
+                catch (Exception e) when (e is EndOfStreamException ||
+                    closedByPeer && e is OperationCanceledException or IOException)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    throw new IOException($"Сеанс эмулятора завершён (код 0x{result.ExitCode:X8}).\n" +
+                        result.Error[..Math.Min(result.Error.Length, 4000)], e);
+                }
+                cancellation.ThrowIfCancellationRequested();
+                if (closedByPeer) throw new IOException($"Сеанс эмулятора завершён (код 0x{result.ExitCode:X8}).\n" +
+                    result.Error[..Math.Min(result.Error.Length, 4000)]);
+            }
             if (returnAtLimit && limit.IsCancellationRequested && !cancellation.IsCancellationRequested)
                 return result with { StoppedAtLimit = true };
             if (limit.IsCancellationRequested) throw new IOException($"Компиляция остановлена: отмена или превышен лимит {timeLimit.TotalSeconds:0} секунд.\n" + result.Error[..Math.Min(result.Error.Length, 4000)]+"\n"+result.Output[^Math.Min(result.Output.Length,8000)..]);
@@ -208,7 +247,7 @@ public static class WindowsSandboxProcess
             if (job != 0) { TerminateJobObject(job, 1); CloseHandle(job); }
             if (pi.Process != 0) { TerminateProcess(pi.Process, 1); CloseHandle(pi.Process); }
             if (pi.Thread != 0) CloseHandle(pi.Thread);
-            input?.Dispose();
+            input?.Dispose(); inputWrite?.Dispose();
             outRead?.Dispose(); outWrite?.Dispose(); errRead?.Dispose(); errWrite?.Dispose();
             if (initialized) DeleteProcThreadAttributeList(attributes);
             foreach (var pointer in new[] { attributes, capsPointer, capSid, capItem, handles, environment }) if (pointer != 0) Marshal.FreeHGlobal(pointer);

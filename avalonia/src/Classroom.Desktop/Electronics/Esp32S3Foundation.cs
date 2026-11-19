@@ -21,9 +21,14 @@ public static class Esp32S3Foundation
 
     public static Task<Esp32S3Run> RunArduino(Esp32S3SketchImage sketch, TimeSpan duration, CancellationToken cancellation)
     {
-        ArgumentNullException.ThrowIfNull(sketch);
         if (duration < TimeSpan.FromSeconds(1) || duration > TimeSpan.FromSeconds(20))
             throw new ArgumentOutOfRangeException(nameof(duration));
+        return RunImage(CopyArduinoFlash(sketch), duration, cancellation);
+    }
+
+    internal static byte[] CopyArduinoFlash(Esp32S3SketchImage sketch)
+    {
+        ArgumentNullException.ThrowIfNull(sketch);
         var flash = sketch.Flash?.ToArray() ?? throw new InvalidDataException("Отсутствует образ флеш-памяти ESP32-S3.");
         if (flash.Length != 4 * 1024 * 1024 ||
             !MatchesFirmware(flash, 0, 0x8000, sketch.Bootloader) ||
@@ -32,7 +37,7 @@ public static class Esp32S3Foundation
             sketch.Partitions[0] != 0xaa || sketch.Partitions[1] != 0x50 ||
             !flash.AsSpan(0x8000, sketch.Partitions.Length).SequenceEqual(sketch.Partitions))
             throw new InvalidDataException("Некорректный образ флеш-памяти Arduino ESP32-S3.");
-        return RunImage(flash, duration, cancellation);
+        return flash;
     }
 
     static bool MatchesFirmware(byte[] flash, int offset, int maxSize, byte[]? image) =>

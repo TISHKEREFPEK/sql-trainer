@@ -39,8 +39,48 @@ public sealed class Esp32S3FoundationTests
     [Fact]
     public async Task CancelledGuestStopsAndNextGuestCanRun()
     {
-        var loop=await Esp32S3Compiler.CompileBareMetal("extern \"C\" void classroom_main(){while(true)asm volatile(\"nop\");}",CancellationToken.None);
-        using(var limit=new CancellationTokenSource(TimeSpan.FromSeconds(2)))await Assert.ThrowsAsync<IOException>(()=>Esp32S3Foundation.Run(loop,limit.Token));
+        var marker = "cancel-ready-" + Guid.NewGuid().ToString("N");
+        var loop = await Esp32S3Compiler.CompileBareMetal($$"""
+            extern "C" void classroom_main() {
+                for (const char *s = "{{marker}}"; *s; ++s) *(volatile unsigned *)0x60000000 = *s;
+                while (true) asm volatile("nop");
+            }
+            """, CancellationToken.None);
+        using var stop = new CancellationTokenSource();
+        var previous = Directory.GetDirectories(Path.GetTempPath(), "classroom-esp32s3-*").ToHashSet();
+        var guest = Esp32S3Foundation.Run(loop, stop.Token);
+        var started = false;
+        try
+        {
+            using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            while (!guest.IsCompleted && !started)
+            {
+                foreach (var directory in Directory.EnumerateDirectories(Path.GetTempPath(), "classroom-esp32s3-*"))
+                {
+                    if (previous.Contains(directory)) continue;
+                    var file = Path.Combine(directory, "uart0.log");
+                    try
+                    {
+                        using var reader = new StreamReader(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+                        var buffer = new char[marker.Length];
+                        if (await reader.ReadBlockAsync(buffer, wait.Token) == buffer.Length && new string(buffer) == marker)
+                        {
+                            started = true;
+                            break;
+                        }
+                    }
+                    catch (IOException) { }
+                }
+                if (!started) await Task.Delay(25, wait.Token);
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<Exception>(() => guest);
+        }
+        Assert.True(started, "Expected output from the running guest before cancelling it.");
+        await Assert.ThrowsAsync<IOException>(() => guest);
         var good=await Esp32S3Compiler.CompileBareMetal(Program,CancellationToken.None);Assert.Equal(0,(await Esp32S3Foundation.Run(good,CancellationToken.None)).ExitCode);
     }
     [Fact]

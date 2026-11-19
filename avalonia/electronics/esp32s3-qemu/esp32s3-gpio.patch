@@ -1,0 +1,365 @@
+diff --git a/hw/gpio/esp32s3_gpio.c b/hw/gpio/esp32s3_gpio.c
+index 0a0e477..d2cc212 100644
+--- a/hw/gpio/esp32s3_gpio.c
++++ b/hw/gpio/esp32s3_gpio.c
+@@ -12,4 +12 @@
+-#include "qemu/log.h"
+-#include "qemu/error-report.h"
+-#include "qapi/error.h"
+-#include "hw/hw.h"
++#include "qemu/bitops.h"
+@@ -17 +13,0 @@
+-#include "hw/registerfields.h"
+@@ -21,0 +18,123 @@
++/*
++ * Digital pad path from ESP32-S3 TRM chapter 6: the GPIO latch is routed
++ * through matrix source 256 and IO MUX function 1. Other matrix sources
++ * retain their configuration for a peripheral model to consume.
++ */
++#define GPIO_VALID_MASK (MAKE_64BIT_MASK(0, 49) & ~MAKE_64BIT_MASK(22, 4))
++#define GPIO_PIN0 0x074
++#define GPIO_FUNC0_IN 0x154
++#define GPIO_FUNC0_OUT 0x554
++#define GPIO_MUX_PIN0 0x004
++#define GPIO_MATRIX_LATCH 256
++#define GPIO_FUN_GPIO 1
++#define GPIO_FUN_PD BIT(7)
++#define GPIO_FUN_PU BIT(8)
++#define GPIO_FUN_IE BIT(9)
++#define GPIO_PAD_DRIVER BIT(2)
++#define GPIO_PIN_INT_ENABLE BIT(13)
++
++typedef enum {
++    GPIO_INT_RISING = 1,
++    GPIO_INT_FALLING,
++    GPIO_INT_ANY_EDGE,
++    GPIO_INT_LOW,
++    GPIO_INT_HIGH,
++} Esp32S3GpioInterrupt;
++
++static bool valid_pad(int pin)
++{
++    return pin >= 0 && pin < ESP32S3_GPIO_PADS &&
++           (GPIO_VALID_MASK & BIT_ULL(pin));
++}
++
++static void update_interrupt(ESP32S3GPIOState *s)
++{
++    qemu_set_irq(s->irq, (s->status & s->irq_enabled) != 0);
++}
++
++static void refresh_pad(ESP32S3GPIOState *s, unsigned pin)
++{
++    uint64_t bit = BIT_ULL(pin);
++    uint32_t mux = s->iomux[pin];
++    uint32_t config = s->pin_cfg[pin];
++    uint32_t source = s->matrix_out[pin];
++    bool latch = ((s->output & bit) != 0) ^ (extract32(source, 9, 1) != 0);
++    bool enabled = ((s->output_enable & bit) != 0) ^
++                   (extract32(source, 11, 1) != 0);
++    bool driven = extract32(mux, 12, 3) == GPIO_FUN_GPIO &&
++                  extract32(source, 0, 9) == GPIO_MATRIX_LATCH &&
++                  enabled && !(latch && (config & GPIO_PAD_DRIVER));
++    bool level = driven ? latch : s->external[pin] >= 0 ? s->external[pin] :
++                 (mux & GPIO_FUN_PU) && !(mux & GPIO_FUN_PD);
++    bool was_input_high = (s->input & bit) != 0;
++    bool input_high = level && (mux & GPIO_FUN_IE);
++
++    if (((s->levels & bit) != 0) != level) {
++        s->levels ^= bit;
++        qemu_set_irq(s->pad_level[pin], level);
++    }
++    if (((s->driven & bit) != 0) != driven) {
++        s->driven ^= bit;
++        qemu_set_irq(s->pad_driven[pin], driven);
++    }
++    if (input_high != was_input_high) {
++        s->input ^= bit;
++    }
++    if ((s->irq_enabled & bit) && (mux & GPIO_FUN_IE)) {
++        switch (extract32(config, 7, 3)) {
++        case GPIO_INT_RISING:
++            if (!was_input_high && input_high) {
++                s->status |= bit;
++            }
++            break;
++        case GPIO_INT_FALLING:
++            if (was_input_high && !input_high) {
++                s->status |= bit;
++            }
++            break;
++        case GPIO_INT_ANY_EDGE:
++            if (was_input_high != input_high) {
++                s->status |= bit;
++            }
++            break;
++        case GPIO_INT_LOW:
++            if (!input_high) {
++                s->status |= bit;
++            }
++            break;
++        case GPIO_INT_HIGH:
++            if (input_high) {
++                s->status |= bit;
++            }
++            break;
++        }
++    }
++}
++
++static void refresh_pads(ESP32S3GPIOState *s, uint64_t pins)
++{
++    pins &= GPIO_VALID_MASK;
++    while (pins) {
++        unsigned pin = ctz64(pins);
++        refresh_pad(s, pin);
++        pins &= pins - 1;
++    }
++    update_interrupt(s);
++}
++
++static void gpio_input(void *opaque, int pin, int level)
++{
++    ESP32S3GPIOState *s = opaque;
++    if (valid_pad(pin) && level >= -1 && level <= 1) {
++        s->external[pin] = level;
++        refresh_pads(s, BIT_ULL(pin));
++    }
++}
++
++static int register_index(hwaddr addr, hwaddr base, int count)
++{
++    if (addr < base || addr >= base + count * 4) {
++        return -1;
++    }
++    return (addr - base) / 4;
++}
+@@ -23 +142 @@
+-static void esp32s3_gpio_init(Object *obj)
++static uint64_t gpio_read(void *opaque, hwaddr addr, unsigned size)
+@@ -25,2 +144,27 @@ static void esp32s3_gpio_init(Object *obj)
+-    /* Set the default value for the property */
+-    object_property_set_int(obj, "strap_mode", ESP32S3_STRAP_MODE_FLASH_BOOT, &error_fatal);
++    ESP32S3GPIOState *s = opaque;
++    int index;
++    switch (addr) {
++    case 0x04: return (uint32_t)s->output;
++    case 0x10: return s->output >> 32;
++    case 0x20: return (uint32_t)s->output_enable;
++    case 0x2c: return s->output_enable >> 32;
++    case 0x38: return s->strap_mode;
++    case 0x3c: return (uint32_t)s->input;
++    case 0x40: return s->input >> 32;
++    case 0x44: return (uint32_t)s->status;
++    case 0x50: return s->status >> 32;
++    case 0x5c: return (uint32_t)(s->status & s->irq_enabled);
++    case 0x68: return (s->status & s->irq_enabled) >> 32;
++    case 0x14c: return (uint32_t)s->status;
++    case 0x150: return s->status >> 32;
++    }
++    index = register_index(addr, GPIO_PIN0, ESP32S3_GPIO_PADS);
++    if (valid_pad(index)) {
++        return s->pin_cfg[index];
++    }
++    index = register_index(addr, GPIO_FUNC0_IN, ESP32S3_GPIO_MATRIX_INPUTS);
++    if (index >= 0) {
++        return s->matrix_in[index];
++    }
++    index = register_index(addr, GPIO_FUNC0_OUT, ESP32S3_GPIO_PADS);
++    return valid_pad(index) ? s->matrix_out[index] : 0;
+@@ -29,2 +173,127 @@ static void esp32s3_gpio_init(Object *obj)
+-/* If we need to override any function from the parent (reset, realize, ...), it shall be done
+- * in this class_init function */
++static void gpio_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    ESP32S3GPIOState *s = opaque;
++    uint64_t low = (uint32_t)value & (uint32_t)GPIO_VALID_MASK;
++    uint64_t high = (value << 32) & GPIO_VALID_MASK;
++    uint64_t previous_output = s->output;
++    uint64_t previous_enable = s->output_enable;
++    int index;
++    switch (addr) {
++    case 0x04: s->output = (s->output & ~UINT64_C(0xffffffff)) | low; break;
++    case 0x08: s->output |= low; break;
++    case 0x0c: s->output &= ~low; break;
++    case 0x10: s->output = (uint32_t)s->output | high; break;
++    case 0x14: s->output |= high; break;
++    case 0x18: s->output &= ~high; break;
++    case 0x20: s->output_enable = (s->output_enable & ~UINT64_C(0xffffffff)) | low; break;
++    case 0x24: s->output_enable |= low; break;
++    case 0x28: s->output_enable &= ~low; break;
++    case 0x2c: s->output_enable = (uint32_t)s->output_enable | high; break;
++    case 0x30: s->output_enable |= high; break;
++    case 0x34: s->output_enable &= ~high; break;
++    case 0x48: s->status |= low; break;
++    case 0x54: s->status |= high; break;
++    case 0x4c:
++    case 0x58: {
++        uint64_t cleared = addr == 0x4c ? low : high;
++        s->status &= ~cleared;
++        refresh_pads(s, cleared & s->irq_enabled);
++        return;
++    }
++    default:
++        index = register_index(addr, GPIO_PIN0, ESP32S3_GPIO_PADS);
++        if (valid_pad(index)) {
++            uint64_t bit = BIT_ULL(index);
++            s->pin_cfg[index] = value & MAKE_64BIT_MASK(0, 18);
++            s->irq_enabled &= ~bit;
++            if (value & GPIO_PIN_INT_ENABLE) {
++                s->irq_enabled |= bit;
++            }
++            refresh_pads(s, bit);
++            return;
++        }
++        index = register_index(addr, GPIO_FUNC0_IN, ESP32S3_GPIO_MATRIX_INPUTS);
++        if (index >= 0) {
++            s->matrix_in[index] = value & 0xff;
++            return;
++        }
++        index = register_index(addr, GPIO_FUNC0_OUT, ESP32S3_GPIO_PADS);
++        if (valid_pad(index)) {
++            s->matrix_out[index] = value & 0xfff;
++            refresh_pads(s, BIT_ULL(index));
++        }
++        return;
++    }
++    refresh_pads(s, (s->output ^ previous_output) |
++                   (s->output_enable ^ previous_enable));
++}
++
++static uint64_t iomux_read(void *opaque, hwaddr addr, unsigned size)
++{
++    ESP32S3GPIOState *s = opaque;
++    int pin = register_index(addr, GPIO_MUX_PIN0, ESP32S3_GPIO_PADS);
++    return valid_pad(pin) ? s->iomux[pin] : 0;
++}
++
++static void iomux_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    ESP32S3GPIOState *s = opaque;
++    int pin = register_index(addr, GPIO_MUX_PIN0, ESP32S3_GPIO_PADS);
++    if (valid_pad(pin)) {
++        s->iomux[pin] = value & 0x7fff;
++        refresh_pads(s, BIT_ULL(pin));
++    }
++}
++
++static const MemoryRegionOps gpio_ops = {
++    .read = gpio_read,
++    .write = gpio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static const MemoryRegionOps iomux_ops = {
++    .read = iomux_read,
++    .write = iomux_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void gpio_reset_hold(Object *object, ResetType type)
++{
++    ESP32S3GPIOState *s = ESP32S3_GPIO(object);
++    s->output = 0;
++    s->output_enable = 0;
++    s->input = 0;
++    s->status = 0;
++    s->irq_enabled = 0;
++    memset(s->pin_cfg, 0, sizeof(s->pin_cfg));
++    memset(s->iomux, 0, sizeof(s->iomux));
++    memset(s->matrix_in, 0, sizeof(s->matrix_in));
++    for (int pin = 0; pin < ESP32S3_GPIO_PADS; pin++) {
++        s->matrix_out[pin] = GPIO_MATRIX_LATCH;
++    }
++    refresh_pads(s, GPIO_VALID_MASK);
++}
++
++static void esp32s3_gpio_init(Object *object)
++{
++    ESP32S3GPIOState *s = ESP32S3_GPIO(object);
++    SysBusDevice *bus = SYS_BUS_DEVICE(object);
++    memset(s->external, -1, sizeof(s->external));
++    memory_region_init_io(&s->gpio_mmio, object, &gpio_ops, s, "esp32s3.gpio", 0x1000);
++    memory_region_init_io(&s->iomux_mmio, object, &iomux_ops, s, "esp32s3.iomux", 0x1000);
++    sysbus_init_mmio(bus, &s->gpio_mmio);
++    sysbus_init_mmio(bus, &s->iomux_mmio);
++    sysbus_init_irq(bus, &s->irq);
++    qdev_init_gpio_in_named(DEVICE(s), gpio_input, "pad-in", ESP32S3_GPIO_PADS);
++    qdev_init_gpio_out_named(DEVICE(s), s->pad_level, "pad-level", ESP32S3_GPIO_PADS);
++    qdev_init_gpio_out_named(DEVICE(s), s->pad_driven, "pad-driven", ESP32S3_GPIO_PADS);
++}
++
++static Property gpio_properties[] = {
++    DEFINE_PROP_UINT32("strap_mode", ESP32S3GPIOState, strap_mode,
++                       ESP32S3_STRAP_MODE_FLASH_BOOT),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
+@@ -32,0 +302,3 @@ static void esp32s3_gpio_class_init(ObjectClass *klass, void *data)
++    ResettableClass *reset = RESETTABLE_CLASS(klass);
++    reset->phases.hold = gpio_reset_hold;
++    device_class_set_props(DEVICE_CLASS(klass), gpio_properties);
+@@ -37 +309 @@ static const TypeInfo esp32s3_gpio_info = {
+-    .parent = TYPE_ESP32_GPIO,
++    .parent = TYPE_SYS_BUS_DEVICE,
+diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
+index 4a24a04..9845da9 100644
+--- a/hw/xtensa/esp32s3.c
++++ b/hw/xtensa/esp32s3.c
+@@ -775,0 +776,4 @@ static void esp32s3_machine_init(MachineState *machine)
++        mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpio), 1);
++        memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
++        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpio), 0,
++                           qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
+@@ -873 +876,0 @@ static void esp32s3_machine_init(MachineState *machine)
+-    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.iomux", DR_REG_IO_MUX_BASE, 0x2000);
+diff --git a/include/hw/gpio/esp32s3_gpio.h b/include/hw/gpio/esp32s3_gpio.h
+index 7d6bb4b..467bc48 100644
+--- a/include/hw/gpio/esp32s3_gpio.h
++++ b/include/hw/gpio/esp32s3_gpio.h
+@@ -6 +5,0 @@
+-#include "esp32_gpio.h"
+@@ -16,2 +15,23 @@
+-typedef struct ESP32S3State {
+-    Esp32GpioState parent;
++#define ESP32S3_GPIO_PADS 49
++#define ESP32S3_GPIO_MATRIX_INPUTS 256
++
++typedef struct ESP32S3GPIOState {
++    SysBusDevice parent_obj;
++    MemoryRegion gpio_mmio;
++    MemoryRegion iomux_mmio;
++    qemu_irq irq;
++    qemu_irq pad_level[ESP32S3_GPIO_PADS];
++    qemu_irq pad_driven[ESP32S3_GPIO_PADS];
++    uint32_t strap_mode;
++    uint64_t output;
++    uint64_t output_enable;
++    uint64_t input;
++    uint64_t status;
++    uint64_t irq_enabled;
++    uint64_t driven;
++    uint64_t levels;
++    int8_t external[ESP32S3_GPIO_PADS];
++    uint32_t pin_cfg[ESP32S3_GPIO_PADS];
++    uint32_t iomux[ESP32S3_GPIO_PADS];
++    uint32_t matrix_in[ESP32S3_GPIO_MATRIX_INPUTS];
++    uint32_t matrix_out[ESP32S3_GPIO_PADS];
+@@ -21 +41 @@ typedef struct ESP32S3GPIOClass {
+-    Esp32GpioClass parent;
++    SysBusDeviceClass parent;
+diff --git a/meson.build b/meson.build
+index 7f28871..f0ec7a8 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1230,3 +1230,5 @@ if not get_option('slirp').auto() or have_system
+-  slirp = declare_dependency(dependencies: [slirp_dep],
+-                          compile_args: slirp_cflags,
+-                          version: slirp_dep.version())
++  if slirp_dep.found()
++    slirp = declare_dependency(dependencies: [slirp_dep],
++                              compile_args: slirp_cflags,
++                              version: slirp_dep.version())
++  endif

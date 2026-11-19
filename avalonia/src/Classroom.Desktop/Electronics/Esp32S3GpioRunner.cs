@@ -12,11 +12,13 @@ public static class Esp32S3GpioRunner
     static readonly SemaphoreSlim slots = new(1, 1);
 
     public static async Task Run(Esp32S3SketchImage sketch, string runtimePath,
-        Func<Esp32S3GpioSession, CancellationToken, Task> simulate, CancellationToken cancellation)
+        Func<Esp32S3GpioSession, CancellationToken, Task> simulate, CancellationToken cancellation,
+        IReadOnlyDictionary<int, int>? initialAnalog = null)
     {
         ArgumentNullException.ThrowIfNull(simulate);
         if (!OperatingSystem.IsWindows()) throw new IOException("Изоляция ESP32-S3 требует Windows 10 или новее.");
         var flash = Esp32S3Foundation.CopyArduinoFlash(sketch);
+        var firstVoltages = Esp32S3GpioSession.CopyAnalogInputs(initialAnalog);
         await slots.WaitAsync(cancellation);
         var scratch = Esp32S3Compiler.Scratch();
         try
@@ -24,7 +26,7 @@ public static class Esp32S3GpioRunner
             var runtime = await CompilerRuntime.Prepare(runtimePath, cancellation, extraDirectory: "sandbox-xtensa");
             Directory.CreateDirectory(scratch);
             await File.WriteAllBytesAsync(Path.Combine(scratch, "flash.bin"), flash, cancellation);
-            string[] args =
+            List<string> args =
             [
                 "-machine", "esp32s3", "-display", "none", "-monitor", "none", "-nic", "none", "-no-reboot",
                 "-accel", "tcg,tb-size=32,thread=single",
@@ -34,10 +36,17 @@ public static class Esp32S3GpioRunner
                 "-L", Path.Combine(runtime, "sandbox-xtensa", "qemu", "share", "qemu"),
                 "-drive", "file=flash.bin,if=mtd,format=raw", "-qtest", "stdio", "-qtest-log", "NUL"
             ];
+            if (firstVoltages.Any(voltage => voltage != 0))
+            {
+                // Configure the circuit before the guest can read its first sample in setup().
+                args.Add("-global");
+                args.Add("driver=esp32s3.adc,property=initial-uv,value=" + string.Join(':',
+                    firstVoltages.Select(value => value.ToString(CultureInfo.InvariantCulture))));
+            }
             await WindowsSandboxProcess.RunControlled(Esp32S3Compiler.Emulator(runtime), args, runtime, scratch,
                 async (responses, commands, lifetime) =>
                 {
-                    var session = new Esp32S3GpioSession(responses, commands, lifetime);
+                    var session = new Esp32S3GpioSession(responses, commands, lifetime, firstVoltages);
                     using (var startup = CancellationTokenSource.CreateLinkedTokenSource(lifetime))
                     {
                         startup.CancelAfter(TimeSpan.FromSeconds(5));
@@ -61,6 +70,7 @@ public sealed class Esp32S3GpioSession
     const uint Gpio = 0x60004000;
     const uint Iomux = 0x60009000;
     const string PadDevice = "/machine/soc/gpio";
+    const string AdcDevice = "/machine/soc/adc";
     const int SerialQueueCapacity = 4096;
     const int SerialReadCapacity = 4096;
     const int UartFifoCapacity = 128;
@@ -70,38 +80,69 @@ public sealed class Esp32S3GpioSession
     readonly CancellationToken lifetime;
     readonly SemaphoreSlim exchangeGate = new(1, 1);
     readonly Dictionary<int, bool?> previousInputs = [];
+    readonly int[] previousAnalog;
     readonly Queue<byte>[] serialInputs = [new(), new(), new()];
     readonly Decoder[] serialDecoders = [Encoding.UTF8.GetDecoder(), Encoding.UTF8.GetDecoder(), Encoding.UTF8.GetDecoder()];
     readonly byte[] serialBytes = new byte[SerialReadCapacity];
     readonly char[] serialChars = new char[Encoding.UTF8.GetMaxCharCount(SerialReadCapacity)];
     bool failed;
     public bool SupportsSerial { get; private set; }
+    public bool SupportsAnalog { get; private set; }
 
-    internal Esp32S3GpioSession(StreamReader responses, Stream commands, CancellationToken lifetime)
+    internal Esp32S3GpioSession(StreamReader responses, Stream commands, CancellationToken lifetime, int[] firstVoltages)
     {
         this.responses = responses;
         this.commands = commands;
         this.lifetime = lifetime;
+        previousAnalog = firstVoltages;
     }
 
     internal async Task Probe(CancellationToken cancellation)
     {
         await SetPad(0, null, cancellation);
-        const string command = "classroom_uart_version";
+        SupportsSerial = await ProbeExtension("classroom_uart_version", "UART", cancellation);
+        SupportsAnalog = await ProbeExtension("classroom_adc_version", "ADC", cancellation);
+    }
+
+    async Task<bool> ProbeExtension(string command, string extension, CancellationToken cancellation)
+    {
         var version = await Request(command, cancellation);
-        if (version == $"FAIL Unknown command '{command}'") return;
-        if (version != "OK 1") throw new InvalidDataException("Неизвестная версия протокола UART ESP32-S3.");
-        SupportsSerial = true;
+        if (version == $"FAIL Unknown command '{command}'") return false;
+        if (version != "OK 1") throw new InvalidDataException($"Неизвестная версия протокола {extension} ESP32-S3.");
+        return true;
+    }
+
+    internal static int[] CopyAnalogInputs(IReadOnlyDictionary<int, int>? inputs)
+    {
+        var result = new int[Esp32S3Board.AnalogGpioCount];
+        if (inputs is null) return result;
+        foreach (var (gpio, voltage) in inputs)
+        {
+            if (!Esp32S3Board.IsAnalogGpio(gpio) || voltage is < 0 or > 3_600_000)
+                throw new ArgumentOutOfRangeException(nameof(inputs), "Аналоговый вход ESP32-S3 вне диапазона.");
+            result[gpio - 1] = voltage;
+        }
+        return result;
     }
 
     public Task<IReadOnlyDictionary<int, Esp32S3PadState>> ExchangePads(
-        IReadOnlyDictionary<int, bool?> inputs, CancellationToken cancellation = default)
+        IReadOnlyDictionary<int, bool?> inputs, CancellationToken cancellation = default,
+        IReadOnlyDictionary<int, int>? analog = null)
     {
         var requested = inputs.ToDictionary(pair => pair.Key, pair => pair.Value);
         if (requested.Keys.Any(pin => pin < 0 || pin is >= 22 and <= 25 || pin > 48))
             throw new ArgumentOutOfRangeException(nameof(inputs), "GPIO отсутствует у ESP32-S3.");
+        var voltages = analog is not null && SupportsAnalog ? CopyAnalogInputs(analog) : null;
         return Exchange<IReadOnlyDictionary<int, Esp32S3PadState>>(async token =>
         {
+            if (voltages is not null)
+                for (var slot = 0; slot < voltages.Length; slot++)
+                {
+                    var voltage = voltages[slot];
+                    if (previousAnalog[slot] == voltage) continue;
+                    await Send(FormattableString.Invariant($"set_irq_in {AdcDevice} input-uv {slot} {voltage}"), token);
+                    previousAnalog[slot] = voltage;
+                }
             foreach (var (pin, old) in previousInputs.ToArray())
             {
                 if (requested.ContainsKey(pin)) continue;

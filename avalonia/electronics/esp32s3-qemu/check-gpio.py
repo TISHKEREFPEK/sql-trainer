@@ -14,6 +14,7 @@ import time
 
 GPIO = 0x60004000
 IOMUX = 0x60009000
+SENS = 0x60008800
 DEVICE = "/machine/soc/gpio"
 GPIO_INPUT = 0x1200
 PULL_UP = 1 << 8
@@ -126,6 +127,33 @@ def check_uart(qtest):
         assert bytes(qtest.read(fifo) for _ in data) == data
 
 
+def check_adc(qtest):
+    assert qtest.command("classroom_adc_version") == "1"
+    for unit, (ctrl, attenuation) in enumerate(((0x0C, 0x14), (0x30, 0x38))):
+        address = SENS + ctrl
+        start_force, start, done = 1 << 18, 1 << 17, 1 << 16
+        pad_force, channel = 1 << 31, 9
+        config = pad_force | start_force | (1 << (19 + channel))
+        pad = unit * 10 + channel
+        qtest.command(f"set_irq_in /machine/soc/adc input-uv {pad} 1550000")
+        assert qtest.read(SENS + attenuation) == 0xFFFFFFFF
+
+        def sample(settings):
+            qtest.write(address, settings)
+            assert qtest.read(address) & done == 0
+            qtest.write(address, settings | start)
+            result = qtest.read(address)
+            assert result & done
+            return result & 0xFFFF
+
+        assert sample(config) == 2048
+        qtest.write(SENS + attenuation, 0)
+        assert sample(config) == 4095
+        qtest.command(f"set_irq_in /machine/soc/adc input-uv {pad} 475000")
+        assert sample(config) == 2048
+        assert sample(pad_force | start_force) == 0
+
+
 def check_registers(qtest):
     low_pin = 2
     high_pin = 39
@@ -222,6 +250,8 @@ def main():
         print("ESP32-S3 GPIO register and pad checks passed")
         check_uart(qtest)
         print("ESP32-S3 UART RX capacity and TX overflow checks passed")
+        check_adc(qtest)
+        print("ESP32-S3 RTC ADC channel, start/done and attenuation checks passed")
     if args.flash:
         flash = args.flash.resolve(strict=True)
         if flash.stat().st_size != 4 * 1024 * 1024:

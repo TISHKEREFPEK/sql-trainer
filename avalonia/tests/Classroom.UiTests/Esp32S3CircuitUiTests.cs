@@ -8,6 +8,7 @@ using Avalonia.VisualTree;
 using Classroom.Contracts;
 using Classroom.Desktop;
 using Classroom.Desktop.Electronics;
+using System.Text.RegularExpressions;
 using Xunit;
 using Ellipse = Avalonia.Controls.Shapes.Ellipse;
 
@@ -53,6 +54,74 @@ public sealed class Esp32S3CircuitUiTests
     public Task SerialMonitorExchangesUtf8OnEachS3UartAndKeepsTheJournal() =>
         HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
             .Dispatch(CheckSerialUi, CancellationToken.None);
+
+    [Esp32S3GpioFact]
+    public Task PotentiometerSuppliesTheFirstSampleAndChangesRunningArduinoAdc() =>
+        HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
+            .Dispatch(CheckAnalogUi, CancellationToken.None);
+
+    static async Task<bool> CheckAnalogUi()
+    {
+        await using var classroom = await LiveClassroom.Start();
+        ThemeManager.Apply(new());
+        var project = new CircuitProject
+        {
+            Code = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "fixtures", "esp32s3-adc.ino")),
+            Parts =
+            [
+                new("board", PartKind.Esp32S3, 270, 90, ModelId: Esp32S3Board.ModelId),
+                new("pot", PartKind.Pot3, 45, 125, 10_000, Setting: 0.25),
+                new("reference", PartKind.AnalogSensor, 720, 125, 0.775)
+            ],
+            Wires =
+            [
+                new("low", new("pot", "1"), new("board", Esp32S3Board.Ground)),
+                new("high", new("pot", "3"), new("board", Esp32S3Board.V3)),
+                new("wiper", new("pot", "W"), new("board", Esp32S3Board.Gpio(1)!)),
+                new("reference-out", new("reference", "+"), new("board", Esp32S3Board.Gpio(11)!)),
+                new("reference-return", new("reference", "−"), new("board", Esp32S3Board.Ground))
+            ]
+        };
+        var folder = Path.Combine(Path.GetTempPath(), "classroom-s3-adc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "project.json");
+        File.WriteAllText(path, project.Serialize());
+        var window = new MainWindow(false, false) { Width = 1320, Height = 940 };
+        using var editor = new ElectronicsScreen(window, path, classroom.Student);
+        window.Preview(editor);
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            string Output() => string.Concat(editor.LocalHistory!.Changes
+                .Where(c => c.Kind == "serial-output" && c.SerialIo?.Port == 0).Select(c => c.SerialIo!.Text));
+            editor.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Запустить")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var firstSample = new Regex(@"ADC_START=(\d+),(\d+)\r?\n");
+            await WaitFor(() => firstSample.IsMatch(Output()), TimeSpan.FromMinutes(3));
+            var startup = firstSample.Match(Output());
+            Assert.InRange(int.Parse(startup.Groups[1].Value), 1087, 1092);
+            Assert.Equal("1024", startup.Groups[2].Value);
+
+            var track = editor.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "CircuitInputSlider" &&
+                AutomationProperties.GetName(b)?.StartsWith("Положение", StringComparison.Ordinal) == true);
+            Point At(double fraction) => track.TranslatePoint(new(10 + (track.Width - 20) * fraction, 22), window)!.Value;
+            var start = At(0.25);
+            var end = At(0.75);
+            window.MouseDown(start, MouseButton.Left);
+            window.MouseMove(end, RawInputModifiers.LeftMouseButton);
+            window.MouseUp(end, MouseButton.Left);
+            var updated = new Regex(@"ADC_SAMPLE=(?:326[6-9]|327[0-3]),1024\r?\n");
+            await WaitFor(() => updated.IsMatch(Output()), TimeSpan.FromSeconds(8));
+            editor.Suspend();
+            var saved = CircuitProject.Parse(File.ReadAllText(path));
+            Assert.Equal(0.75, saved.Parts.Single(p => p.Id == "pot").Setting);
+            Assert.Contains(editor.LocalHistory!.Changes, c => c.Kind == "control-change");
+            Assert.Equal(saved.Serialize(), editor.LocalHistory.Replay());
+            return true;
+        }
+        finally { window.Close(); }
+    }
 
     static async Task<bool> CheckSerialUi()
     {

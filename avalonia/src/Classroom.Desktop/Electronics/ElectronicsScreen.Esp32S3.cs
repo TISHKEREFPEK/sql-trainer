@@ -15,13 +15,15 @@ public sealed partial class ElectronicsScreen
             .Where(t => t.Part == board.Id).Select(t => t.Pin).ToHashSet();
         var wired = Enumerable.Range(0, Esp32S3Board.GpioCount)
             .Where(i => Esp32S3Board.Gpio(i) is { } pin && terminals.Contains(pin)).ToArray();
-        var initial = Esp32S3Board.Inputs(board, CircuitSolver.Solve(project), wired, null);
+        var circuit = CircuitSolver.Solve(project);
+        var initial = Esp32S3Board.Inputs(board, circuit, wired, null);
+        var initialAnalog = Esp32S3Board.AnalogInputs(board, circuit, wired);
         var execution = Esp32S3GpioRunner.Run(image, runtimePath, async (session, lifetime) =>
         {
             await session.ExchangePads(initial, lifetime);
             connected.TrySetResult(session);
             await Task.Delay(Timeout.InfiniteTimeSpan, lifetime);
-        }, cancellation);
+        }, cancellation, initialAnalog);
 
         s3Execution = execution;
         await Task.WhenAny(connected.Task, execution).WaitAsync(cancellation);
@@ -41,7 +43,8 @@ public sealed partial class ElectronicsScreen
         var session = s3Session ?? throw new IOException("Связь с эмулятором ESP32-S3 завершена.");
         var before = CircuitSolver.Solve(project, outputs);
         var inputs = Esp32S3Board.Inputs(board, before, s3WiredPins, outputs);
-        var pins = Esp32S3Board.Drives(await session.ExchangePads(inputs, cancellation));
+        var analog = session.SupportsAnalog ? Esp32S3Board.AnalogInputs(board, before, s3WiredPins) : null;
+        var pins = Esp32S3Board.Drives(await session.ExchangePads(inputs, cancellation, analog));
         var frame = session.SupportsSerial ? await session.ExchangeSerial(serial, cancellation) : null;
         return (pins, frame);
     }

@@ -7,6 +7,8 @@ public static class Esp32S3Board
     public const string Ground = "J1.22:GND", V3 = "J1.1:3V3", V5 = "J1.21:5V", Reset = "J1.3:RST";
     public const int GpioCount = 49, HeaderLength = 22;
     public const double LogicVoltage = 3.3;
+    internal const int AnalogGpioCount = 20;
+    internal static bool IsAnalogGpio(int gpio) => gpio is >= 1 and <= AnalogGpioCount;
 
     // DevKitC-1 v1.1, headers J1 and J3 in their physical top-to-bottom order.
     public static readonly string[] Pins =
@@ -71,5 +73,17 @@ public static class Esp32S3Board
         foreach (var (pin, state) in frame)
             drives[pin] = new(state.Driven, state.OutputHigh ? LogicVoltage : 0, state.PullUp, PullDown: state.PullDown);
         return drives;
+    }
+
+    internal static Dictionary<int, int> AnalogInputs(CircuitPart board, CircuitResult result, int[] wired)
+    {
+        var voltages = new Dictionary<int, int>();
+        foreach (var gpio in wired.Where(IsAnalogGpio))
+        {
+            var terminal = new Terminal(board.Id, Gpio(gpio)!);
+            if (!result.ReferencedTerminals.Contains(terminal)) continue;
+            voltages.Add(gpio, (int)Math.Round(Math.Max(0, result.Voltages[terminal]) * 1_000_000));
+        }
+        return voltages;
     }
 }

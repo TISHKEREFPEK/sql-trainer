@@ -18,6 +18,199 @@ index d40d21d..a7a018a 100644
 @@ -189 +196 @@ char *qmp_ringbuf_read(const char *device, int64_t size,
 -    ringbuf_chr_read(chr, read_data, size);
 +    qemu_chr_ringbuf_read(chr, read_data, size, NULL);
+diff --git a/hw/adc/esp32s3_adc.c b/hw/adc/esp32s3_adc.c
+new file mode 100644
+index 0000000..92b7264
+--- /dev/null
++++ b/hw/adc/esp32s3_adc.c
+@@ -0,0 +1,181 @@
++/*
++ * ESP32-S3 RTC SAR ADC single-shot controller.
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "hw/adc/esp32s3_adc.h"
++#include "hw/qdev-properties.h"
++#include "qapi/error.h"
++#include "qemu/bitops.h"
++#include "qemu/cutils.h"
++#include "qemu/module.h"
++
++enum {
++    READER1 = 0x00, READER1_STATUS = 0x04, MEASURE1 = 0x0c,
++    ADC1_MUX = 0x10, ATTEN1 = 0x14,
++    READER2 = 0x24, READER2_STATUS = 0x28, MEASURE2 = 0x30,
++    ATTEN2 = 0x38, SLAVE_ADDRESS1 = 0x40,
++};
++
++#define PAD_FORCE BIT(31)
++#define START_FORCE BIT(18)
++#define START BIT(17)
++#define DONE BIT(16)
++#define MEASURE_WRITE_MASK (PAD_FORCE | (0xfffu << 19) | START_FORCE | START)
++#define ADC_MAX 4095
++
++static uint32_t convert(ESP32S3ADCState *s, int unit, uint32_t control)
++{
++    static const int full_scale_uv[] = { 950000, 1250000, 1750000, 3100000 };
++    unsigned pads = extract32(control, 19, 12);
++    int channel;
++    int voltage;
++    int scale;
++    uint32_t raw;
++
++    /* RTC self-calibration selects internal ground with all pads disabled. */
++    if (!(control & PAD_FORCE) || !pads || (pads & (pads - 1))) {
++        return 0;
++    }
++    channel = ctz32(pads);
++    if (channel >= ESP32S3_ADC_CHANNELS) {
++        return 0;
++    }
++    voltage = s->microvolts[unit * ESP32S3_ADC_CHANNELS + channel];
++    scale = full_scale_uv[extract32(s->registers[(unit ? ATTEN2 : ATTEN1) / 4],
++                                    channel * 2, 2)];
++    raw = ((uint64_t)MIN(voltage, scale) * ADC_MAX + scale / 2) / scale;
++    if (s->registers[(unit ? READER2 : READER1) / 4] & BIT(unit ? 29 : 28)) {
++        raw ^= ADC_MAX;
++    }
++    return raw;
++}
++
++static uint64_t sens_read(void *opaque, hwaddr addr, unsigned size)
++{
++    ESP32S3ADCState *s = opaque;
++    return s->registers[addr / 4];
++}
++
++static void sens_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
++{
++    ESP32S3ADCState *s = opaque;
++    uint32_t *reg = &s->registers[addr / 4];
++
++    switch (addr) {
++    case MEASURE1:
++    case MEASURE2: {
++        int unit = addr == MEASURE2;
++        uint32_t previous = *reg;
++
++        *reg = (val & MEASURE_WRITE_MASK) | (previous & (DONE - 1));
++        if ((val & (START | START_FORCE)) != (START | START_FORCE)) {
++            break;
++        }
++        if (!unit && (s->registers[ADC1_MUX / 4] & BIT(31))) {
++            break;
++        }
++        *reg |= (previous & START) ? (previous & DONE) : DONE;
++        if (!(previous & START)) {
++            *reg = (*reg & ~(DONE - 1)) | convert(s, unit, val);
++        }
++        break;
++    }
++    case READER1_STATUS:
++    case READER2_STATUS:
++        break;
++    case SLAVE_ADDRESS1:
++        *reg = val & 0x003fffff; /* RTC controller is idle between conversions. */
++        break;
++    default:
++        *reg = val;
++        break;
++    }
++}
++
++static const MemoryRegionOps sens_ops = {
++    .read = sens_read,
++    .write = sens_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void adc_input(void *opaque, int index, int microvolts)
++{
++    ESP32S3ADCState *s = opaque;
++    s->microvolts[index] = MIN(MAX(microvolts, 0), 3600000);
++}
++
++static void adc_reset_hold(Object *obj, ResetType type)
++{
++    ESP32S3ADCState *s = ESP32S3_ADC(obj);
++    memset(s->registers, 0, sizeof(s->registers));
++    s->registers[READER1 / 4] = BIT(18) | 2;
++    s->registers[READER2 / 4] = BIT(18) | 2;
++    s->registers[ATTEN1 / 4] = UINT32_MAX;
++    s->registers[ATTEN2 / 4] = UINT32_MAX;
++}
++
++static void adc_realize(DeviceState *dev, Error **errp)
++{
++    ESP32S3ADCState *s = ESP32S3_ADC(dev);
++    g_auto(GStrv) values = NULL;
++
++    if (!s->initial_uv) {
++        return;
++    }
++    values = g_strsplit(s->initial_uv, ":", G_N_ELEMENTS(s->microvolts) + 1);
++    if (g_strv_length(values) != G_N_ELEMENTS(s->microvolts)) {
++        error_setg(errp, "ESP32-S3 ADC needs one initial voltage per pad");
++        return;
++    }
++    for (int i = 0; i < G_N_ELEMENTS(s->microvolts); i++) {
++        int value;
++
++        if (qemu_strtoi(values[i], NULL, 10, &value) < 0 ||
++            value < 0 || value > 3600000) {
++            error_setg(errp, "ESP32-S3 ADC initial voltage outside 0-3600000 uV");
++            return;
++        }
++        s->microvolts[i] = value;
++    }
++}
++
++static void adc_init(Object *obj)
++{
++    ESP32S3ADCState *s = ESP32S3_ADC(obj);
++    memory_region_init_io(&s->sens, obj, &sens_ops, s, "esp32s3.sens",
++                          ESP32S3_SENS_SIZE);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->sens);
++    qdev_init_gpio_in_named(DEVICE(obj), adc_input, "input-uv",
++                           ESP32S3_ADC_UNITS * ESP32S3_ADC_CHANNELS);
++}
++
++static Property adc_properties[] = {
++    DEFINE_PROP_STRING("initial-uv", ESP32S3ADCState, initial_uv),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void adc_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->realize = adc_realize;
++    device_class_set_props(dc, adc_properties);
++    RESETTABLE_CLASS(klass)->phases.hold = adc_reset_hold;
++}
++
++static const TypeInfo adc_info = {
++    .name = TYPE_ESP32S3_ADC,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(ESP32S3ADCState),
++    .instance_init = adc_init,
++    .class_init = adc_class_init,
++};
++
++static void adc_register_types(void)
++{
++    type_register_static(&adc_info);
++}
++
++type_init(adc_register_types)
+diff --git a/hw/adc/meson.build b/hw/adc/meson.build
+index 7f7acc1..2c2c990 100644
+--- a/hw/adc/meson.build
++++ b/hw/adc/meson.build
+@@ -4,0 +5 @@ system_ss.add(when: 'CONFIG_ZYNQ', if_true: files('zynq-xadc.c'))
++system_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files('esp32s3_adc.c'))
 diff --git a/hw/gpio/esp32s3_gpio.c b/hw/gpio/esp32s3_gpio.c
 index 0a0e477..d2cc212 100644
 --- a/hw/gpio/esp32s3_gpio.c
@@ -325,18 +518,28 @@ index 0a0e477..d2cc212 100644
 -    .parent = TYPE_ESP32_GPIO,
 +    .parent = TYPE_SYS_BUS_DEVICE,
 diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
-index 4a24a04..39c7925 100644
+index 4a24a04..a63b751 100644
 --- a/hw/xtensa/esp32s3.c
 +++ b/hw/xtensa/esp32s3.c
-@@ -540 +540 @@ static void esp32s3_soc_init(Object *obj)
+@@ -63,0 +64 @@
++#include "hw/adc/esp32s3_adc.h"
+@@ -125,0 +127 @@ typedef struct Esp32s3SocState {
++    ESP32S3ADCState adc;
+@@ -540 +542 @@ static void esp32s3_soc_init(Object *obj)
 -    // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
 +    qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
-@@ -775,0 +776,4 @@ static void esp32s3_machine_init(MachineState *machine)
+@@ -642,0 +645 @@ static void esp32s3_machine_init(MachineState *machine)
++    object_initialize_child(OBJECT(ss), "adc", &ss->adc, TYPE_ESP32S3_ADC);
+@@ -775,0 +779,4 @@ static void esp32s3_machine_init(MachineState *machine)
 +        mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpio), 1);
 +        memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
 +        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpio), 0,
 +                           qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
-@@ -873 +876,0 @@ static void esp32s3_machine_init(MachineState *machine)
+@@ -777,0 +785,3 @@ static void esp32s3_machine_init(MachineState *machine)
++    sysbus_realize(SYS_BUS_DEVICE(&ss->adc), &error_fatal);
++    esp32s3_soc_add_periph_device(sys_mem, &ss->adc, DR_REG_SENS_BASE);
++
+@@ -873 +882,0 @@ static void esp32s3_machine_init(MachineState *machine)
 -    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.iomux", DR_REG_IO_MUX_BASE, 0x2000);
 diff --git a/include/chardev/char.h b/include/chardev/char.h
 index 01df55f..791a9c3 100644
@@ -347,6 +550,34 @@ index 01df55f..791a9c3 100644
 +int qemu_chr_ringbuf_read(Chardev *chr, uint8_t *buf, int len,
 +                          uint64_t *dropped);
 +
+diff --git a/include/hw/adc/esp32s3_adc.h b/include/hw/adc/esp32s3_adc.h
+new file mode 100644
+index 0000000..dd5e021
+--- /dev/null
++++ b/include/hw/adc/esp32s3_adc.h
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef HW_ADC_ESP32S3_ADC_H
++#define HW_ADC_ESP32S3_ADC_H
++
++#include "hw/sysbus.h"
++
++#define TYPE_ESP32S3_ADC "esp32s3.adc"
++#define ESP32S3_ADC_UNITS 2
++#define ESP32S3_ADC_CHANNELS 10
++#define ESP32S3_SENS_SIZE 0x50
++
++OBJECT_DECLARE_SIMPLE_TYPE(ESP32S3ADCState, ESP32S3_ADC)
++
++struct ESP32S3ADCState {
++    SysBusDevice parent_obj;
++    MemoryRegion sens;
++    char *initial_uv;
++    uint32_t registers[ESP32S3_SENS_SIZE / 4];
++    int microvolts[ESP32S3_ADC_UNITS * ESP32S3_ADC_CHANNELS];
++};
++
++#endif
 diff --git a/include/hw/gpio/esp32s3_gpio.h b/include/hw/gpio/esp32s3_gpio.h
 index 7d6bb4b..467bc48 100644
 --- a/include/hw/gpio/esp32s3_gpio.h
@@ -396,7 +627,7 @@ index 7f28871..f0ec7a8 100644
 +                              version: slirp_dep.version())
 +  endif
 diff --git a/system/qtest.c b/system/qtest.c
-index 12703a2..9539f7b 100644
+index 12703a2..d43f729 100644
 --- a/system/qtest.c
 +++ b/system/qtest.c
 @@ -25,0 +26 @@
@@ -452,7 +683,12 @@ index 12703a2..9539f7b 100644
 +    return true;
 +}
 +
-@@ -364,0 +416,3 @@ static void qtest_process_command(CharBackend *chr, gchar **words)
+@@ -364,0 +416,8 @@ static void qtest_process_command(CharBackend *chr, gchar **words)
++    if (!strcmp(command, "classroom_adc_version")) {
++        qtest_send_prefix(chr);
++        qtest_send(chr, "OK 1\n");
++        return;
++    }
 +    if (qtest_classroom_uart(chr, words)) {
 +        return;
 +    }

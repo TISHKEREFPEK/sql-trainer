@@ -7,6 +7,7 @@
     <Content Include="../fixtures/pico-science.json" Link="fixtures/pico-science.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../electronics/esp32s3-qemu/gpio-probe.ino" Link="fixtures/esp32s3-gpio.ino" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../electronics/esp32s3-qemu/adc-probe.ino" Link="fixtures/esp32s3-adc.ino" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../electronics/esp32s3-qemu/oled-probe.ino" Link="fixtures/esp32s3-oled.ino" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/Classroom.Desktop/Classroom.Desktop.csproj" />
     <ProjectReference Include="../../src/Classroom.Worker/Classroom.Worker.csproj" />
     <ProjectReference Include="../../src/Classroom.Server/Classroom.Server.csproj" ReferenceOutputAssembly="false" />

@@ -40,7 +40,7 @@ public static class Esp32S3Board
 
     internal static void ValidateRun(CircuitProject project, CircuitPart board)
     {
-        var unsupported = project.Parts.FirstOrDefault(p => p.Kind is PartKind.LcdI2c or PartKind.OledI2c or
+        var unsupported = project.Parts.FirstOrDefault(p => p.Kind is PartKind.LcdI2c or
             PartKind.TftSpi or PartKind.Dht11 or PartKind.Hcsr04 or PartKind.Ds18b20 or PartKind.Servo);
         if (unsupported is not null)
             throw new InvalidDataException($"«{PartLibrary.Name(unsupported)}»: для этой детали требуется периферия, которая пока недоступна в цифровом профиле ESP32-S3.");
@@ -85,5 +85,36 @@ public static class Esp32S3Board
             voltages.Add(gpio, (int)Math.Round(Math.Max(0, result.Voltages[terminal]) * 1_000_000));
         }
         return voltages;
+    }
+
+    internal static Esp32S3I2cDevice[] DisplayDevices(CircuitProject project, CircuitPart board, CircuitResult result)
+    {
+        var panels = project.Parts.Where(p => p.Kind == PartKind.OledI2c).ToArray();
+        if (panels.Length == 0) return [];
+        var nets = new CircuitConnections(project);
+        var pins = Enumerable.Range(0, GpioCount).Where(i => Gpio(i) is not null).ToArray();
+        var ground = new Terminal(board.Id, Ground);
+        int ConnectedGpio(Terminal endpoint)
+        {
+            var connected = pins.Where(i => nets.Same(endpoint, new(board.Id, Gpio(i)!))).Take(2).ToArray();
+            return connected.Length == 1 ? connected[0] : -1;
+        }
+        return panels.Select(panel =>
+        {
+            var supply = new Terminal(panel.Id, "VDD");
+            var low = new Terminal(panel.Id, "GND");
+            var data = new Terminal(panel.Id, "SDA");
+            var clock = new Terminal(panel.Id, "SCL");
+            var sda = ConnectedGpio(data);
+            var scl = ConnectedGpio(clock);
+            var voltage = result.Voltages[supply] - result.Voltages[low];
+            var powered = nets.Same(ground, low) && voltage is >= 3.0 and <= 5.5;
+            bool GoodSignal(Terminal signal) =>
+                !nets.Same(signal, ground) && !nets.Same(signal, new(board.Id, V3))
+                && !nets.Same(signal, new(board.Id, V5)) && !nets.Same(signal, supply)
+                && result.Voltages[signal] is >= 2.475 and <= 3.6;
+            var connected = sda >= 0 && scl >= 0 && sda != scl && GoodSignal(data) && GoodSignal(clock);
+            return new Esp32S3I2cDevice(panel.Id, (int)panel.Value, 128, 64, connected, powered, "ssd1306", sda, scl);
+        }).ToArray();
     }
 }

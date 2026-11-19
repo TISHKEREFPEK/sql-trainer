@@ -11,6 +11,7 @@ public sealed class OledDisplayFace : Control
 {
     readonly CircuitPart part;
     readonly OledFrame? frame;
+    internal OledFrame? Frame => frame;
     WriteableBitmap? bitmap;
     public OledDisplayFace(CircuitPart part,OledFrame? frame=null)
     {

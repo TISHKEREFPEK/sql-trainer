@@ -60,6 +60,95 @@ public sealed class Esp32S3CircuitUiTests
         HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
             .Dispatch(CheckAnalogUi, CancellationToken.None);
 
+    [Esp32S3GpioFact]
+    public Task WireDrawsOnTwoPoweredDisplaysThroughTheConfiguredPins() =>
+        HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
+            .Dispatch(CheckDisplays, CancellationToken.None);
+
+    static async Task<bool> CheckDisplays()
+    {
+        await using var classroom = await LiveClassroom.Start();
+        ThemeManager.Apply(new());
+        var project = new CircuitProject
+        {
+            Code = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "fixtures", "esp32s3-oled.ino")),
+            Parts =
+            [
+                new("board", PartKind.Esp32S3, 270, 70, ModelId: Esp32S3Board.ModelId),
+                new("first", PartKind.OledI2c, 50, 125, 60, ModelId: "oled-ssd1306-i2c"),
+                new("second", PartKind.OledI2c, 585, 75, 60, ModelId: "oled-ssd1306-i2c"),
+                new("unpowered", PartKind.OledI2c, 585, 290, 61, ModelId: "oled-ssd1306-i2c"),
+            ],
+            Wires =
+            [
+                new("d0", new("first", "SDA"), new("board", Esp32S3Board.Gpio(8)!)),
+                new("c0", new("first", "SCL"), new("board", Esp32S3Board.Gpio(9)!)),
+                new("p0", new("first", "VDD"), new("board", Esp32S3Board.V3)),
+                new("g0", new("first", "GND"), new("board", Esp32S3Board.Ground)),
+                new("d1", new("second", "SDA"), new("board", Esp32S3Board.Gpio(15)!)),
+                new("c1", new("second", "SCL"), new("board", Esp32S3Board.Gpio(16)!)),
+                new("p1", new("second", "VDD"), new("board", Esp32S3Board.V3)),
+                new("g1", new("second", "GND"), new("board", Esp32S3Board.Ground)),
+                new("du", new("unpowered", "SDA"), new("board", Esp32S3Board.Gpio(17)!)),
+                new("cu", new("unpowered", "SCL"), new("board", Esp32S3Board.Gpio(18)!)),
+                new("gu", new("unpowered", "GND"), new("board", Esp32S3Board.Ground)),
+            ]
+        };
+        var folder = Directory.CreateTempSubdirectory("classroom-s3-oled-");
+        var path = Path.Combine(folder.FullName, "project.json");
+        File.WriteAllText(path, project.Serialize());
+        var window = new MainWindow(false, false) { Width = 1320, Height = 940 };
+        using var editor = new ElectronicsScreen(window, path, classroom.Student);
+        window.Preview(editor);
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            string Output() => string.Concat(editor.LocalHistory!.Changes
+                .Where(c => c.Kind == "serial-output" && c.SerialIo?.Port == 0).Select(c => c.SerialIo!.Text));
+            editor.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Запустить")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitFor(() => Output().Contains("OLED_DRAW="), TimeSpan.FromMinutes(3));
+            Assert.Contains("WRONG_PINS=2", Output());
+            Assert.Contains("NO_POWER=2", Output());
+            Assert.Contains("WRITE_ONLY=0", Output());
+            Assert.Contains("OLED_DRAW=1,1", Output());
+            var faces = editor.GetVisualDescendants().OfType<OledDisplayFace>().ToArray();
+            Assert.Equal(3, faces.Length);
+            foreach (var (id, pattern) in new[] { ("first", 11), ("second", 101) })
+            {
+                var face = Assert.Single(faces, p => p.Frame?.Id == id);
+                Assert.True(face.Frame!.Display);
+                var memory = Convert.FromBase64String(face.Frame.Memory);
+                Assert.Equal(Enumerable.Range(pattern, 73).Select(i => (byte)i), memory.Take(73));
+            }
+            Assert.False(Assert.Single(faces, p => p.Frame?.Id == "unpowered").Frame!.Powered);
+            var transfers = editor.LocalHistory!.Changes.Where(c => c.I2cIo is not null).SelectMany(c => c.I2cIo!).ToArray();
+            Assert.Contains(transfers, t => t is { Ack: true, Controller: 0, Sda: 8, Scl: 9 } && t.Data.Length == 74);
+            Assert.Contains(transfers, t => t is { Ack: true, Controller: 1, Sda: 15, Scl: 16 } && t.Data.Length == 74);
+            Assert.Contains(transfers, t => t is { Ack: false, Controller: 0, Sda: 5, Scl: 6, Address: 60 });
+            Assert.Contains(transfers, t => t is { Ack: false, Controller: 1, Address: 61 });
+            if (Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT") is { } output)
+            {
+                Directory.CreateDirectory(output);
+                using var frame = window.CaptureRenderedFrame();
+                frame!.Save(Path.Combine(output, "esp32s3-oled-two-buses.png"));
+            }
+            editor.Suspend();
+            var history = editor.LocalHistory;
+            Assert.Equal(project.Serialize(), history.Replay());
+            Assert.True(await editor.Synchronize());
+            var events = await classroom.Admin.Get<ElectronicsJournalEvents>(
+                $"teacher/electronics-journal/{classroom.StudentId}/{history.StreamId}/changes");
+            var delivered = events.Events.Where(e => e.Change.I2cIo is not null).SelectMany(e => e.Change.I2cIo!).ToArray();
+            Assert.Contains(delivered, t => t is { Ack: true, Controller: 0, Sda: 8, Scl: 9 } && t.Data.Length == 74);
+            Assert.Contains(delivered, t => t is { Ack: true, Controller: 1, Sda: 15, Scl: 16 } && t.Data.Length == 74);
+            Assert.Contains(delivered, t => t is { Ack: false, Controller: 1, Address: 61 });
+            return true;
+        }
+        finally { window.Close(); }
+    }
+
     static async Task<bool> CheckAnalogUi()
     {
         await using var classroom = await LiveClassroom.Start();

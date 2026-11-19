@@ -31,10 +31,14 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
             throw new InvalidDataException("Некорректные данные I2C в истории.");
         using var document=System.Text.Json.JsonDocument.Parse(json);
         var kinds=document.RootElement.GetProperty("parts").EnumerateArray().Select(p=>p.GetProperty("kind").GetString()).ToArray();
-        if(!kinds.Any(k=>k is "Uno" or "Mega" or "Pico"))throw new InvalidDataException("У обмена I2C отсутствует исполняемая плата.");
-        if(data.Any(t=>(t.Controller is not null||t.Software is not null||t.Sda is not null||t.Scl is not null)&&(!kinds.Contains("Pico")||t.Controller is not (0 or 1)||t.Software is null||
-            (t.Sda is null)!=(t.Scl is null)||t.Sda is <0 or >29||t.Scl is <0 or >29||t.Sda is not null&&t.Sda==t.Scl||t.Software==true&&t.Sda is null)))
-            throw new InvalidDataException("Некорректный контроллер или GPIO I2C в истории Pico.");
+        if(!kinds.Any(k=>k is "Uno" or "Mega" or "Pico" or "Esp32S3"))throw new InvalidDataException("У обмена I2C отсутствует исполняемая плата.");
+        var esp32 = kinds.Contains("Esp32S3");
+        var pico = kinds.Contains("Pico");
+        bool InvalidPin(int? pin) => esp32 ? pin is <0 or >=22 and <=25 or >48 : pin is <0 or >29;
+        if(data.Any(t=>(t.Controller is not null||t.Software is not null||t.Sda is not null||t.Scl is not null)&&
+            ((!pico && !esp32)||t.Controller is not (0 or 1)||t.Software is null||(esp32 && t.Software==true)||
+            (t.Sda is null)!=(t.Scl is null)||InvalidPin(t.Sda)||InvalidPin(t.Scl)||t.Sda is not null&&t.Sda==t.Scl||t.Software==true&&t.Sda is null)))
+            throw new InvalidDataException("Некорректный контроллер или GPIO I2C в истории.");
     }
     static void ValidateSerial(string json,string kind,ElectronicsSerialIo? data)
     {

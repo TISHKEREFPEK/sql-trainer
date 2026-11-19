@@ -62,7 +62,7 @@ class QTest:
 
 
 @contextmanager
-def open_qemu(executable, bios, flash=None, devices=()):
+def open_qemu(executable, bios, flash=None, devices=(), host_i2c=False):
     with tempfile.TemporaryDirectory(prefix="classroom-s3-qtest-") as folder:
         root = Path(folder)
         log = root / "uart0.log"
@@ -86,6 +86,8 @@ def open_qemu(executable, bios, flash=None, devices=()):
                 args += ["-chardev", f"ringbuf,id={name},size=16", "-serial", f"chardev:{name}"]
         for device in devices:
             args += ["-device", device]
+        if host_i2c:
+            args += ["-global", "driver=esp32s3.i2c,property=classroom-host,value=on"]
         with (root / "qemu.log").open("w+", encoding="utf-8", errors="replace") as diagnostics:
             process = subprocess.Popen(
                 args, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -184,6 +186,26 @@ def check_i2c_pin_selection(qtest):
         assert (matrix_input & 0xFF) == (0x80 | pin)
         assert (matrix_output & 0x1FF) == signal
         assert ((mux >> 12) & 7) == 1
+
+
+def check_i2c_host_pause(qtest, log):
+    assert qtest.command("classroom_i2c_version") == "1"
+    for port, pins in enumerate(((8, 9), (15, 16))):
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            wire = qtest.command(f"classroom_i2c_poll {port}")
+            if wire != "-":
+                break
+            time.sleep(.01)
+        else:
+            raise RuntimeError(f"I2C{port} did not send a request to the host")
+        seq, _, _, sda, scl, _, _, _, tx = wire.split(":")
+        assert (int(sda), int(scl)) == pins and tx == "a2"
+        instant = qtest.command("classroom_i2c_clock")
+        time.sleep(.1)
+        assert qtest.command("classroom_i2c_clock") == instant
+        qtest.command(f"classroom_i2c_reply {port} {seq}:1024:2:1:0:")
+        wait_uart(log, f"I2C{port}_MISSING=2")
 
 
 def check_registers(qtest):
@@ -304,6 +326,9 @@ def main():
                 assert f"I2C{port}_RESTART_OK=73" in output
             check_i2c_pin_selection(qtest)
         print("Arduino Wire and Wire1 verified independent EEPROMs, NACK, repeated START and pin selection")
+        with open_qemu(qemu, bios, args.i2c_flash, host_i2c=True) as (qtest, log):
+            check_i2c_host_pause(qtest, log)
+        print("ESP32-S3 I2C host exchange pauses virtual time, then resumes both controllers")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ public static class Esp32S3GpioRunner
 
     public static async Task Run(Esp32S3SketchImage sketch, string runtimePath,
         Func<Esp32S3GpioSession, CancellationToken, Task> simulate, CancellationToken cancellation,
-        IReadOnlyDictionary<int, int>? initialAnalog = null)
+        IReadOnlyDictionary<int, int>? initialAnalog = null, bool displayBus = false)
     {
         ArgumentNullException.ThrowIfNull(simulate);
         if (!OperatingSystem.IsWindows()) throw new IOException("Изоляция ESP32-S3 требует Windows 10 или новее.");
@@ -43,6 +43,11 @@ public static class Esp32S3GpioRunner
                 args.Add("driver=esp32s3.adc,property=initial-uv,value=" + string.Join(':',
                     firstVoltages.Select(value => value.ToString(CultureInfo.InvariantCulture))));
             }
+            if (displayBus)
+            {
+                args.Add("-global");
+                args.Add("driver=esp32s3.i2c,property=classroom-host,value=on");
+            }
             await WindowsSandboxProcess.RunControlled(Esp32S3Compiler.Emulator(runtime), args, runtime, scratch,
                 async (responses, commands, lifetime) =>
                 {
@@ -53,6 +58,8 @@ public static class Esp32S3GpioRunner
                         // Releasing the default floating pad confirms that this
                         // QEMU exposes the real pad interface, even on a blank board.
                         await session.Probe(startup.Token);
+                        if (displayBus && !await session.ProbeExtension("classroom_i2c_version", "I2C", startup.Token))
+                            throw new IOException("Для дисплеев обновите комплект ESP32-S3 до версии с поддержкой I2C.");
                     }
                     await simulate(session, lifetime);
                 }, cancellation);
@@ -104,7 +111,7 @@ public sealed class Esp32S3GpioSession
         SupportsAnalog = await ProbeExtension("classroom_adc_version", "ADC", cancellation);
     }
 
-    async Task<bool> ProbeExtension(string command, string extension, CancellationToken cancellation)
+    internal async Task<bool> ProbeExtension(string command, string extension, CancellationToken cancellation)
     {
         var version = await Request(command, cancellation);
         if (version == $"FAIL Unknown command '{command}'") return false;
@@ -231,6 +238,54 @@ public sealed class Esp32S3GpioSession
             return new Esp32S3SerialFrame(ports, pending);
         }, cancellation);
     }
+
+    internal Task<Esp32S3I2cFrame> ExchangeI2c(Esp32S3I2cWorker worker, Esp32S3I2cDevice[] devices,
+        CancellationToken cancellation) => Exchange(async token =>
+    {
+        await worker.Update(devices, token);
+        for (var pass = 0; pass < 16; pass++)
+        {
+            var pending = false;
+            for (var port = 0; port < 2; port++)
+            {
+                var wire = await Send(FormattableString.Invariant($"classroom_i2c_poll {port}"), token);
+                if (wire == "OK -") continue;
+                if (!wire.StartsWith("OK ", StringComparison.Ordinal) || wire.Length > 224)
+                    throw new InvalidDataException("Некорректный кадр I2C ESP32-S3.");
+                pending = true;
+                var fields = wire[3..].Split(':');
+                try
+                {
+                    if (fields.Length != 9 || fields[7].Length != 64 || fields[8].Length > 64)
+                        throw new InvalidDataException("Некорректные команды I2C ESP32-S3.");
+                    var sequence = uint.Parse(fields[0], CultureInfo.InvariantCulture);
+                    var commands = Enumerable.Range(0, 8).Select(i =>
+                        uint.Parse(fields[7].AsSpan(i * 8, 8), NumberStyles.HexNumber, CultureInfo.InvariantCulture)).ToArray();
+                    var request = new Esp32S3I2cRequest(port, uint.Parse(fields[1], CultureInfo.InvariantCulture),
+                        long.Parse(fields[2], CultureInfo.InvariantCulture), int.Parse(fields[3], CultureInfo.InvariantCulture),
+                        int.Parse(fields[4], CultureInfo.InvariantCulture), int.Parse(fields[5], CultureInfo.InvariantCulture),
+                        int.Parse(fields[6], CultureInfo.InvariantCulture), commands, Convert.FromHexString(fields[8]).Select(b => (int)b).ToArray());
+                    var reply = await worker.Transfer(request, token);
+                    if (reply.Rx is null || reply.Rx.Length > 32 || reply.Rx.Any(b => b is < 0 or > 255))
+                        throw new InvalidDataException("Некорректные байты ответа I2C ESP32-S3.");
+                    var bytes = Convert.ToHexString(reply.Rx.Select(b => (byte)b).ToArray());
+                    await Send(FormattableString.Invariant(
+                        $"classroom_i2c_reply {port} {sequence}:{reply.Event}:{reply.Commands}:{reply.Tx}:{(reply.Busy ? 1 : 0)}:{bytes}"), token);
+                }
+                catch (Exception e) when (e is FormatException or OverflowException or ArgumentOutOfRangeException)
+                {
+                    throw new InvalidDataException("Некорректный запрос I2C ESP32-S3.", e);
+                }
+            }
+            if (!pending) break;
+            await Task.Delay(1, token);
+        }
+        var clock = await Send("classroom_i2c_clock", token);
+        if (!clock.StartsWith("OK ", StringComparison.Ordinal) ||
+            !long.TryParse(clock.AsSpan(3), NumberStyles.None, CultureInfo.InvariantCulture, out var ns))
+            throw new InvalidDataException("Некорректное время I2C ESP32-S3.");
+        return await worker.Frame(ns, token);
+    }, cancellation);
 
     async Task<T> Exchange<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellation)
     {

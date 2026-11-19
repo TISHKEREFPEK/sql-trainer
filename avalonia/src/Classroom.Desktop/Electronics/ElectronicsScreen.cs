@@ -758,6 +758,12 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 outputs = frame.Pins;
                 if (serial is not null) RecordHistory("serial-input", true, serialIo: serial);
                 if (frame.Serial is { } uart) ReceiveSerial(uart.Ports, uart.Pending);
+                if (frame.I2c is { } i2c)
+                {
+                    if (i2c.I2c.Length > 0) RecordHistory("i2c-transfer", true, i2cIo: i2c.I2c);
+                    displays = i2c.Displays.ToDictionary(d => d.Id);
+                    oledDisplays = i2c.OledDisplays.ToDictionary(d => d.Id);
+                }
             }
             else if(uno?.Kind==PartKind.Pico){
                 result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var spiDevices=CircuitSpi.Devices(project,result);var dht11Devices=CircuitDht11.Devices(project,result);var hcsr04Devices=CircuitHcsr04.Devices(project,result);var ds18b20Devices=CircuitDs18b20.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices,spiDevices,dht11Devices,hcsr04Devices,ds18b20Devices);

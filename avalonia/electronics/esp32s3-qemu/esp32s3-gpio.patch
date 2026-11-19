@@ -212,7 +212,7 @@ index 7f7acc1..2c2c990 100644
 @@ -4,0 +5 @@ system_ss.add(when: 'CONFIG_ZYNQ', if_true: files('zynq-xadc.c'))
 +system_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files('esp32s3_adc.c'))
 diff --git a/hw/gpio/esp32s3_gpio.c b/hw/gpio/esp32s3_gpio.c
-index 0a0e477..d2cc212 100644
+index 0a0e477..a103ec2 100644
 --- a/hw/gpio/esp32s3_gpio.c
 +++ b/hw/gpio/esp32s3_gpio.c
 @@ -12,4 +12 @@
@@ -223,7 +223,7 @@ index 0a0e477..d2cc212 100644
 +#include "qemu/bitops.h"
 @@ -17 +13,0 @@
 -#include "hw/registerfields.h"
-@@ -21,0 +18,123 @@
+@@ -21,0 +18,130 @@
 +/*
 + * Digital pad path from ESP32-S3 TRM chapter 6: the GPIO latch is routed
 + * through matrix source 256 and IO MUX function 1. Other matrix sources
@@ -254,6 +254,21 @@ index 0a0e477..d2cc212 100644
 +{
 +    return pin >= 0 && pin < ESP32S3_GPIO_PADS &&
 +           (GPIO_VALID_MASK & BIT_ULL(pin));
++}
++
++int esp32s3_gpio_open_drain_route(ESP32S3GPIOState *s, int signal)
++{
++    uint32_t route = s->matrix_in[signal];
++    int pin = extract32(route, 0, 6);
++
++    if (!(route & BIT(7)) || (route & BIT(6)) || !valid_pad(pin) ||
++        extract32(s->iomux[pin], 12, 3) != GPIO_FUN_GPIO ||
++        !(s->iomux[pin] & GPIO_FUN_IE) ||
++        !(s->pin_cfg[pin] & GPIO_PAD_DRIVER) ||
++        extract32(s->matrix_out[pin], 0, 10) != signal) {
++        return -1;
++    }
++    return pin;
 +}
 +
 +static void update_interrupt(ESP32S3GPIOState *s)
@@ -339,20 +354,21 @@ index 0a0e477..d2cc212 100644
 +        refresh_pads(s, BIT_ULL(pin));
 +    }
 +}
-+
+@@ -23 +149 @@
+-static void esp32s3_gpio_init(Object *obj)
 +static int register_index(hwaddr addr, hwaddr base, int count)
-+{
+@@ -25,2 +151,4 @@ static void esp32s3_gpio_init(Object *obj)
+-    /* Set the default value for the property */
+-    object_property_set_int(obj, "strap_mode", ESP32S3_STRAP_MODE_FLASH_BOOT, &error_fatal);
 +    if (addr < base || addr >= base + count * 4) {
 +        return -1;
 +    }
 +    return (addr - base) / 4;
-+}
-@@ -23 +142 @@
--static void esp32s3_gpio_init(Object *obj)
+@@ -29,2 +157,158 @@ static void esp32s3_gpio_init(Object *obj)
+-/* If we need to override any function from the parent (reset, realize, ...), it shall be done
+- * in this class_init function */
 +static uint64_t gpio_read(void *opaque, hwaddr addr, unsigned size)
-@@ -25,2 +144,27 @@ static void esp32s3_gpio_init(Object *obj)
--    /* Set the default value for the property */
--    object_property_set_int(obj, "strap_mode", ESP32S3_STRAP_MODE_FLASH_BOOT, &error_fatal);
++{
 +    ESP32S3GPIOState *s = opaque;
 +    int index;
 +    switch (addr) {
@@ -380,9 +396,8 @@ index 0a0e477..d2cc212 100644
 +    }
 +    index = register_index(addr, GPIO_FUNC0_OUT, ESP32S3_GPIO_PADS);
 +    return valid_pad(index) ? s->matrix_out[index] : 0;
-@@ -29,2 +173,127 @@ static void esp32s3_gpio_init(Object *obj)
--/* If we need to override any function from the parent (reset, realize, ...), it shall be done
-- * in this class_init function */
++}
++
 +static void gpio_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 +{
 +    ESP32S3GPIOState *s = opaque;
@@ -510,19 +525,19 @@ index 0a0e477..d2cc212 100644
 +    DEFINE_PROP_END_OF_LIST(),
 +};
 +
-@@ -32,0 +302,3 @@ static void esp32s3_gpio_class_init(ObjectClass *klass, void *data)
+@@ -32,0 +317,3 @@ static void esp32s3_gpio_class_init(ObjectClass *klass, void *data)
 +    ResettableClass *reset = RESETTABLE_CLASS(klass);
 +    reset->phases.hold = gpio_reset_hold;
 +    device_class_set_props(DEVICE_CLASS(klass), gpio_properties);
-@@ -37 +309 @@ static const TypeInfo esp32s3_gpio_info = {
+@@ -37 +324 @@ static const TypeInfo esp32s3_gpio_info = {
 -    .parent = TYPE_ESP32_GPIO,
 +    .parent = TYPE_SYS_BUS_DEVICE,
 diff --git a/hw/i2c/esp32s3_i2c.c b/hw/i2c/esp32s3_i2c.c
 new file mode 100644
-index 0000000..d38823f
+index 0000000..b7bdc7e
 --- /dev/null
 +++ b/hw/i2c/esp32s3_i2c.c
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,418 @@
 +/*
 + * ESP32-S3 I2C master controller.
 + * SPDX-License-Identifier: GPL-2.0-or-later
@@ -532,13 +547,17 @@ index 0000000..d38823f
 +#include "hw/i2c/esp32s3_i2c.h"
 +#include "hw/irq.h"
 +#include "hw/qdev-properties.h"
++#include "qapi/error.h"
 +#include "qemu/bitops.h"
++#include "qemu/cutils.h"
 +#include "qemu/module.h"
++#include "qemu/timer.h"
++#include "sysemu/runstate.h"
 +
 +enum {
-+    CONTROL = 0x04, STATUS = 0x08, FIFO_CONFIG = 0x18, DATA = 0x1c,
++    SCL_LOW = 0x00, CONTROL = 0x04, STATUS = 0x08, FIFO_CONFIG = 0x18, DATA = 0x1c,
 +    INT_RAW = 0x20, INT_CLEAR = 0x24, INT_ENABLE = 0x28, INT_STATUS = 0x2c,
-+    COMMAND = 0x58, BUS_CLEAR = 0x80,
++    SCL_HIGH = 0x38, SCL_CLOCK = 0x54, COMMAND = 0x58, BUS_CLEAR = 0x80,
 +};
 +
 +enum {
@@ -577,6 +596,10 @@ index 0000000..d38823f
 +    s->addressed = false;
 +    s->start_pending = false;
 +    s->receive = false;
++    if (s->classroom_host) {
++        s->epoch++;
++        s->pending = false;
++    }
 +}
 +
 +static bool write_byte(ESP32S3I2CState *s, uint8_t byte)
@@ -670,13 +693,110 @@ index 0000000..d38823f
 +    update_irq(s);
 +}
 +
++static unsigned scl_frequency(ESP32S3I2CState *s)
++{
++    uint32_t low = s->regs[SCL_LOW / 4];
++    uint32_t high = s->regs[SCL_HIGH / 4];
++    uint32_t clock = s->regs[SCL_CLOCK / 4];
++    unsigned clocks = extract32(low, 0, 9) + 1 + extract32(high, 0, 9) +
++                      extract32(high, 9, 7);
++    unsigned source_hz = clock & BIT(20) ? 20000000 : 40000000;
++
++    return source_hz / ((extract32(clock, 0, 8) + 1) * clocks);
++}
++
++static char *classroom_request(Object *obj, Error **errp)
++{
++    ESP32S3I2CState *s = ESP32S3_I2C(obj);
++    uint8_t tx[FIFO_LENGTH];
++    unsigned count;
++    unsigned free_rx;
++    int scl, sda;
++    GString *wire;
++
++    if (!s->pending || runstate_get() != RUN_STATE_PAUSED) {
++        return g_strdup("-");
++    }
++    scl = esp32s3_gpio_open_drain_route(s->gpio, 89 + 2 * s->port);
++    sda = esp32s3_gpio_open_drain_route(s->gpio, 90 + 2 * s->port);
++    count = fifo8_peek_buf(&s->tx, tx, fifo8_num_used(&s->tx));
++    free_rx = fifo8_num_free(&s->rx);
++    wire = g_string_new(NULL);
++    g_string_append_printf(wire, "%u:%u:%" PRId64 ":%d:%d:%u:%u:",
++                           s->sequence, s->epoch, s->captured_ns,
++                           sda, scl, scl_frequency(s), free_rx);
++    for (int i = 0; i < COMMAND_COUNT; i++) {
++        g_string_append_printf(wire, "%08x", s->regs[COMMAND / 4 + i]);
++    }
++    g_string_append_c(wire, ':');
++    for (unsigned i = 0; i < count; i++) {
++        g_string_append_printf(wire, "%02x", tx[i]);
++    }
++    return g_string_free(wire, false);
++}
++
++static void classroom_reply(Object *obj, const char *wire, Error **errp)
++{
++    ESP32S3I2CState *s = ESP32S3_I2C(obj);
++    g_auto(GStrv) fields = g_strsplit(wire, ":", 7);
++    unsigned seq, event, commands, tx, busy;
++    uint8_t rx[FIFO_LENGTH];
++    size_t hex_len;
++
++    if (!s->pending || g_strv_length(fields) != 6 ||
++        qemu_strtoui(fields[0], NULL, 10, &seq) < 0 || seq != s->sequence ||
++        qemu_strtoui(fields[1], NULL, 10, &event) < 0 ||
++        (event != NACK && event != COMPLETE && event != END_DETECT &&
++         event != TIMEOUT && event != (TIMEOUT | RX_OVERFLOW)) ||
++        qemu_strtoui(fields[2], NULL, 10, &commands) < 0 ||
++        commands < 1 || commands > COMMAND_COUNT ||
++        qemu_strtoui(fields[3], NULL, 10, &tx) < 0 ||
++        tx > fifo8_num_used(&s->tx) ||
++        qemu_strtoui(fields[4], NULL, 10, &busy) < 0 ||
++        busy > 1 || (busy && event != END_DETECT)) {
++        error_setg(errp, "Invalid Classroom I2C result");
++        return;
++    }
++    hex_len = strlen(fields[5]);
++    if (hex_len % 2 || hex_len / 2 > fifo8_num_free(&s->rx)) {
++        error_setg(errp, "Classroom I2C receive FIFO overflow");
++        return;
++    }
++    for (size_t i = 0; i < hex_len / 2; i++) {
++        int high = g_ascii_xdigit_value(fields[5][i * 2]);
++        int low = g_ascii_xdigit_value(fields[5][i * 2 + 1]);
++
++        if (high < 0 || low < 0) {
++            error_setg(errp, "Invalid Classroom I2C receive byte");
++            return;
++        }
++        rx[i] = high * 16 + low;
++    }
++    fifo8_drop(&s->tx, tx);
++    for (size_t i = 0; i < hex_len / 2; i++) {
++        fifo8_push(&s->rx, rx[i]);
++    }
++    for (unsigned i = 0; i < commands; i++) {
++        s->regs[COMMAND / 4 + i] |= CMD_DONE;
++    }
++    s->addressed = busy;
++    s->pending = false;
++    s->regs[INT_RAW / 4] |= event;
++    update_irq(s);
++}
++
++static bool classroom_pending(Object *obj, Error **errp)
++{
++    return ESP32S3_I2C(obj)->pending;
++}
++
 +static uint64_t i2c_read(void *opaque, hwaddr addr, unsigned size)
 +{
 +    ESP32S3I2CState *s = opaque;
 +
 +    switch (addr) {
 +    case STATUS:
-+        return ((s->addressed || s->start_pending) ? BUS_BUSY : 0) |
++        return ((s->addressed || s->start_pending || s->pending) ? BUS_BUSY : 0) |
 +               (fifo8_num_used(&s->rx) << 8) | (fifo8_num_used(&s->tx) << 18);
 +    case DATA:
 +        return fifo8_is_empty(&s->rx) ? 0 : fifo8_pop(&s->rx);
@@ -700,7 +820,14 @@ index 0000000..d38823f
 +        }
 +        if (value & TRANS_START) {
 +            if ((value & MASTER) && !(s->regs[FIFO_CONFIG / 4] & NONFIFO)) {
-+                run_commands(s);
++                if (!s->classroom_host) {
++                    run_commands(s);
++                } else if (!s->pending) {
++                    s->pending = true;
++                    s->sequence++;
++                    s->captured_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++                    vm_stop(RUN_STATE_PAUSED);
++                }
 +            } else {
 +                s->regs[INT_RAW / 4] |= TIMEOUT;
 +                update_irq(s);
@@ -798,6 +925,7 @@ index 0000000..d38823f
 +
 +static Property i2c_properties[] = {
 +    DEFINE_PROP_UINT8("port", ESP32S3I2CState, port, 0),
++    DEFINE_PROP_BOOL("classroom-host", ESP32S3I2CState, classroom_host, false),
 +    DEFINE_PROP_END_OF_LIST(),
 +};
 +
@@ -808,6 +936,9 @@ index 0000000..d38823f
 +    dc->realize = i2c_realize;
 +    device_class_set_props(dc, i2c_properties);
 +    RESETTABLE_CLASS(klass)->phases.hold = i2c_reset_hold;
++    object_class_property_add_str(klass, "classroom-request", classroom_request, NULL);
++    object_class_property_add_str(klass, "classroom-reply", NULL, classroom_reply);
++    object_class_property_add_bool(klass, "classroom-pending", classroom_pending, NULL);
 +}
 +
 +static const TypeInfo i2c_info = {
@@ -840,7 +971,7 @@ index 5866207..0d595e5 100644
 +    select I2C
 +    select AT24C
 diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
-index 4a24a04..17b2173 100644
+index 4a24a04..0e608d9 100644
 --- a/hw/xtensa/esp32s3.c
 +++ b/hw/xtensa/esp32s3.c
 @@ -24 +24 @@
@@ -858,7 +989,7 @@ index 4a24a04..17b2173 100644
 +    object_initialize_child(OBJECT(ss), "adc", &ss->adc, TYPE_ESP32S3_ADC);
 +    object_initialize_child(OBJECT(ss), "i2c0", &ss->i2c[0], TYPE_ESP32S3_I2C);
 +    object_initialize_child(OBJECT(ss), "i2c1", &ss->i2c[1], TYPE_ESP32S3_I2C);
-@@ -775,0 +782,18 @@ static void esp32s3_machine_init(MachineState *machine)
+@@ -775,0 +782,19 @@ static void esp32s3_machine_init(MachineState *machine)
 +        mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpio), 1);
 +        memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
 +        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpio), 0,
@@ -873,11 +1004,12 @@ index 4a24a04..17b2173 100644
 +    for (int i = 0; i < ARRAY_SIZE(ss->i2c); i++) {
 +        SysBusDevice *controller = SYS_BUS_DEVICE(&ss->i2c[i]);
 +
++        ss->i2c[i].gpio = &ss->gpio;
 +        qdev_prop_set_uint8(DEVICE(controller), "port", i);
 +        sysbus_realize(controller, &error_fatal);
 +        esp32s3_soc_add_periph_device(sys_mem, controller, i2c_bases[i]);
 +        sysbus_connect_irq(controller, 0, qdev_get_gpio_in(intmatrix_dev, i2c_irqs[i]));
-@@ -873 +896,0 @@ static void esp32s3_machine_init(MachineState *machine)
+@@ -873 +897,0 @@ static void esp32s3_machine_init(MachineState *machine)
 -    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.iomux", DR_REG_IO_MUX_BASE, 0x2000);
 diff --git a/include/chardev/char.h b/include/chardev/char.h
 index 01df55f..791a9c3 100644
@@ -917,7 +1049,7 @@ index 0000000..dd5e021
 +
 +#endif
 diff --git a/include/hw/gpio/esp32s3_gpio.h b/include/hw/gpio/esp32s3_gpio.h
-index 7d6bb4b..467bc48 100644
+index 7d6bb4b..7cc9f8f 100644
 --- a/include/hw/gpio/esp32s3_gpio.h
 +++ b/include/hw/gpio/esp32s3_gpio.h
 @@ -6 +5,0 @@
@@ -951,18 +1083,22 @@ index 7d6bb4b..467bc48 100644
 @@ -21 +41 @@ typedef struct ESP32S3GPIOClass {
 -    Esp32GpioClass parent;
 +    SysBusDeviceClass parent;
+@@ -22,0 +43,2 @@ typedef struct ESP32S3GPIOClass {
++
++int esp32s3_gpio_open_drain_route(ESP32S3GPIOState *s, int signal);
 diff --git a/include/hw/i2c/esp32s3_i2c.h b/include/hw/i2c/esp32s3_i2c.h
 new file mode 100644
-index 0000000..008e644
+index 0000000..1021475
 --- /dev/null
 +++ b/include/hw/i2c/esp32s3_i2c.h
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,35 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +#ifndef HW_I2C_ESP32S3_I2C_H
 +#define HW_I2C_ESP32S3_I2C_H
 +
 +#include "hw/sysbus.h"
 +#include "hw/i2c/i2c.h"
++#include "hw/gpio/esp32s3_gpio.h"
 +#include "qemu/fifo8.h"
 +
 +#define TYPE_ESP32S3_I2C "esp32s3.i2c"
@@ -973,6 +1109,7 @@ index 0000000..008e644
 +    SysBusDevice parent_obj;
 +    MemoryRegion mmio;
 +    I2CBus *bus;
++    ESP32S3GPIOState *gpio;
 +    qemu_irq irq;
 +    Fifo8 tx;
 +    Fifo8 rx;
@@ -982,6 +1119,11 @@ index 0000000..008e644
 +    bool addressed;
 +    bool start_pending;
 +    bool receive;
++    bool classroom_host;
++    bool pending;
++    uint32_t epoch;
++    uint32_t sequence;
++    int64_t captured_ns;
 +};
 +
 +#endif
@@ -999,12 +1141,12 @@ index 7f28871..f0ec7a8 100644
 +                              version: slirp_dep.version())
 +  endif
 diff --git a/system/qtest.c b/system/qtest.c
-index 12703a2..d43f729 100644
+index 12703a2..ca5e44a 100644
 --- a/system/qtest.c
 +++ b/system/qtest.c
 @@ -25,0 +26 @@
 +#include "qemu/base64.h"
-@@ -345,0 +347,50 @@ static void qtest_install_gpio_out_intercept(DeviceState *dev, const char *name,
+@@ -345,0 +347,107 @@ static void qtest_install_gpio_out_intercept(DeviceState *dev, const char *name,
 +static bool qtest_classroom_uart(CharBackend *chr, gchar **words)
 +{
 +    static const char *const ports[] = {
@@ -1055,12 +1197,69 @@ index 12703a2..d43f729 100644
 +    return true;
 +}
 +
-@@ -364,0 +416,8 @@ static void qtest_process_command(CharBackend *chr, gchar **words)
++static bool qtest_classroom_i2c(CharBackend *chr, gchar **words)
++{
++    bool poll = !strcmp(words[0], "classroom_i2c_poll");
++    bool reply = !strcmp(words[0], "classroom_i2c_reply");
++    bool version = !strcmp(words[0], "classroom_i2c_version");
++    bool clock = !strcmp(words[0], "classroom_i2c_clock");
++    Object *ports[2];
++    Object *port;
++    Error *err = NULL;
++
++    if (!poll && !reply && !version && !clock) {
++        return false;
++    }
++    ports[0] = object_resolve_path("/machine/soc/i2c0", NULL);
++    ports[1] = object_resolve_path("/machine/soc/i2c1", NULL);
++    qtest_send_prefix(chr);
++    if (!ports[0] || !ports[1] ||
++        !object_property_find(ports[0], "classroom-request") ||
++        !object_property_find(ports[1], "classroom-request")) {
++        qtest_send(chr, "FAIL Missing Classroom I2C\n");
++        return true;
++    }
++    if (version) {
++        qtest_send(chr, "OK 1\n");
++        return true;
++    }
++    if (clock) {
++        qtest_sendf(chr, "OK %" PRId64 "\n", qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
++        return true;
++    }
++    if (!words[1] || (strcmp(words[1], "0") && strcmp(words[1], "1"))) {
++        qtest_send(chr, "FAIL Invalid Classroom I2C port\n");
++        return true;
++    }
++    port = ports[words[1][0] - '0'];
++    if (poll) {
++        g_autofree char *request =
++            object_property_get_str(port, "classroom-request", &err);
++        if (!err) {
++            qtest_sendf(chr, "OK %s\n", request);
++            return true;
++        }
++    } else if (runstate_get() == RUN_STATE_PAUSED && words[2] &&
++               strlen(words[2]) < 128 &&
++               object_property_set_str(port, "classroom-reply", words[2], &err)) {
++        if (!object_property_get_bool(ports[0], "classroom-pending", &error_abort) &&
++            !object_property_get_bool(ports[1], "classroom-pending", &error_abort)) {
++            vm_start();
++        }
++        qtest_send(chr, "OK\n");
++        return true;
++    }
++    error_free(err);
++    qtest_send(chr, "FAIL Invalid Classroom I2C exchange\n");
++    return true;
++}
++
+@@ -364,0 +473,8 @@ static void qtest_process_command(CharBackend *chr, gchar **words)
 +    if (!strcmp(command, "classroom_adc_version")) {
 +        qtest_send_prefix(chr);
 +        qtest_send(chr, "OK 1\n");
 +        return;
 +    }
-+    if (qtest_classroom_uart(chr, words)) {
++    if (qtest_classroom_uart(chr, words) || qtest_classroom_i2c(chr, words)) {
 +        return;
 +    }

@@ -22,8 +22,7 @@ public sealed partial class ElectronicsScreen
     {
         properties.Children.Add(Ui.Text("DS18B20: GND, DQ, VDD 3–5,5 В. Нужна подтяжка DQ к питанию (обычно 4,7 кОм); для Pico — к 3,3 В. Несколько датчиков могут работать на одной шине. При питании через DQ соедините VDD с GND и обеспечьте сильную подтяжку на время преобразования.",12));
         properties.Children.Add(Ui.Muted("ROM: "+CircuitDs18b20.Rom(p),11));ds18Reading=Ui.Text("",12);properties.Children.Add(ds18Reading);UpdateDs18b20Reading();
-        var label=Ui.Text($"Температура среды · {p.Value:0.####} °C",12);var slider=new Slider{Minimum=-55,Maximum=125,Value=p.Value,TickFrequency=0.0625,IsSnapToTickEnabled=true};properties.Children.Add(label);properties.Children.Add(slider);
-        slider.PropertyChanged+=(_,e)=>{if(e.Property!=Slider.ValueProperty)return;_=Perform(()=>{var i=project.Parts.FindIndex(x=>x.Id==p.Id);if(i<0)return;project.Parts[i]=project.Parts[i] with{Value=Math.Round(slider.Value*16)/16};label.Text=$"Температура среды · {project.Parts[i].Value:0.####} °C";RecordHistory("control-change");Draw();QueueSave();});};
+        AddInspectorSlider(p, dsTemperature);
         properties.Children.Add(Ui.Muted("Изменение среды не переписывает показание сразу: программа должна запустить и дождаться преобразования. Настройки, записанные в EEPROM кодом, сохраняются вместе со схемой.",12));
     }
 }

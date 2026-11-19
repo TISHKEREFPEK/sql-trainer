@@ -145,6 +145,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var layout = workGrid;
         var libraryCard=Ui.Card(Ui.Scroll(library));libraryCard.Padding=new Thickness(12,16);libraryCard.ClipToBounds=true;layout.Children.Add(libraryCard);
         var scroll = viewport = new CircuitViewport(canvas);viewport.ZoomRequested=ZoomAt;viewport.BackgroundPressed=()=>{selected=null;selectedWire=null;DrawSelection();Inspect();};
+        InitializePartInputs();
         var sceneLayer=new Grid();sceneLayer.Children.Add(viewport);
         var sceneCard=Ui.Card(sceneLayer);sceneCard.Padding=new Thickness(0);sceneCard.ClipToBounds=true;Grid.SetColumn(sceneCard, 1); layout.Children.Add(sceneCard);
         var inspector = Ui.Card(Ui.Scroll(properties));inspector.Padding=new Thickness(12,16);Grid.SetColumn(inspector, 2); layout.Children.Add(inspector);
@@ -199,7 +200,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         var zoomControls=Ui.Row(Ui.Button("−",()=>Perform(()=>ZoomAt(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2),zoom/1.2))),zoomText,Ui.Button("+",()=>Perform(()=>ZoomAt(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2),zoom*1.2))),Ui.Button("Вписать",()=>Perform(FitScene)),showGrid);zoomControls.Spacing=4;zoomText.VerticalAlignment=VerticalAlignment.Center;zoomText.Width=44;zoomText.TextAlignment=TextAlignment.Center;
         foreach(var button in zoomControls.Children.OfType<Button>()){button.Padding=new Thickness(10,7);button.MinHeight=32;button.FontSize=12;}
         var zoomCard=Ui.Card(zoomControls);zoomCard.Padding=new Thickness(5);zoomCard.Margin=new Thickness(12);zoomCard.HorizontalAlignment=HorizontalAlignment.Right;zoomCard.VerticalAlignment=VerticalAlignment.Bottom;sceneLayer.Children.Add(zoomCard);
-        ToolTip.SetTip(viewport,"Колесо — масштаб. Средняя или правая кнопка мыши — перемещение. Пробел + перетаскивание — перемещение.");
+        ToolTip.SetTip(viewport,"Колесо — масштаб. ПКМ по детали — свойства. Перетащите схему средней или правой кнопкой либо с зажатым пробелом.");
         name.TextChanged += (_, _) => { if (loading) return; project.Name = name.Text ?? ""; _ = Perform(() => { RecordHistory("rename"); QueueSave(); }); };
         editor.TextChanged += (_, _) => { if (loading) return; if (running) Stop(); project.Code = editor.Text; _ = Perform(() => { RecordHistory(codeHistoryKind); QueueSave(); }); };
         autosave.Tick += (_, _) => { autosave.Stop(); _ = Perform(Save); };
@@ -321,10 +322,13 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     }
     void Checkpoint()
     {
-        Stop(); undo.Add(project.Serialize()); if (undo.Count > 50) undo.RemoveAt(0); redo.Clear();
+        Stop();
+        CaptureUndo();
     }
+    void CaptureUndo() { undo.Add(project.Serialize()); if (undo.Count > 50) undo.RemoveAt(0); redo.Clear(); }
     void History(List<string> from, List<string> to, string kind)
     {
+        EndInput();
         if (from.Count == 0) return;
         Stop(); to.Add(project.Serialize()); project = CircuitProject.Parse(from[^1]); from.RemoveAt(from.Count - 1); selected = null; selectedWire = null; startPin = null; Refresh(); Save(kind, true);
     }
@@ -437,6 +441,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     }
     void Inspect()
     {
+        updateInspectorInputs.Clear();
         properties.Children.Clear();
         InspectPanelSelection();
         if (selectedWire is { } wireId && project.Wires.FirstOrDefault(w => w.Id == wireId) is { } wire)
@@ -486,31 +491,28 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
             var input = Ui.Input(p.Value.ToString(CultureInfo.InvariantCulture));
             properties.Children.Add(Ui.Field(p.Kind is PartKind.Resistor or PartKind.Potentiometer or PartKind.Pot3 or PartKind.Motor or PartKind.Buzzer ? "Сопротивление модели, Ом" : p.Kind is PartKind.Led or PartKind.Diode ? "Прямое напряжение, В" : "Напряжение, В", input));
+            if (p.Kind is PartKind.Potentiometer or PartKind.AnalogSensor)
+            {
+                var displayed = input.Text;
+                updateInspectorInputs.Add(part =>
+                {
+                    var text = part.Value.ToString(CultureInfo.InvariantCulture);
+                    if (input.Text == displayed) input.Text = text;
+                    displayed = text;
+                });
+            }
             properties.Children.Add(Ui.Button("Применить", () => Perform(() =>
             {
                 if (!double.TryParse(input.Text?.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || !double.IsFinite(value)) throw new InvalidDataException("Введите корректное число.");
-                var next = p with { Value = value }; var trial = CircuitProject.Parse(project.Serialize()); trial.Parts[trial.Parts.FindIndex(x => x.Id == p.Id)] = next; trial.Validate();
+                var index = project.Parts.FindIndex(x => x.Id == p.Id);
+                if (index < 0) return;
+                var next = project.Parts[index] with { Value = value }; var trial = CircuitProject.Parse(project.Serialize()); trial.Parts[index] = next; trial.Validate();
                 Checkpoint(); project.Parts[project.Parts.FindIndex(x => x.Id == p.Id)] = next; Refresh(); Save();
             })));
         }
-        if (p.Kind is PartKind.Pot3 or PartKind.Potentiometer or PartKind.AnalogSensor)
-        {
-            var slider = new Slider { Minimum = 0, Maximum = 1, Value = p.Kind == PartKind.Pot3 ? p.Setting : p.Kind == PartKind.AnalogSensor ? p.Value / 5 : Math.Clamp(p.Value / 100000, 0, 1) };
-            properties.Children.Add(Ui.Field("Регулятор · можно менять во время симуляции", slider));
-            slider.PropertyChanged += (_, e) =>
-            {
-                if (e.Property != Slider.ValueProperty) return;
-                _ = Perform(() =>
-                {
-                    var i = project.Parts.FindIndex(part => part.Id == p.Id);
-                    if (i < 0) return;
-                    project.Parts[i] = p.Kind == PartKind.Pot3 ? project.Parts[i] with { Setting = slider.Value }
-                        : project.Parts[i] with { Value = p.Kind == PartKind.AnalogSensor ? slider.Value * 5 : Math.Max(1, slider.Value * 100000) };
-                    RecordHistory("control-change"); result = CircuitSolver.Solve(project, outputs); Draw(); QueueSave();
-                });
-            };
-        }
-        if (p.Kind == PartKind.Switch) properties.Children.Add(Ui.Button(p.Active ? "Разомкнуть" : "Замкнуть", () => Perform(() => Toggle(p.Id))));
+        if (p.Kind is PartKind.Pot3 or PartKind.Potentiometer or PartKind.AnalogSensor && PrimaryInput(p.Kind) is { } range)
+            AddInspectorSlider(p, range);
+        if (p.Kind == PartKind.Switch) AddInspectorToggle(p);
         properties.Children.Add(Ui.Muted("ПРЕОБРАЗОВАНИЕ",10));
         var metrics=new Grid{ColumnDefinitions=new("*,*"),RowDefinitions=new("Auto,Auto"),ColumnSpacing=8,RowSpacing=8};
         Border Metric(string label,string value){var box=new Border{Child=Ui.Stack(Ui.Muted(label,11),Ui.Text(value,14)),Padding=new Thickness(10),CornerRadius=new CornerRadius(8)};Ui.BindBrush(box,Border.BackgroundProperty,"Subtle");return box;}
@@ -542,14 +544,6 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         if (scale == part.Scale && turns == part.QuarterTurns) return;
         Checkpoint(); project.Parts[i] = PartArtwork.WithLayout(part, scale, turns); Refresh(); Save();
     });
-    void Toggle(string id)
-    {
-        var i = project.Parts.FindIndex(p => p.Id == id); if (i < 0) return;
-        // Interactive input may change while firmware runs; topology remains fixed.
-        project.Parts[i] = project.Parts[i] with { Active = !project.Parts[i].Active };
-        result = CircuitSolver.Solve(project, outputs); Draw(); Inspect(); Save();
-    }
-
     static double PartHeight(CircuitPart part) => PartArtwork.Body(part).Height;
     static Point PinPoint(CircuitPart part, string pin)
     {
@@ -569,7 +563,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         {
             var lit = result?.Parts.GetValueOrDefault(p.Id)?.Lit == true;
             var size = PartArtwork.Body(p);
-            var group = new Canvas { Width = size.Width * zoom, Height = size.Height * zoom };
+            var group = new Canvas { Width = size.Width * zoom, Height = size.Height * zoom, Tag = p };
             Canvas.SetLeft(group, p.X * zoom); Canvas.SetTop(group, p.Y * zoom); canvas.Children.Add(group);
             if (lit || p.Kind == PartKind.Switch && p.Active)
                 group.Children.Add(new Ellipse { Width = size.Width * zoom, Height = size.Height * zoom, Fill = p.Kind == PartKind.Switch ? Brushes.LightGreen : p.ModelId == "led-green" ? Brushes.LimeGreen : p.ModelId == "led-blue" ? Brushes.DodgerBlue : Brushes.OrangeRed, Opacity = 0.3 });
@@ -578,6 +572,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             var face = new Canvas { Width = baseSize.Width, Height = baseSize.Height, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
                 RenderTransformOrigin = new RelativePoint(0,0,RelativeUnit.Relative), RenderTransform = new MatrixTransform { Matrix = PartArtwork.TransformMatrix(p, zoom) } };
             face.Children.Add(p.Kind == PartKind.Breadboard ? BreadboardFace(1) : p.Kind==PartKind.LcdI2c?new LcdDisplayFace(p,displays.GetValueOrDefault(p.Id)):p.Kind==PartKind.OledI2c?new OledDisplayFace(p,oledDisplays.GetValueOrDefault(p.Id)):p.Kind==PartKind.TftSpi?new TftDisplayFace(tftDisplays.GetValueOrDefault(p.Id)):PartArtwork.Thumbnail(PartCatalog.For(p).Art, baseSize.Width, baseSize.Height));
+            DrawPartInputs(face, p, baseSize);
             board.Child = face;
             group.Children.Add(board);
             var title = new TextBlock { Text = PartLibrary.Name(p), FontSize = 12 * zoom, MaxWidth = Math.Max(80, size.Width) * zoom, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -587,7 +582,6 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             {
                 if (!e.GetCurrentPoint(board).Properties.IsLeftButtonPressed) return;
                 canvas.Focus();selected = p.Id; selectedWire = null; Inspect();workGrid.UpdateLayout(); DrawSelection();
-                if (e.ClickCount == 2 && p.Kind == PartKind.Switch) { Toggle(p.Id); e.Handled = true; return; }
                 origin = e.GetPosition(canvas); drag = project.Parts.Single(x => x.Id == p.Id); moving = true; moveGesture = Guid.NewGuid().ToString("N"); e.Pointer.Capture(board); e.Handled = true;
             };
             board.PointerMoved += (_, e) =>
@@ -671,7 +665,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         foreach (var w in project.Wires)
         {
             var a = PinPoint(project.Parts.Single(p => p.Id == w.From.Part), w.From.Pin); var b = PinPoint(project.Parts.Single(p => p.Id == w.To.Part), w.To.Pin);
-            var line = new Polyline { Points = new Points([new(a.X * zoom, a.Y * zoom), new((a.X + b.X) / 2 * zoom, a.Y * zoom), new((a.X + b.X) / 2 * zoom, b.Y * zoom), new(b.X * zoom, b.Y * zoom)]), Stroke = Brush.Parse(w.Color), StrokeThickness = (w.Id == selectedWire ? 5 : 3) * zoom };
+            var line = new Polyline { Tag = w, Points = new Points([new(a.X * zoom, a.Y * zoom), new((a.X + b.X) / 2 * zoom, a.Y * zoom), new((a.X + b.X) / 2 * zoom, b.Y * zoom), new(b.X * zoom, b.Y * zoom)]), Stroke = Brush.Parse(w.Color), StrokeThickness = (w.Id == selectedWire ? 5 : 3) * zoom };
             line.PointerPressed += (_, e) => { selected = null; selectedWire = w.Id; Inspect(); DrawSelection(); e.Handled = true; };
             canvas.Children.Insert(0, line);
         }
@@ -781,7 +775,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         { if (generation == runId && !disposed) { Report("run-error",project.Serialize(),e.Message); Stop(); status.Text = e.Message; owner.Error(e.Message); } }
         finally { ticking = false;UpdateSerialControls(); }
     }
-    public void Suspend() { SampleActivity(false,true); Stop(); Save(); }
+    public void Suspend() { EndInput(); SampleActivity(false,true); Stop(); Save(); }
     void Stop()
     {
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
@@ -814,7 +808,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     void ApplyEditorTheme()=>editor.SyntaxHighlighting=CodeAppearance.CppForTheme();
     public void Dispose()
     {
-        if (disposed) return; Stop(); autosave.Stop();
+        if (disposed) return; EndInput(); Stop(); autosave.Stop();
         try { SampleActivity(false,true);Save(); } catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { owner.Error("Не удалось сохранить схему: " + e.Message); }
         activityTimer.Stop();ReleaseHistory(); disposed = true; history?.Dispose(); ThemeManager.Changed-=ApplyEditorTheme;sync?.Dispose(); resultsView?.Dispose();
     }

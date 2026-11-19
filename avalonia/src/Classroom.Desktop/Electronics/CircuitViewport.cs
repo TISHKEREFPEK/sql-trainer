@@ -18,11 +18,14 @@ public sealed class CircuitViewport : Decorator
     Point pointerStart;
     Vector panStart;
     bool panning,space;
+    bool contextClick;
+    Control? contextSource;
     public Vector Pan {get;private set;}
     public double Zoom {get;private set;}=1;
     public bool ShowGrid {get;set;}=true;
     public Action<Point,double>? ZoomRequested {get;set;}
     public Action? BackgroundPressed {get;set;}
+    public Action<Control>? ContextClicked {get;set;}
     public CircuitViewport(Canvas scene)
     {
         this.scene=scene;ClipToBounds=true;Focusable=true;MinWidth=100;MinHeight=100;
@@ -30,18 +33,62 @@ public sealed class CircuitViewport : Decorator
         AddHandler(PointerPressedEvent,(_,e)=>
         {
             var properties=e.GetCurrentPoint(this).Properties;
-            if(properties.IsMiddleButtonPressed||properties.IsRightButtonPressed||space&&properties.IsLeftButtonPressed)
-            {Focus();panning=true;pointerStart=e.GetPosition(this);panStart=Pan;e.Pointer.Capture(this);Cursor=new Cursor(StandardCursorType.SizeAll);e.Handled=true;}
+            var right = properties.PointerUpdateKind == PointerUpdateKind.RightButtonPressed;
+            if (panning || right && properties.IsLeftButtonPressed) { e.Handled = true; return; }
+            if (right || properties.PointerUpdateKind == PointerUpdateKind.MiddleButtonPressed || space && properties.IsLeftButtonPressed)
+            {
+                Focus();
+                panning = true;
+                pointerStart = e.GetPosition(this);
+                panStart = Pan;
+                e.Pointer.Capture(this);
+                contextClick = right;
+                contextSource = right ? e.Source as Control : null;
+                if (!right) Cursor = new Cursor(StandardCursorType.SizeAll);
+                e.Handled = true;
+            }
             else if(e.Source==this&&properties.IsLeftButtonPressed){Focus();BackgroundPressed?.Invoke();}
         },RoutingStrategies.Tunnel);
-        AddHandler(PointerMovedEvent,(_,e)=>{if(!panning)return;var point=e.GetPosition(this);SetView(Zoom,panStart+new Vector(point.X-pointerStart.X,point.Y-pointerStart.Y));e.Handled=true;},RoutingStrategies.Tunnel);
-        AddHandler(PointerReleasedEvent,(_,e)=>{if(!panning)return;panning=false;e.Pointer.Capture(null);Cursor=space?new Cursor(StandardCursorType.SizeAll):null;e.Handled=true;},RoutingStrategies.Tunnel);
-        PointerCaptureLost+=(_,_)=>{panning=false;Cursor=null;};
+        AddHandler(PointerMovedEvent,(_,e)=>
+        {
+            if (!panning) return;
+            PanTo(e.GetPosition(this));
+            e.Handled = true;
+        },RoutingStrategies.Tunnel);
+        AddHandler(PointerReleasedEvent,(_,e)=>
+        {
+            if (!panning) return;
+            PanTo(e.GetPosition(this));
+            var target = contextClick ? contextSource : null;
+            EndPan();
+            e.Pointer.Capture(null);
+            e.Handled = true;
+            if (target is not null) ContextClicked?.Invoke(target);
+        },RoutingStrategies.Tunnel);
+        PointerCaptureLost+=(_,_)=>EndPan();
         AddHandler(PointerWheelChangedEvent,(_,e)=>{ZoomRequested?.Invoke(e.GetPosition(this),Math.Clamp(Zoom*Math.Pow(1.15,e.Delta.Y),0.1,3));e.Handled=true;},RoutingStrategies.Tunnel);
         KeyDown+=(_,e)=>{if(e.Key==Key.Space){space=true;Cursor=new Cursor(StandardCursorType.SizeAll);e.Handled=true;}};
         KeyUp+=(_,e)=>{if(e.Key==Key.Space){space=false;if(!panning)Cursor=null;e.Handled=true;}};
         LostFocus+=(_,_)=>{space=false;if(!panning)Cursor=null;};
         SizeChanged+=(_,e)=>{if(e.PreviousSize.Width>100&&e.PreviousSize.Height>100)SetView(Zoom,Pan+new Vector((e.NewSize.Width-e.PreviousSize.Width)/2,(e.NewSize.Height-e.PreviousSize.Height)/2));};
+    }
+    void PanTo(Point point)
+    {
+        var delta = new Vector(point.X - pointerStart.X, point.Y - pointerStart.Y);
+        if (contextClick)
+        {
+            if (delta.Length < 4) return;
+            contextClick = false;
+            contextSource = null;
+            Cursor = new Cursor(StandardCursorType.SizeAll);
+        }
+        SetView(Zoom, panStart + delta);
+    }
+    void EndPan()
+    {
+        panning = contextClick = false;
+        contextSource = null;
+        Cursor = space ? new Cursor(StandardCursorType.SizeAll) : null;
     }
     public Point ToWorld(Point point)=>new((point.X-Pan.X)/Zoom,(point.Y-Pan.Y)/Zoom);
     public void SetView(double zoom,Vector pan)

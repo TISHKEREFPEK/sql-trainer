@@ -369,19 +369,20 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         partCards.Children.Clear();
         var query = partSearch.Text?.Trim() ?? "";
         var category = partCategory.SelectedItem as string;
-        var definitions = PartCatalog.All.Where(d => (category is null or "Все категории" || d.Category == category)
+        var library = PartCatalog.All.Where(d => d.Kind != PartKind.Esp32S3 || Esp32S3Board.ConfiguredRuntime is not null).ToArray();
+        var definitions = library.Where(d => (category is null or "Все категории" || d.Category == category)
             && (!simulationOnly.IsChecked.GetValueOrDefault() || d.Simulated)
             && (!favoritesOnly.IsChecked.GetValueOrDefault() || project.Favorites.Contains(d.Id))
             && (d.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || d.ReferenceName?.Contains(query, StringComparison.OrdinalIgnoreCase) == true))
             .OrderBy(d => d.Category == "Платы" ? 0 : d.Category == "Монтаж" ? 1 : 2).ThenBy(d => d.Category).ThenBy(d => d.Name).ToArray();
-        catalogCount.Text = $"{definitions.Length} из {PartCatalog.All.Length} деталей";
+        catalogCount.Text = $"{definitions.Length} из {library.Length} деталей";
         foreach (var definition in definitions)
         {
             var add = Ui.Button("", () => Perform(() => Add(definition)));
             add.Padding = new Thickness(6, 10); add.Width = 116; add.Height = 146;
             var summary = Ui.Stack(PartArtwork.Thumbnail(definition.Art),
                 new TextBlock { Text = definition.Name, TextWrapping = TextWrapping.Wrap, FontSize = 11, Height = 31, MaxWidth = 105, TextAlignment = TextAlignment.Center },
-                new TextBlock { Text = definition.Simulated ? "Симуляция" : "Для схемы", FontSize = 10, Foreground = definition.Simulated ? Brushes.SeaGreen : Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Center });
+                new TextBlock { Text = definition.Kind == PartKind.Esp32S3 ? "Цифровой GPIO" : definition.Simulated ? "Симуляция" : "Для схемы", FontSize = 10, Foreground = definition.Simulated ? Brushes.SeaGreen : Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Center });
             summary.Spacing = 4; add.Content = summary;
             Avalonia.Automation.AutomationProperties.SetName(add, "Добавить: " + definition.Name);
             ToolTip.SetTip(add, definition.Simulated ? definition.Name : definition.Name + "\nИзображение для схемы. Поведение в симуляторе пока не реализовано. Вид иллюстративный, не распиновка производителя.");
@@ -397,7 +398,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         var kind = definition.Kind;
         if (project.Parts.Count >= 80) throw new InvalidDataException("На схеме допускается до 80 компонентов.");
-        if (kind is PartKind.Uno or PartKind.Mega or PartKind.Pico && project.Parts.Any(CircuitBoards.IsBoard)) throw new InvalidDataException("Пока доступна одна исполняемая плата на схеме.");
+        if (CircuitBoards.IsBoardKind(kind) && project.Parts.Any(CircuitBoards.IsBoard)) throw new InvalidDataException("Пока доступна одна исполняемая плата на схеме.");
         Checkpoint(); var id = Guid.NewGuid().ToString("N");
         var center=viewport.ToWorld(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2));
         var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null,Setting:kind==PartKind.Dht11?4.0/7:0.5,Active:kind==PartKind.Hcsr04);
@@ -464,6 +465,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         properties.Spacing=10;
         properties.Children.Add(Ui.Muted("СВОЙСТВА ДЕТАЛИ",10));properties.Children.Add(Ui.Text(PartLibrary.Name(p), 18));
         if(p.Kind==PartKind.Pico)properties.Children.Add(Ui.Muted("GPIO — 3,3 В. Питание от виртуального USB. Доступны GPIO, ADC, PWM, UART, USB Serial, I2C и TFT по аппаратному SPI; остальные режимы ещё в разработке.",12));
+        if (p.Kind == PartKind.Esp32S3)
+            properties.Children.Add(Ui.Muted("Цифровые GPIO 3,3 В и прерывания. Питание от виртуального USB. Для запуска нужен отдельный комплект GPIO ESP32-S3.", 12));
         if(p.Kind==PartKind.TftSpi){
             properties.Children.Add(Ui.Muted("ILI9341 · 240×320 · 9 контактов. VCC 3–5,5 В; входы модуля согласованы по уровням, MISO — 3,3 В. LED управляет подсветкой; MISO нужен для чтения. Поддержаны аппаратный и программный SPI, до двух дисплеев. Touch и SD отсутствуют.",12));
             var device=CircuitSpi.Devices(project).FirstOrDefault(d=>d.Id==p.Id);
@@ -614,7 +617,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 ToolTip.SetTip(button, pin + (result?.Voltages.TryGetValue(new(p.Id, pin), out var v) == true ? $" · {v:F2} В" : ""));
                 Avalonia.Automation.AutomationProperties.SetName(button, PartLibrary.Name(p) + ": " + pin);
                 Canvas.SetLeft(button, (point.X - p.X) * zoom - diameter / 2); Canvas.SetTop(button, (point.Y - p.Y) * zoom - diameter / 2); group.Children.Add(button);
-                if (!hole&&p.Kind is not (PartKind.TftSpi or PartKind.Dht11 or PartKind.Hcsr04 or PartKind.Ds18b20))
+                if (!hole&&p.Kind is not (PartKind.TftSpi or PartKind.Dht11 or PartKind.Hcsr04 or PartKind.Ds18b20 or PartKind.Esp32S3))
                 {
                     var pico = (p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && PartLibrary.Pins(p).Length == 40;
                     var left = point.X - p.X < size.Width / 2;
@@ -708,7 +711,18 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 if (hasUno)
                 {
                     failureKind = "compile-error";
-                    if(controller!.Kind==PartKind.Pico){
+                    if (controller!.Kind == PartKind.Esp32S3)
+                    {
+                        var runtime = run ? Esp32S3Board.ConfiguredRuntime ??
+                            throw new InvalidDataException("Для симуляции подготовьте отдельный комплект GPIO ESP32-S3.") : null;
+                        if (run) Esp32S3Board.ValidateRun(project, controller);
+                        var image = await Esp32S3Compiler.CompileArduino(project.Code, compilation.Token);
+                        if (generation != runId || disposed) return;
+                        Report("compiled", snapshot);
+                        failureKind = "run-error";
+                        if (runtime is not null) await StartEsp32S3(controller, image, runtime, generation, compilation.Token);
+                    }
+                    else if(controller.Kind==PartKind.Pico){
                         if(run){PicoBoard.ValidateRun(project);var preflight=CircuitSolver.Solve(project);_ = CircuitPico.Inputs(project,preflight,CircuitPico.Devices(project,preflight));}
                         var image=await PicoCompiler.Compile(project.Code,compilation.Token);if(generation!=runId||disposed)return;
                         Report("compiled",snapshot);failureKind="run-error";
@@ -735,7 +749,13 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         try
         {
             var uno = project.Parts.FirstOrDefault(CircuitBoards.IsBoard);
-            if(uno?.Kind==PartKind.Pico){
+            if (uno?.Kind == PartKind.Esp32S3)
+            {
+                var drives = await StepEsp32S3(uno, compilation!.Token);
+                if (generation != runId || disposed) return;
+                outputs = drives;
+            }
+            else if(uno?.Kind==PartKind.Pico){
                 result=CircuitSolver.Solve(project,outputs);var devices=CircuitPico.Devices(project,result);var spiDevices=CircuitSpi.Devices(project,result);var dht11Devices=CircuitDht11.Devices(project,result);var hcsr04Devices=CircuitHcsr04.Devices(project,result);var ds18b20Devices=CircuitDs18b20.Devices(project,result);var inputs=CircuitPico.Inputs(project,result,devices,spiDevices,dht11Devices,hcsr04Devices,ds18b20Devices);
                 var serial=pendingSerial;pendingSerial=null;
                 var frame=await picoFirmware.Step(analog:inputs.Analog,serialInput:serial?.Text,serialPort:serial?.Port??0,devices:devices,gpioInputs:inputs.Digital,spiDevices:spiDevices,dht11Devices:dht11Devices,hcsr04Devices:hcsr04Devices,ds18b20Devices:ds18b20Devices);
@@ -780,6 +800,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     {
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
         runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose();picoFirmware.Dispose();picoUsbReady=false; outputs = null;
+        if (StopEsp32S3() && !disposed) { result = CircuitSolver.Solve(project); Draw(); }
         serialReady=false;pendingSerial=null;displays.Clear();oledDisplays.Clear();tftDisplays.Clear();ds18Readings.Clear();UpdateDs18b20Reading();UpdateSerialControls();
     }
     string Svg()

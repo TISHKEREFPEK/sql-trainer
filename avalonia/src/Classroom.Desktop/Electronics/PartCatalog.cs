@@ -20,6 +20,7 @@ public static class PartCatalog
             new("uno", "Arduino Uno", "Платы", PartKind.Uno, 0, "uno", true, ReferenceName:"Arduino UNO"),
             new("mega2560", "Arduino Mega 2560", "Платы", PartKind.Mega, 0, "mega", true, ReferenceName:"Arduino Mega 2560 (AVR)"),
             new(PicoBoard.ModelId,"Raspberry Pi Pico · RP2040","Платы",PartKind.Pico,0,"pico",true,ReferenceName:"Raspberry Pi Pico (RP2040)"),
+            new(Esp32S3Board.ModelId, Esp32S3Board.Name + " · GPIO", "Платы", PartKind.Esp32S3, 0, Esp32S3Face.Art, true),
             new("lcd-i2c-16x2", "LCD 16×2 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"16x2 I2C LCD (PCF8574)"),
             new("lcd-i2c-20x4", "LCD 20×4 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"20x4 I2C LCD (PCF8574)"),
             new("oled-ssd1306-i2c", "OLED 128×64 · SSD1306", "Индикация", PartKind.OledI2c, 60, "oled", true, ReferenceName:"OLED 128x64 I2C (SSD1306)"),

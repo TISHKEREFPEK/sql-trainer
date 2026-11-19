@@ -33,6 +33,13 @@ public static class Esp32S3GpioRunner
                 async (responses, commands, lifetime) =>
                 {
                     var session = new Esp32S3GpioSession(responses, commands, lifetime);
+                    using (var startup = CancellationTokenSource.CreateLinkedTokenSource(lifetime))
+                    {
+                        startup.CancelAfter(TimeSpan.FromSeconds(5));
+                        // Releasing the default floating pad confirms that this
+                        // QEMU exposes the real pad interface, even on a blank board.
+                        await session.Probe(startup.Token);
+                    }
                     await simulate(session, lifetime);
                 }, cancellation);
         }
@@ -62,6 +69,8 @@ public sealed class Esp32S3GpioSession
         this.commands = commands;
         this.lifetime = lifetime;
     }
+
+    internal Task Probe(CancellationToken cancellation) => SetPad(0, null, cancellation);
 
     public async Task<IReadOnlyDictionary<int, Esp32S3PadState>> ExchangePads(
         IReadOnlyDictionary<int, bool?> inputs, CancellationToken cancellation = default)

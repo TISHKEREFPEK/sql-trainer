@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20 }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3 }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
 public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int[]? DeviceMemory = null);
@@ -87,6 +87,7 @@ public static class PartLibrary
         PartKind.Uno => "Arduino Uno", PartKind.Resistor => "Резистор", PartKind.Led => "Светодиод",
         PartKind.Mega => "Arduino Mega 2560",
         PartKind.Pico => "Raspberry Pi Pico",
+        PartKind.Esp32S3 => Esp32S3Board.Name,
         PartKind.LcdI2c => "LCD · I2C",
         PartKind.OledI2c => "OLED 128×64 · I2C",
         PartKind.Ds18b20 => "DS18B20 · температура · 1-Wire",
@@ -102,6 +103,7 @@ public static class PartLibrary
         PartKind.Uno => Enumerable.Range(0, 14).Select(i => "D" + i).Concat(Enumerable.Range(0, 6).Select(i => "A" + i)).Concat(["5V", "GND"]).ToArray(),
         PartKind.Mega => AvrBoards.Get("mega2560").PinNames.Concat(["5V","3V3","GND","VIN","IOREF"]).ToArray(),
         PartKind.Pico => PicoBoard.Pins,
+        PartKind.Esp32S3 => Esp32S3Board.Pins,
         PartKind.LcdI2c => ["GND","VCC","SDA","SCL"],
         PartKind.OledI2c => ["VDD","GND","SCL","SDA"],
         PartKind.Ds18b20 => ["GND","DQ","VDD"],
@@ -119,9 +121,12 @@ public static class PartLibrary
     public static double Default(PartKind kind) => kind switch { PartKind.Resistor => 330, PartKind.Potentiometer or PartKind.Pot3 => 10000, PartKind.Led => 2, PartKind.Diode => 0.7, PartKind.Motor => 50, PartKind.Buzzer => 200, PartKind.Battery => 5, PartKind.AnalogSensor => 2.5, PartKind.Dht11 => 25, PartKind.Hcsr04 => 100, PartKind.Ds18b20 => 25, _ => 0 };
 }
 
-public record PinDrive(bool Output, double Voltage, bool PullUp = false, double? PulseUs = null, double? Frequency = null);
+public record PinDrive(bool Output, double Voltage, bool PullUp = false, double? PulseUs = null, double? Frequency = null, bool PullDown = false);
 public record PartReading(double Voltage, double Current, bool Lit, double? Indicator = null);
-public record CircuitResult(Dictionary<Terminal, double> Voltages, Dictionary<string, PartReading> Parts, string[] Warnings);
+public record CircuitResult(Dictionary<Terminal, double> Voltages, Dictionary<string, PartReading> Parts, string[] Warnings)
+{
+    public IReadOnlySet<Terminal> ReferencedTerminals { get; init; } = new HashSet<Terminal>();
+}
 
 // Quasi-static nodal solver. Wires form equipotential nodes; an LED has a
 // piecewise-linear forward characteristic. No fake firmware interpretation here.
@@ -145,7 +150,7 @@ public static class CircuitSolver
             foreach (var rail in new[] {"L+","L−","R+","R−"})
                 for (var row = 2; row <= 25; row++) Join(new(breadboard.Id, rail + "1"), new(breadboard.Id, rail + row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
-        foreach(var pico in project.Parts.Where(p=>p.Kind==PartKind.Pico))foreach(var pin in PicoBoard.Pins.Where(PicoBoard.IsGround))Join(new(pico.Id,PicoBoard.Ground),new(pico.Id,pin));
+        foreach (var board in project.Parts.Where(CircuitBoards.IsBoard)) CircuitBoards.JoinHeaderAliases(board, Join);
         var grounds = project.Parts.Where(p => p.Kind==PartKind.Ground||CircuitBoards.IsBoard(p)).Select(p => new Terminal(p.Id, CircuitBoards.IsBoard(p)?CircuitBoards.Ground(p):"GND")).ToArray();
         if (grounds.Length == 0 && project.Parts.FirstOrDefault(p => p.Kind is PartKind.Battery or PartKind.AnalogSensor) is { } battery)
             grounds = [new(battery.Id, "−")];
@@ -182,14 +187,25 @@ public static class CircuitSolver
                 case PartKind.Switch: branches.Add((part, T("1"), T("2"), part.Active ? 100 : 1e-10, 0, false)); break;
                 case PartKind.Led: case PartKind.Diode: branches.Add((part, T("A"), T("K"), 0, part.Value, true)); break;
                 case PartKind.Battery: case PartKind.AnalogSensor: branches.Add((part, T("+"), T("−"), 10, part.Value, false)); break;
-                case PartKind.Uno: case PartKind.Mega: case PartKind.Pico:
-                    var pico=part.Kind==PartKind.Pico;var ground=CircuitBoards.Ground(part);var rail=pico?3.3:5;
-                    branches.Add((part, T(pico?PicoBoard.Vbus:"5V"), T(ground), 10, 5, false));
+                case PartKind.Uno: case PartKind.Mega: case PartKind.Pico: case PartKind.Esp32S3:
+                    var pico=part.Kind==PartKind.Pico;
+                    var s3 = part.Kind == PartKind.Esp32S3;
+                    var ground=CircuitBoards.Ground(part);var rail=pico||s3?3.3:5;
+                    branches.Add((part, T(pico ? PicoBoard.Vbus : s3 ? Esp32S3Board.V5 : "5V"), T(ground), 10, 5, false));
+                    if (s3) branches.Add((part, T(Esp32S3Board.V3), T(ground), 10, Esp32S3Board.LogicVoltage, false));
                     if(pico){branches.Add((part,T(PicoBoard.V3),T(ground),10,3.3,false));branches.Add((part,T(PicoBoard.Vsys),T(ground),10,4.7,false));branches.Add((part,T("35:ADC_VREF"),T(PicoBoard.V3),1.0/200,0,false));branches.Add((part,T("30:RUN"),T(PicoBoard.V3),1.0/50000,0,false));branches.Add((part,T("37:3V3_EN"),T(PicoBoard.V3),1.0/100000,0,false));}
                     if(part.Kind==PartKind.Mega){branches.Add((part,T("3V3"),T("GND"),10,3.3,false));branches.Add((part,T("IOREF"),T("GND"),10,5,false));}
-                    for (var i = 0; i < CircuitBoards.PinCount(part); i++)
-                        if (CircuitBoards.Pin(part,i) is { } pin && digital is not null && i < digital.Length && (digital[i].Output || digital[i].PullUp))
-                            branches.Add((part, T(pin), T(ground), digital[i].Output ? 1.0 / 25 : 1.0 / 50000, digital[i].PullUp ? rail : Math.Clamp(digital[i].Voltage, 0, rail), false));
+                    for (var i = 0; digital is not null && i < Math.Min(digital.Length, CircuitBoards.PinCount(part)); i++)
+                    {
+                        if (CircuitBoards.Pin(part, i) is not { } pin) continue;
+                        var drive = digital[i];
+                        if (drive.Output)
+                            branches.Add((part, T(pin), T(ground), 1.0 / 25, Math.Clamp(drive.Voltage, 0, rail), false));
+                        if (!drive.Output && drive.PullUp)
+                            branches.Add((part, T(pin), T(ground), 1.0 / 50000, rail, false));
+                        if (!drive.Output && drive.PullDown)
+                            branches.Add((part, T(pin), T(ground), 1.0 / 50000, 0, false));
+                    }
                     break;
             }
         }
@@ -243,7 +259,32 @@ public static class CircuitSolver
                 readings[servo.Id] = reading with { Indicator = Math.Clamp((pulse.Value - 500) * 180 / 2000, 0, 180) };
         }
         if (grounds.Length == 0 && project.Parts.Count > 0) warnings.Add("Нет опорной земли. Добавьте источник питания, Arduino или землю.");
-        return new(pins.ToDictionary(p => p, p => V(p, volts)), readings, warnings.ToArray());
+        var solved = new CircuitResult(pins.ToDictionary(p => p, p => V(p, volts)), readings, warnings.ToArray());
+        if (reference is null || !project.Parts.Any(p => p.Kind == PartKind.Esp32S3)) return solved;
+
+        // Conducting components establish a reference. The numerical leakage
+        // used to keep the matrix solvable must not turn a floating pin low.
+        var conduction = new Dictionary<Terminal, List<Terminal>>();
+        void Follow(Terminal a, Terminal b)
+        {
+            if (!conduction.TryGetValue(a, out var neighbors)) conduction.Add(a, neighbors = []);
+            neighbors.Add(b);
+        }
+        foreach (var branch in branches)
+        {
+            if (branch.Diode ? V(branch.A, volts) - V(branch.B, volts) <= branch.Source : branch.G <= 1e-10) continue;
+            var a = Root(branch.A);
+            var b = Root(branch.B);
+            Follow(a, b);
+            Follow(b, a);
+        }
+        var known = new HashSet<Terminal> { reference };
+        var pending = new Queue<Terminal>(known);
+        while (pending.TryDequeue(out var node))
+            if (conduction.TryGetValue(node, out var neighbors))
+                foreach (var neighbor in neighbors)
+                    if (known.Add(neighbor)) pending.Enqueue(neighbor);
+        return solved with { ReferencedTerminals = pins.Where(pin => known.Contains(Root(pin))).ToHashSet() };
     }
 
     static double[] Gaussian(double[,] m, int n)

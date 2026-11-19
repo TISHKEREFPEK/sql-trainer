@@ -22,9 +22,37 @@ public static class PicoBoard
 
 public static class CircuitBoards
 {
-    public static bool IsBoard(CircuitPart part)=>part.Kind is PartKind.Uno or PartKind.Mega or PartKind.Pico;
-    public static string Name(CircuitPart part)=>part.Kind==PartKind.Pico?"Raspberry Pi Pico":AvrBoards.For(part)?.Name??throw new InvalidDataException("Неизвестная исполняемая плата.");
-    public static string Ground(CircuitPart part)=>part.Kind==PartKind.Pico?PicoBoard.Ground:"GND";
-    public static string? Pin(CircuitPart part,int number)=>part.Kind==PartKind.Pico?PicoBoard.Gpio(number):AvrBoards.For(part)!.PinNames.ElementAtOrDefault(number);
-    public static int PinCount(CircuitPart part)=>part.Kind==PartKind.Pico?30:AvrBoards.For(part)!.PinNames.Length;
+    public static bool IsBoard(CircuitPart part) => IsBoardKind(part.Kind);
+    internal static bool IsBoardKind(PartKind kind) => kind is PartKind.Uno or PartKind.Mega or PartKind.Pico or PartKind.Esp32S3;
+    public static string Name(CircuitPart part) => part.Kind switch
+    {
+        PartKind.Pico => "Raspberry Pi Pico",
+        PartKind.Esp32S3 => Esp32S3Board.Name,
+        _ => AvrBoards.For(part)?.Name ?? throw new InvalidDataException("Неизвестная исполняемая плата.")
+    };
+    public static string Ground(CircuitPart part) => part.Kind switch
+    {
+        PartKind.Pico => PicoBoard.Ground,
+        PartKind.Esp32S3 => Esp32S3Board.Ground,
+        _ => "GND"
+    };
+    public static string? Pin(CircuitPart part, int number) => part.Kind switch
+    {
+        PartKind.Pico => PicoBoard.Gpio(number),
+        PartKind.Esp32S3 => Esp32S3Board.Gpio(number),
+        _ => AvrBoards.For(part)!.PinNames.ElementAtOrDefault(number)
+    };
+    public static int PinCount(CircuitPart part) => part.Kind switch
+    {
+        PartKind.Pico => 30,
+        PartKind.Esp32S3 => Esp32S3Board.GpioCount,
+        _ => AvrBoards.For(part)!.PinNames.Length
+    };
+    internal static void JoinHeaderAliases(CircuitPart part, Action<Terminal, Terminal> join)
+    {
+        if (part.Kind == PartKind.Pico)
+            foreach (var pin in PicoBoard.Pins.Where(PicoBoard.IsGround)) join(new(part.Id, PicoBoard.Ground), new(part.Id, pin));
+        if (part.Kind == PartKind.Esp32S3)
+            foreach (var (root, contact) in Esp32S3Board.Aliases) join(new(part.Id, root), new(part.Id, contact));
+    }
 }

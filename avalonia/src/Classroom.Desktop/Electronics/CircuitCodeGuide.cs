@@ -8,6 +8,8 @@ public static class CircuitCodeGuide
     public static CodeGuide Build(CircuitProject project)
     {
         if(project.Parts.Any(p=>p.Kind==PartKind.Pico))return PicoCodeGuide.Build(project);
+        if (project.Parts.Any(p => p.Kind == PartKind.Esp32S3))
+            return new("ESP32-S3: в коде используйте номера GPIO. В цифровом профиле доступны pinMode, digitalRead, digitalWrite и прерывания GPIO. Подключайте внешние сигналы с уровнями 3,3 В.", null);
         var notes = new List<string> { "setup() — начальная настройка; loop() — повторяющиеся действия. Код меняется только по вашей команде." };
         var unsupported = project.Parts.Where(p => !PartCatalog.CanSimulate(p)).ToArray();
         if (unsupported.Length > 0) notes.Add("Только для схемы: " + string.Join(", ", unsupported.Select(PartLibrary.Name).Distinct()) + ". Автонастройка и исполнение для этих моделей пока недоступны.");

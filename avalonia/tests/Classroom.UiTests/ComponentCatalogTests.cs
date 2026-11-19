@@ -46,7 +46,12 @@ public sealed class ComponentCatalogTests
     {
         Assert.True(PartCatalog.All.Length >= 140);
         Assert.Equal(PartCatalog.All.Length,PartCatalog.All.Select(d=>d.Id).Distinct().Count());
-        Assert.All(PartCatalog.All.Where(d=>d.Art!="ground"),d=>Assert.NotNull(PartArtwork.Image(d.Art)));
+        Assert.All(PartCatalog.All.Where(d=>d.Art!="ground"), d =>
+        {
+            var thumbnail = PartArtwork.Thumbnail(d.Art);
+            if (thumbnail is Image raster) Assert.NotNull(raster.Source);
+            else Assert.NotNull(Assert.IsType<Viewbox>(thumbnail).Child);
+        });
         var svg = System.Xml.Linq.XDocument.Parse("<svg xmlns=\"http://www.w3.org/2000/svg\">" + PartArtwork.SvgDefinitions() + PartArtwork.SvgPart(new("uno",PartKind.Uno,100,100,Rotation:1)) + "</svg>");
         Assert.Equal(4,svg.Descendants().Count(e=>e.Name.LocalName=="image" && e.Attribute("href")!.Value.StartsWith("data:image/png;base64,")));
         Assert.Contains("matrix(-1 0 0 1 260 0)",svg.ToString());
@@ -57,12 +62,17 @@ public sealed class ComponentCatalogTests
         var window=new MainWindow(true,false){Width=1320,Height=900}; using var view=new ElectronicsScreen(window,path);
         window.Preview(view); window.Show(); window.UpdateLayout();
         var search=view.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Watermark=="Поиск деталей…"); search.Text="ESP32"; window.UpdateLayout();
-        for (var i=0;i<50 && view.GetVisualDescendants().OfType<Button>().Count(b=>AutomationProperties.GetName(b)?.StartsWith("Добавить:")==true)!=2;i++) { await Task.Delay(10); window.UpdateLayout(); }
-        var cards=view.GetVisualDescendants().OfType<Button>().Where(b=>AutomationProperties.GetName(b)?.StartsWith("Добавить:")==true).ToArray(); Assert.Equal(2,cards.Length);
+        string[] Cards() => view.GetVisualDescendants().OfType<Button>()
+            .Select(AutomationProperties.GetName).OfType<string>().Where(name => name.StartsWith("Добавить:")).ToArray();
+        var preview = Esp32S3Board.ConfiguredRuntime is not null;
+        var expectedCount = preview ? 3 : 2;
+        for (var i=0;i<50 && Cards().Length!=expectedCount;i++) { await Task.Delay(10); window.UpdateLayout(); }
+        Assert.Equal(expectedCount, Cards().Length);
         view.GetVisualDescendants().OfType<Button>().First(b=>AutomationProperties.GetName(b)?.StartsWith("Избранное:")==true).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Single(CircuitProject.Parse(File.ReadAllText(path)).Favorites);
         view.GetVisualDescendants().OfType<CheckBox>().Single(c=>c.Content?.ToString()=="С симуляцией").IsChecked=true; window.UpdateLayout();
-        Assert.DoesNotContain(view.GetVisualDescendants().OfType<Button>(),b=>AutomationProperties.GetName(b)?.StartsWith("Добавить:")==true);
+        if (preview) Assert.Equal("Добавить: ESP32-S3-DevKitC-1 · GPIO", Assert.Single(Cards()));
+        else Assert.Empty(Cards());
         window.Close();
     }
 }

@@ -60,12 +60,15 @@ public static class PartArtwork
         ? new Viewbox { Child=new Dht11Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
         : key=="tft-ili9341"
         ? new Viewbox { Child=new TftDisplayFace(),Width=width,Height=height,Stretch=Stretch.Uniform }
+        : key == Esp32S3Face.Art
+        ? new Viewbox { Child = new Esp32S3Face(), Width = width, Height = height, Stretch = Stretch.Uniform }
         : Image(key) is { } art
         ? new Image { Source = art, Width = width, Height = height, Stretch = Stretch.Uniform }
         : new TextBlock { Text = "⏚", FontSize = 36, Width = width, Height = height, TextAlignment = TextAlignment.Center };
     public static Size BaseBody(CircuitPart p)
     {
         if (p.Kind == PartKind.Uno) return new(260, 195);
+        if (p.Kind == PartKind.Esp32S3) return Esp32S3Face.Body;
         if (p.Kind == PartKind.Mega) return new(500,270);
         if (p.Kind == PartKind.LcdI2c) return p.ModelId=="lcd-i2c-20x4"?new(360,190):new(300,150);
         if (p.Kind == PartKind.OledI2c) return new(220,200);
@@ -151,6 +154,12 @@ public static class PartArtwork
         else if(p.Kind==PartKind.Hcsr04){x=102+i*20;y=134;}
         else if(p.Kind==PartKind.Dht11){x=32+i*20;y=155;}
         else if(p.Kind==PartKind.TftSpi){var header=TftDisplayFace.Header(i);x=header.X;y=header.Y;}
+        else if (p.Kind == PartKind.Esp32S3)
+        {
+            var header = Esp32S3Face.Header(i);
+            x = header.X;
+            y = header.Y;
+        }
         else if(p.Kind==PartKind.Mega)
         {
             if(pin.StartsWith('D')&&int.TryParse(pin[1..],out var number))
@@ -206,6 +215,7 @@ public static class PartArtwork
         if(p.Kind==PartKind.Ds18b20)return prefix+Ds18b20Face.Svg()+"</g>";
         if(p.Kind==PartKind.Hcsr04)return prefix+Hcsr04Face.Svg()+"</g>";
         if(p.Kind==PartKind.Dht11)return prefix+Dht11Face.Svg()+"</g>";
+        if (p.Kind == PartKind.Esp32S3) return prefix + Esp32S3Face.Svg() + "</g>";
         if(p.Kind==PartKind.TftSpi)return prefix+"<rect width=\"240\" height=\"400.5\" rx=\"5\" fill=\"#17639a\"/><rect x=\"10\" y=\"85\" width=\"220\" height=\"290\" fill=\"#b8bfc4\"/><rect x=\"15\" y=\"90\" width=\"210\" height=\"280\" fill=\"#03070a\"/></g>";
         if (!Regions.TryGetValue(PartCatalog.For(p).Art, out var sprite)) return prefix + "<text x=\"15\" y=\"35\" font-size=\"36\">&#x23DA;</text></g>";
         var r = sprite.Region;

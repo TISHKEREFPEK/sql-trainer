@@ -12,7 +12,7 @@ public sealed class CircuitConnections
             for(var row=1;row<=30;row++)foreach(var group in new[]{"abcde","fghij"})foreach(var c in group.Skip(1))Join(new(board.Id,group[0]+row.ToString(System.Globalization.CultureInfo.InvariantCulture)),new(board.Id,c+row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             foreach(var rail in new[]{"L+","L−","R+","R−"})for(var row=2;row<=25;row++)Join(new(board.Id,rail+"1"),new(board.Id,rail+row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
-        foreach(var pico in project.Parts.Where(p=>p.Kind==PartKind.Pico))foreach(var pin in PicoBoard.Pins.Where(PicoBoard.IsGround))Join(new(pico.Id,PicoBoard.Ground),new(pico.Id,pin));
+        foreach (var board in project.Parts.Where(CircuitBoards.IsBoard)) CircuitBoards.JoinHeaderAliases(board, Join);
         var grounds=project.Parts.Where(p=>p.Kind==PartKind.Ground||CircuitBoards.IsBoard(p)).Select(p=>new Terminal(p.Id,CircuitBoards.IsBoard(p)?CircuitBoards.Ground(p):"GND")).ToArray();
         foreach(var ground in grounds.Skip(1))Join(grounds[0],ground);
     }

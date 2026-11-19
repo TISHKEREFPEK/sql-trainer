@@ -65,7 +65,14 @@ public sealed partial class ElectronicsScreen
         if(codeTabs?.ItemsSource is TabItem[] pages&&pages.Length>0)pages[0].Header="Код "+(project.Parts.FirstOrDefault(CircuitBoards.IsBoard) is {}controller?CircuitBoards.Name(controller):"платы");
         ShowSerial();
     }
-    void ShowSerial(){var index=Math.Clamp(serialChannel.SelectedIndex,0,3);monitor.Text=serialText[index];serialQueueInfo.Text=serialQueued[index]>0?$"Ожидает чтения: {serialQueued[index]} байт":"";}
+    void ShowSerial()
+    {
+        var index = Math.Clamp(serialChannel.SelectedIndex, 0, 3);
+        monitor.Text = serialText[index];
+        serialQueueInfo.Text = project.Parts.Any(p => p.Kind == PartKind.Esp32S3)
+            ? "В цифровом профиле ESP32-S3 последовательный монитор пока недоступен."
+            : serialQueued[index] > 0 ? $"Ожидает чтения: {serialQueued[index]} байт" : "";
+    }
     void ClearSerialDisplay(){Array.Fill(serialText,"");Array.Clear(serialQueued);ShowSerial();}
     void ReceiveSerial(FirmwareFrame frame)
         =>ReceiveSerial(frame.SerialPorts??[frame.Serial],frame.SerialPending??[]);

@@ -1,3 +1,23 @@
+diff --git a/chardev/char-ringbuf.c b/chardev/char-ringbuf.c
+index d40d21d..a7a018a 100644
+--- a/chardev/char-ringbuf.c
++++ b/chardev/char-ringbuf.c
+@@ -40,0 +41 @@ struct RingBufChardev {
++    uint64_t dropped;
+@@ -67,0 +69 @@ static int ringbuf_chr_write(Chardev *chr, const uint8_t *buf, int len)
++            d->dropped++;
+@@ -74 +76,2 @@ static int ringbuf_chr_write(Chardev *chr, const uint8_t *buf, int len)
+-static int ringbuf_chr_read(Chardev *chr, uint8_t *buf, int len)
++int qemu_chr_ringbuf_read(Chardev *chr, uint8_t *buf, int len,
++                          uint64_t *dropped)
+@@ -79,0 +83,4 @@ static int ringbuf_chr_read(Chardev *chr, uint8_t *buf, int len)
++    if (dropped) {
++        *dropped = d->dropped;
++        d->dropped = 0;
++    }
+@@ -189 +196 @@ char *qmp_ringbuf_read(const char *device, int64_t size,
+-    ringbuf_chr_read(chr, read_data, size);
++    qemu_chr_ringbuf_read(chr, read_data, size, NULL);
 diff --git a/hw/gpio/esp32s3_gpio.c b/hw/gpio/esp32s3_gpio.c
 index 0a0e477..d2cc212 100644
 --- a/hw/gpio/esp32s3_gpio.c
@@ -305,9 +325,12 @@ index 0a0e477..d2cc212 100644
 -    .parent = TYPE_ESP32_GPIO,
 +    .parent = TYPE_SYS_BUS_DEVICE,
 diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
-index 4a24a04..9845da9 100644
+index 4a24a04..39c7925 100644
 --- a/hw/xtensa/esp32s3.c
 +++ b/hw/xtensa/esp32s3.c
+@@ -540 +540 @@ static void esp32s3_soc_init(Object *obj)
+-    // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
++    qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
 @@ -775,0 +776,4 @@ static void esp32s3_machine_init(MachineState *machine)
 +        mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpio), 1);
 +        memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
@@ -315,6 +338,15 @@ index 4a24a04..9845da9 100644
 +                           qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
 @@ -873 +876,0 @@ static void esp32s3_machine_init(MachineState *machine)
 -    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.iomux", DR_REG_IO_MUX_BASE, 0x2000);
+diff --git a/include/chardev/char.h b/include/chardev/char.h
+index 01df55f..791a9c3 100644
+--- a/include/chardev/char.h
++++ b/include/chardev/char.h
+@@ -219,0 +220,4 @@ Chardev *qemu_chr_find(const char *name);
++/* Consume bytes from a ringbuf, optionally reporting and clearing its overrun. */
++int qemu_chr_ringbuf_read(Chardev *chr, uint8_t *buf, int len,
++                          uint64_t *dropped);
++
 diff --git a/include/hw/gpio/esp32s3_gpio.h b/include/hw/gpio/esp32s3_gpio.h
 index 7d6bb4b..467bc48 100644
 --- a/include/hw/gpio/esp32s3_gpio.h
@@ -363,3 +395,64 @@ index 7f28871..f0ec7a8 100644
 +                              compile_args: slirp_cflags,
 +                              version: slirp_dep.version())
 +  endif
+diff --git a/system/qtest.c b/system/qtest.c
+index 12703a2..9539f7b 100644
+--- a/system/qtest.c
++++ b/system/qtest.c
+@@ -25,0 +26 @@
++#include "qemu/base64.h"
+@@ -345,0 +347,50 @@ static void qtest_install_gpio_out_intercept(DeviceState *dev, const char *name,
++static bool qtest_classroom_uart(CharBackend *chr, gchar **words)
++{
++    static const char *const ports[] = {
++        "classroom-uart0", "classroom-uart1", "classroom-uart2",
++    };
++    bool read = !strcmp(words[0], "classroom_uart_read");
++    bool write = !strcmp(words[0], "classroom_uart_write");
++    Chardev *port = NULL;
++
++    if (!strcmp(words[0], "classroom_uart_version")) {
++        qtest_send_prefix(chr);
++        qtest_send(chr, "OK 1\n");
++        return true;
++    }
++    if (!read && !write) {
++        return false;
++    }
++
++    if (words[1] && strlen(words[1]) == 1 &&
++        words[1][0] >= '0' && words[1][0] <= '2') {
++        port = qemu_chr_find(ports[words[1][0] - '0']);
++    }
++    qtest_send_prefix(chr);
++    if (!port || !CHARDEV_IS_RINGBUF(port)) {
++        qtest_send(chr, "FAIL Unknown classroom UART\n");
++    } else if (read) {
++        uint8_t bytes[4096];
++        uint64_t dropped;
++        int count = qemu_chr_ringbuf_read(port, bytes, sizeof(bytes), &dropped);
++        g_autofree char *encoded = count ? g_base64_encode(bytes, count) : NULL;
++
++        qtest_sendf(chr, "OK %" PRIu64 " %s\n", dropped, encoded ? encoded : "-");
++    } else {
++        gsize size = 0;
++        g_autofree uint8_t *bytes = words[2] && strlen(words[2]) <= 172
++            ? qbase64_decode(words[2], -1, &size, NULL) : NULL;
++        if (!bytes || !size || size > 128) {
++            qtest_send(chr, "FAIL Invalid classroom UART data\n");
++        } else {
++            int count = MIN((int)size, qemu_chr_be_can_write(port));
++
++            if (count > 0) {
++                qemu_chr_be_write(port, bytes, count);
++            }
++            qtest_sendf(chr, "OK %d\n", count);
++        }
++    }
++    return true;
++}
++
+@@ -364,0 +416,3 @@ static void qtest_process_command(CharBackend *chr, gchar **words)
++    if (qtest_classroom_uart(chr, words)) {
++        return;
++    }

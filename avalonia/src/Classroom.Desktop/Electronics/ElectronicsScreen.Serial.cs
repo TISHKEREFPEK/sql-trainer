@@ -1,3 +1,4 @@
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -7,6 +8,10 @@ namespace Classroom.Desktop.Electronics;
 
 public sealed partial class ElectronicsScreen
 {
+    static readonly string[] unoSerialChannels = ["Serial"];
+    static readonly string[] megaSerialChannels = ["Serial", "Serial1", "Serial2", "Serial3"];
+    static readonly string[] picoSerialChannels = ["Serial · USB", "Serial1 · UART0", "Serial2 · UART1"];
+    static readonly string[] s3SerialChannels = ["UART0 · Serial", "UART1 · Serial1", "UART2 · Serial2"];
     readonly ComboBox serialChannel = new(){MinWidth=120};
     readonly ComboBox serialEnding = new(){ItemsSource=new[]{"Без перевода","LF","CRLF"},SelectedIndex=1,MinWidth=125};
     readonly TextBox serialInput = Ui.Input();
@@ -19,6 +24,7 @@ public sealed partial class ElectronicsScreen
     bool SerialChannelReady=>serialReady&&(!project.Parts.Any(p=>p.Kind==PartKind.Pico)||serialChannel.SelectedIndex!=0||picoUsbReady);
     Control BuildSerialPanel()
     {
+        AutomationProperties.SetName(serialChannel, "Порт последовательного монитора");
         serialInput.Watermark="Данные для платы";
         serialInput.MaxLength=4096;
         serialSend=Ui.Button("Отправить",()=>Perform(QueueSerialInput),()=>running&&SerialChannelReady&&!ticking&&pendingSerial is null&&!disposed);
@@ -56,10 +62,20 @@ public sealed partial class ElectronicsScreen
     }
     void UpdateSerialControls()
     {
-        var pico=project.Parts.Any(p=>p.Kind==PartKind.Pico);var count=project.Parts.Any(p=>p.Kind==PartKind.Mega)?4:pico?3:1;
-        if(serialChannel.Items.Count!=count)
+        var channels = project.Parts.FirstOrDefault(CircuitBoards.IsBoard)?.Kind switch
         {
-            serialBinding=true;var selected=serialChannel.SelectedIndex;serialChannel.ItemsSource=Enumerable.Range(0,count).Select(i=>pico?(i==0?"Serial · USB":"Serial"+i+" · UART"+(i-1)):i==0?"Serial":"Serial"+i).ToArray();serialChannel.SelectedIndex=Math.Clamp(selected,0,count-1);serialBinding=false;
+            PartKind.Mega => megaSerialChannels,
+            PartKind.Pico => picoSerialChannels,
+            PartKind.Esp32S3 => s3SerialChannels,
+            _ => unoSerialChannels
+        };
+        if (!ReferenceEquals(serialChannel.ItemsSource, channels))
+        {
+            serialBinding = true;
+            var selected = serialChannel.SelectedIndex;
+            serialChannel.ItemsSource = channels;
+            serialChannel.SelectedIndex = Math.Clamp(selected, 0, channels.Length - 1);
+            serialBinding = false;
         }
         if(serialSend is not null)serialSend.IsEnabled=running&&SerialChannelReady&&!ticking&&pendingSerial is null&&!disposed;
         if(codeTabs?.ItemsSource is TabItem[] pages&&pages.Length>0)pages[0].Header="Код "+(project.Parts.FirstOrDefault(CircuitBoards.IsBoard) is {}controller?CircuitBoards.Name(controller):"платы");
@@ -69,8 +85,8 @@ public sealed partial class ElectronicsScreen
     {
         var index = Math.Clamp(serialChannel.SelectedIndex, 0, 3);
         monitor.Text = serialText[index];
-        serialQueueInfo.Text = project.Parts.Any(p => p.Kind == PartKind.Esp32S3)
-            ? "В цифровом профиле ESP32-S3 последовательный монитор пока недоступен."
+        serialQueueInfo.Text = s3Session is { SupportsSerial: false }
+            ? "Для монитора UART обновите комплект ESP32-S3."
             : serialQueued[index] > 0 ? $"Ожидает чтения: {serialQueued[index]} байт" : "";
     }
     void ClearSerialDisplay(){Array.Fill(serialText,"");Array.Clear(serialQueued);ShowSerial();}

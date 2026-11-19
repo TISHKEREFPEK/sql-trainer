@@ -1,6 +1,7 @@
 """Regression checks against the patched QEMU binary and a local test fixture."""
 
 import argparse
+from base64 import b64decode, b64encode
 from contextlib import contextmanager
 from pathlib import Path
 import queue
@@ -78,7 +79,10 @@ def open_qemu(executable, bios, flash=None):
                 "-serial", "file:uart0.log",
             ]
         else:
-            args += ["-S", "-serial", "null"]
+            args.append("-S")
+            for port in range(3):
+                name = f"classroom-uart{port}"
+                args += ["-chardev", f"ringbuf,id={name},size=16", "-serial", f"chardev:{name}"]
         with (root / "qemu.log").open("w+", encoding="utf-8", errors="replace") as diagnostics:
             process = subprocess.Popen(
                 args, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -103,6 +107,23 @@ def open_qemu(executable, bios, flash=None):
 def assert_register(qtest, offset, expected):
     actual = qtest.read(GPIO + offset)
     assert actual == expected, f"GPIO+{offset:#x}: {actual:#x}, expected {expected:#x}"
+
+
+def check_uart(qtest):
+    assert qtest.command("classroom_uart_version") == "1"
+    for port, fifo in enumerate((0x60000000, 0x60010000, 0x6002E000)):
+        sent = bytes(range(40))
+        for value in sent:
+            qtest.write(fifo, value)
+        dropped, data = qtest.command(f"classroom_uart_read {port}").split()
+        assert (int(dropped), b64decode(data)) == (24, sent[-16:])
+        assert qtest.command(f"classroom_uart_read {port}") == "0 -"
+
+        data = bytes(range(128))
+        encoded = b64encode(data).decode("ascii")
+        assert qtest.command(f"classroom_uart_write {port} {encoded}") == "128"
+        assert qtest.command(f"classroom_uart_write {port} eA==") == "0"
+        assert bytes(qtest.read(fifo) for _ in data) == data
 
 
 def check_registers(qtest):
@@ -198,7 +219,9 @@ def main():
     bios = args.bios.resolve(strict=True)
     with open_qemu(qemu, bios) as (qtest, _):
         check_registers(qtest)
-    print("ESP32-S3 GPIO register and pad checks passed")
+        print("ESP32-S3 GPIO register and pad checks passed")
+        check_uart(qtest)
+        print("ESP32-S3 UART RX capacity and TX overflow checks passed")
     if args.flash:
         flash = args.flash.resolve(strict=True)
         if flash.stat().st_size != 4 * 1024 * 1024:

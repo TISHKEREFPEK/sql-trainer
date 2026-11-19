@@ -1,3 +1,5 @@
+using Classroom.Contracts;
+
 namespace Classroom.Desktop.Electronics;
 
 public sealed partial class ElectronicsScreen
@@ -27,17 +29,21 @@ public sealed partial class ElectronicsScreen
         if (generation != runId || disposed) return;
         s3Session = await connected.Task;
         s3WiredPins = wired;
+        serialReady = s3Session.SupportsSerial;
         ClearSerialDisplay();
         UpdateSerialControls();
     }
 
-    async Task<PinDrive[]> StepEsp32S3(CircuitPart board, CancellationToken cancellation)
+    async Task<(PinDrive[] Pins, Esp32S3SerialFrame? Serial)> StepEsp32S3(
+        CircuitPart board, ElectronicsSerialIo? serial, CancellationToken cancellation)
     {
         if (s3Execution is { IsCompleted: true }) await s3Execution;
         var session = s3Session ?? throw new IOException("Связь с эмулятором ESP32-S3 завершена.");
         var before = CircuitSolver.Solve(project, outputs);
         var inputs = Esp32S3Board.Inputs(board, before, s3WiredPins, outputs);
-        return Esp32S3Board.Drives(await session.ExchangePads(inputs, cancellation));
+        var pins = Esp32S3Board.Drives(await session.ExchangePads(inputs, cancellation));
+        var frame = session.SupportsSerial ? await session.ExchangeSerial(serial, cancellation) : null;
+        return (pins, frame);
     }
 
     bool StopEsp32S3()

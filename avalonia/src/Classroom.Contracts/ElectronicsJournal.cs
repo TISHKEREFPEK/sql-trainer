@@ -43,7 +43,9 @@ public sealed record ElectronicsJournal(int Version, string StreamId, long Start
             throw new InvalidDataException("Некорректные данные последовательного порта в истории.");
         using var document=System.Text.Json.JsonDocument.Parse(json);
         var kinds=document.RootElement.GetProperty("parts").EnumerateArray().Select(p=>p.GetProperty("kind").GetString()).ToArray();
-        if(data.Port>=(kinds.Contains("Mega")?4:kinds.Contains("Pico")?3:1)||kind is "serial-input-request" or "serial-input" or "serial-output"&&!kinds.Any(k=>k is "Uno" or "Mega" or "Pico"))
+        var ports = kinds.Contains("Mega") ? 4 : kinds.Any(k => k is "Pico" or "Esp32S3") ? 3 : 1;
+        if (data.Port >= ports || kind is "serial-input-request" or "serial-input" or "serial-output"
+            && !kinds.Any(k => k is "Uno" or "Mega" or "Pico" or "Esp32S3"))
             throw new InvalidDataException("Последовательный порт не относится к плате этой схемы.");
         try{_ = new System.Text.UTF8Encoding(false,true).GetByteCount(data.Text);}
         catch(System.Text.EncoderFallbackException e){throw new InvalidDataException("В данных порта есть неполный символ.",e);}

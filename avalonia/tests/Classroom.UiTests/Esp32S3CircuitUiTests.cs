@@ -49,6 +49,85 @@ public sealed class Esp32S3CircuitUiTests
         HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
             .Dispatch(CheckCircuitUi, CancellationToken.None);
 
+    [Esp32S3GpioFact]
+    public Task SerialMonitorExchangesUtf8OnEachS3UartAndKeepsTheJournal() =>
+        HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
+            .Dispatch(CheckSerialUi, CancellationToken.None);
+
+    static async Task<bool> CheckSerialUi()
+    {
+        await using var classroom = await LiveClassroom.Start();
+        ThemeManager.Apply(new());
+        var project = ButtonCircuit();
+        project.Code = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "fixtures", "esp32s3-gpio.ino"));
+        var folder = Path.Combine(Path.GetTempPath(), "classroom-s3-uart-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "project.json");
+        File.WriteAllText(path, project.Serialize());
+        var window = new MainWindow(false, false) { Width = 1320, Height = 940 };
+        using var editor = new ElectronicsScreen(window, path, classroom.Student);
+        window.Preview(editor);
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            T Find<T>(Func<T, bool> test) where T : Control =>
+                editor.GetVisualDescendants().OfType<T>().Single(test);
+            string Output(int port) => string.Concat(editor.LocalHistory!.Changes
+                .Where(c => c.Kind == "serial-output" && c.SerialIo?.Port == port).Select(c => c.SerialIo!.Text));
+
+            Find<Button>(b => b.Content as string == "Запустить").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitFor(() => Output(0).Contains("GPIO_READY") && Output(1).Contains("UART1_READY") &&
+                Output(2).Contains("UART2_READY"), TimeSpan.FromMinutes(3));
+            var tabs = Find<TabControl>(t => t.Items.OfType<TabItem>().Any(i => i.Header as string == "Последовательный монитор"));
+            tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(i => i.Header as string == "Последовательный монитор");
+            window.UpdateLayout();
+            var channel = Find<ComboBox>(c => AutomationProperties.GetName(c) == "Порт последовательного монитора");
+            Assert.Equal(new[] { "UART0 · Serial", "UART1 · Serial1", "UART2 · Serial2" }, channel.Items.Cast<string>());
+            var input = Find<TextBox>(t => t.Watermark == "Данные для платы");
+            var send = Find<Button>(b => b.Content as string == "Отправить");
+            var sent = new List<ElectronicsSerialIo>();
+            for (var port = 0; port < 3; port++)
+            {
+                // The multibyte character crosses a FIFO-sized exchange on each port.
+                var payload = new string((char)('a' + port), 127) + $"🙂 Проверка UART{port}";
+                channel.SelectedIndex = port;
+                input.Text = payload;
+                await WaitFor(() => send.IsEnabled, TimeSpan.FromSeconds(8));
+                send.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await WaitFor(() => Output(port).Contains(payload + "\n"), TimeSpan.FromSeconds(8));
+                Assert.DoesNotContain(Enumerable.Range(0, 3).Where(i => i != port), i => Output(i).Contains(payload));
+                var expected = new ElectronicsSerialIo(port, payload + "\n");
+                sent.Add(expected);
+                Assert.Contains(editor.LocalHistory!.Changes, c => c.Kind == "serial-input" && c.SerialIo == expected);
+                Assert.Contains(editor.GetVisualDescendants().OfType<TextBox>(), t => t.IsReadOnly && t.Text?.Contains(payload) == true);
+            }
+            editor.Suspend();
+            var history = editor.LocalHistory!;
+            Assert.Equal(project.Serialize(), history.Replay());
+            var route = $"teacher/electronics-journal/{classroom.StudentId}";
+            ElectronicsJournalInfo? stream = null;
+            for (var attempt = 0; attempt < 30 && stream is null; attempt++)
+            {
+                await editor.Synchronize();
+                var streams = await classroom.Admin.Get<ElectronicsJournalInfo[]>(route);
+                stream = streams.SingleOrDefault(s => s.Id == history.StreamId);
+                if (stream is null) await Task.Delay(50);
+            }
+            Assert.NotNull(stream);
+            var events = await classroom.Admin.Get<ElectronicsJournalEvents>($"{route}/{stream.Id}/changes");
+            foreach (var request in sent)
+            {
+                Assert.Contains(events.Events, e => e.Change.Kind == "serial-input" && e.Change.SerialIo == request);
+                var output = string.Concat(events.Events.Where(e => e.Change.Kind == "serial-output"
+                    && e.Change.SerialIo?.Port == request.Port).Select(e => e.Change.SerialIo!.Text));
+                Assert.Contains(request.Text, output);
+            }
+            return true;
+        }
+        finally { window.Close(); }
+    }
+
     static async Task<bool> CheckCircuitUi()
     {
         ThemeManager.Apply(new());

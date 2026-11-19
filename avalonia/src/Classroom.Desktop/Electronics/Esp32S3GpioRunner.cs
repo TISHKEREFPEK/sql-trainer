@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Text;
+using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
 public readonly record struct Esp32S3PadState(bool InputHigh, bool Driven, bool OutputHigh, bool PullUp, bool PullDown);
+public sealed record Esp32S3SerialFrame(string[] Ports, int[] Pending);
 
 public static class Esp32S3GpioRunner
 {
@@ -25,7 +27,10 @@ public static class Esp32S3GpioRunner
             string[] args =
             [
                 "-machine", "esp32s3", "-display", "none", "-monitor", "none", "-nic", "none", "-no-reboot",
-                "-accel", "tcg,tb-size=32,thread=single", "-serial", "null", "-serial", "null",
+                "-accel", "tcg,tb-size=32,thread=single",
+                "-chardev", "ringbuf,id=classroom-uart0,size=1048576", "-serial", "chardev:classroom-uart0",
+                "-chardev", "ringbuf,id=classroom-uart1,size=1048576", "-serial", "chardev:classroom-uart1",
+                "-chardev", "ringbuf,id=classroom-uart2,size=1048576", "-serial", "chardev:classroom-uart2",
                 "-L", Path.Combine(runtime, "sandbox-xtensa", "qemu", "share", "qemu"),
                 "-drive", "file=flash.bin,if=mtd,format=raw", "-qtest", "stdio", "-qtest-log", "NUL"
             ];
@@ -56,12 +61,21 @@ public sealed class Esp32S3GpioSession
     const uint Gpio = 0x60004000;
     const uint Iomux = 0x60009000;
     const string PadDevice = "/machine/soc/gpio";
+    const int SerialQueueCapacity = 4096;
+    const int SerialReadCapacity = 4096;
+    const int UartFifoCapacity = 128;
+    static readonly UTF8Encoding strictUtf8 = new(false, true);
     readonly StreamReader responses;
     readonly Stream commands;
     readonly CancellationToken lifetime;
     readonly SemaphoreSlim exchangeGate = new(1, 1);
     readonly Dictionary<int, bool?> previousInputs = [];
+    readonly Queue<byte>[] serialInputs = [new(), new(), new()];
+    readonly Decoder[] serialDecoders = [Encoding.UTF8.GetDecoder(), Encoding.UTF8.GetDecoder(), Encoding.UTF8.GetDecoder()];
+    readonly byte[] serialBytes = new byte[SerialReadCapacity];
+    readonly char[] serialChars = new char[Encoding.UTF8.GetMaxCharCount(SerialReadCapacity)];
     bool failed;
+    public bool SupportsSerial { get; private set; }
 
     internal Esp32S3GpioSession(StreamReader responses, Stream commands, CancellationToken lifetime)
     {
@@ -70,21 +84,24 @@ public sealed class Esp32S3GpioSession
         this.lifetime = lifetime;
     }
 
-    internal Task Probe(CancellationToken cancellation) => SetPad(0, null, cancellation);
+    internal async Task Probe(CancellationToken cancellation)
+    {
+        await SetPad(0, null, cancellation);
+        const string command = "classroom_uart_version";
+        var version = await Request(command, cancellation);
+        if (version == $"FAIL Unknown command '{command}'") return;
+        if (version != "OK 1") throw new InvalidDataException("Неизвестная версия протокола UART ESP32-S3.");
+        SupportsSerial = true;
+    }
 
-    public async Task<IReadOnlyDictionary<int, Esp32S3PadState>> ExchangePads(
+    public Task<IReadOnlyDictionary<int, Esp32S3PadState>> ExchangePads(
         IReadOnlyDictionary<int, bool?> inputs, CancellationToken cancellation = default)
     {
         var requested = inputs.ToDictionary(pair => pair.Key, pair => pair.Value);
         if (requested.Keys.Any(pin => pin < 0 || pin is >= 22 and <= 25 || pin > 48))
             throw new ArgumentOutOfRangeException(nameof(inputs), "GPIO отсутствует у ESP32-S3.");
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime);
-        await exchangeGate.WaitAsync(deadline.Token);
-        try
+        return Exchange<IReadOnlyDictionary<int, Esp32S3PadState>>(async token =>
         {
-            if (failed) throw new IOException("Связь с GPIO потеряна. Запустите эмулятор заново.");
-            deadline.CancelAfter(TimeSpan.FromSeconds(3));
-            var token = deadline.Token;
             foreach (var (pin, old) in previousInputs.ToArray())
             {
                 if (requested.ContainsKey(pin)) continue;
@@ -118,11 +135,76 @@ public sealed class Esp32S3GpioSession
                 }
             }
             return states;
+        }, cancellation);
+    }
+
+    public Task<Esp32S3SerialFrame> ExchangeSerial(ElectronicsSerialIo? input, CancellationToken cancellation = default)
+    {
+        if (!SupportsSerial) throw new InvalidOperationException("Текущий комплект ESP32-S3 не поддерживает монитор UART.");
+        if (input is not null && (input.Port < 0 || input.Port >= serialInputs.Length))
+            throw new ArgumentOutOfRangeException(nameof(input), "UART отсутствует у ESP32-S3.");
+        byte[] incoming = input is null ? [] : strictUtf8.GetBytes(input.Text);
+        return Exchange(async token =>
+        {
+            if (input is not null)
+            {
+                var queue = serialInputs[input.Port];
+                if (incoming.Length > SerialQueueCapacity - queue.Count)
+                    throw new InvalidDataException("Очередь UART ESP32-S3 заполнена.");
+                foreach (var value in incoming) queue.Enqueue(value);
+            }
+
+            var ports = new string[serialInputs.Length];
+            var pending = new int[serialInputs.Length];
+            for (var port = 0; port < ports.Length; port++)
+            {
+                var queue = serialInputs[port];
+                if (queue.Count > 0)
+                {
+                    var bytes = queue.Take(UartFifoCapacity).ToArray();
+                    var payload = Convert.ToBase64String(bytes);
+                    var write = await Send(FormattableString.Invariant($"classroom_uart_write {port} {payload}"), token);
+                    if (write.Length < 4 || !int.TryParse(write.AsSpan(3), NumberStyles.None,
+                        CultureInfo.InvariantCulture, out var accepted) || accepted > bytes.Length)
+                        throw new InvalidDataException("Некорректное подтверждение приёма UART ESP32-S3.");
+                    for (var i = 0; i < accepted; i++) queue.Dequeue();
+                }
+                pending[port] = queue.Count;
+                var reply = await Send(FormattableString.Invariant($"classroom_uart_read {port}"), token);
+                var fields = reply.Split(' ');
+                if (fields.Length != 3 || !ulong.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var dropped))
+                    throw new InvalidDataException("Некорректный вывод UART ESP32-S3.");
+                var decoder = serialDecoders[port];
+                var marker = "";
+                if (dropped > 0)
+                {
+                    decoder.Reset();
+                    marker = $"\n[Переполнение UART: пропущено {dropped} байт]\n";
+                }
+                var received = 0;
+                if (fields[2] != "-" && !Convert.TryFromBase64String(fields[2], serialBytes, out received))
+                    throw new InvalidDataException("Некорректные байты вывода UART ESP32-S3.");
+                var count = decoder.GetChars(serialBytes.AsSpan(0, received), serialChars, flush: false);
+                ports[port] = marker + new string(serialChars, 0, count);
+            }
+            return new Esp32S3SerialFrame(ports, pending);
+        }, cancellation);
+    }
+
+    async Task<T> Exchange<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellation)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime);
+        await exchangeGate.WaitAsync(deadline.Token);
+        try
+        {
+            if (failed) throw new IOException("Связь с ESP32-S3 потеряна. Запустите эмулятор заново.");
+            deadline.CancelAfter(TimeSpan.FromSeconds(3));
+            return await operation(deadline.Token);
         }
         catch (OperationCanceledException) when (!lifetime.IsCancellationRequested && !cancellation.IsCancellationRequested)
         {
             failed = true;
-            throw new IOException("Истекло время обмена с GPIO ESP32-S3.");
+            throw new IOException("Истекло время обмена с ESP32-S3.");
         }
         catch
         {
@@ -149,14 +231,20 @@ public sealed class Esp32S3GpioSession
 
     async Task<string> Send(string command, CancellationToken cancellation)
     {
+        var reply = await Request(command, cancellation);
+        if (reply != "OK" && !reply.StartsWith("OK ", StringComparison.Ordinal))
+            throw new InvalidDataException("Эмулятор отклонил команду ESP32-S3.");
+        return reply;
+    }
+
+    async Task<string> Request(string command, CancellationToken cancellation)
+    {
         await commands.WriteAsync(Encoding.ASCII.GetBytes(command + "\n"), cancellation).AsTask().WaitAsync(cancellation);
         await commands.FlushAsync(cancellation).WaitAsync(cancellation);
         // Anonymous Win32 pipes can finish a pending read only once the child
         // closes its handle. Releasing the wait lets the owner retire the job.
         var reply = await responses.ReadLineAsync(cancellation).AsTask().WaitAsync(cancellation);
-        if (reply is null) throw new EndOfStreamException("Эмулятор закрыл канал GPIO.");
-        if (reply != "OK" && !reply.StartsWith("OK ", StringComparison.Ordinal))
-            throw new InvalidDataException("Эмулятор отклонил команду GPIO.");
+        if (reply is null) throw new EndOfStreamException("Эмулятор закрыл канал ESP32-S3.");
         return reply;
     }
 }

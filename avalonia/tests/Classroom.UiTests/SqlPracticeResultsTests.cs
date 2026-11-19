@@ -113,7 +113,9 @@ public sealed class SqlPracticeResultsTests
         await f.Student.Post<ExecutionDto>("tasks/database/execute",new ExecuteRequest(Guid.NewGuid().ToString(),Solution(task)+" -- практика",true));
         await f.Admin.Put<LessonSqlSelection>($"teacher/lessons/{lesson.Id}/sql-tasks",new LessonSqlSelectionRequest(["database"],["database"]));await f.Student.Get<StudentTask>("tasks/database");
         var window=new MainWindow(true,false){Width=width,Height=850};using var shell=new TeacherScreen(window,f.Admin,new HostManager());window.Preview(shell);window.Show();
-        var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;((TabControl)typeof(TeacherScreen).GetField("tabs",flags)!.GetValue(shell)!).SelectedIndex=3;window.UpdateLayout();
+        shell.GetVisualDescendants().OfType<Button>().Single(button =>
+            Avalonia.Automation.AutomationProperties.GetName(button) == "Работы и результаты").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        window.UpdateLayout();
         var view=window.GetVisualDescendants().OfType<ClassroomResultsView>().Single();
         async Task Wait(Func<bool> ready){for(var i=0;i<100&&!ready();i++)await Task.Delay(30);Assert.True(ready());}
         void Click(string title)=>view.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()==title).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

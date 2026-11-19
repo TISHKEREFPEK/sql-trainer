@@ -1,6 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Automation;
+using Path = Avalonia.Controls.Shapes.Path;
 
 namespace Classroom.Desktop;
 
@@ -8,6 +11,66 @@ namespace Classroom.Desktop;
 // theme's resources, so choosing an older/custom theme continues to work.
 static class GraphiteUi
 {
+    public static WrapPanel WrapActions(params Control[] controls)
+    {
+        var panel = new WrapPanel { ItemSpacing = 8, LineSpacing = 8 };
+        foreach (var control in controls) panel.Children.Add(control);
+        return panel;
+    }
+
+    public static Path NavigationIcon(string geometry)
+    {
+        var icon = new Path
+        {
+            Data = Geometry.Parse(geometry),
+            Width = 18,
+            Height = 18,
+            Stretch = Stretch.Uniform,
+            StrokeThickness = 1.6,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Ui.BindBrush(icon, Path.StrokeProperty, "Ink");
+        return icon;
+    }
+
+    public static Grid ClassroomBrand(out TextBlock title)
+    {
+        var icon = NavigationIcon("M2,6 L9,2 L16,6 L9,10 Z M2,10 L9,14 L16,10 M2,14 L9,18 L16,14");
+        Ui.BindBrush(icon, Path.StrokeProperty, "AccentInk");
+        var logo = new Border { Child = icon, Width = 28, Height = 28, CornerRadius = new CornerRadius(8) };
+        Ui.BindBrush(logo, Border.BackgroundProperty, "Accent");
+        title = Ui.Text("Classroom", 16);
+        title.FontWeight = FontWeight.SemiBold;
+        title.VerticalAlignment = VerticalAlignment.Center;
+        var brand = new Grid { ColumnDefinitions = new("28,*"), ColumnSpacing = 8, Margin = new Thickness(0, 8, 0, 2) };
+        brand.Children.Add(logo);
+        Grid.SetColumn(title, 1);
+        brand.Children.Add(title);
+        return brand;
+    }
+
+    public static Button NavigationButton(string label, string geometry, Func<Task> navigate, out TextBlock title, Func<bool>? enabled = null)
+    {
+        title = Ui.Text(label, 13);
+        title.VerticalAlignment = VerticalAlignment.Center;
+        var icon = NavigationIcon(geometry);
+        var content = new Grid { ColumnDefinitions = new("18,*"), ColumnSpacing = 8 };
+        content.Children.Add(icon);
+        Grid.SetColumn(title, 1);
+        content.Children.Add(title);
+        var button = Ui.Button("", navigate, enabled);
+        button.Content = content;
+        button.Classes.Add("classroom-nav");
+        icon.Bind(Path.StrokeProperty, new Avalonia.Data.Binding("Foreground") { Source = button });
+        button.Padding = new Thickness(8, 7);
+        button.MinHeight = 38;
+        button.HorizontalAlignment = HorizontalAlignment.Stretch;
+        button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        AutomationProperties.SetName(button, label);
+        ToolTip.SetTip(button, label);
+        return button;
+    }
+
     public static Border Panel(Control child)
     {
         var panel=new Border{Child=child};panel.Classes.Add("graphite-panel");return panel;

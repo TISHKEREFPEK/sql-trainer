@@ -39,8 +39,14 @@ public sealed class ElectronicsReviewQueueView : UserControl, IDisposable
         var nav = Ui.Row(later, earlier); Grid.SetRow(nav, 2); left.Children.Add(nav);
         var body = new Grid { ColumnDefinitions = new("320,*"), ColumnSpacing = 16 };
         body.Children.Add(left); Grid.SetColumn(detail, 1); body.Children.Add(detail);
+        body.SizeChanged += (_, _) =>
+        {
+            var width = body.Bounds.Width;
+            var listWidth = width >= 1000 ? 320 : width >= 750 ? 240 : width >= 580 ? 200 : 175;
+            body.ColumnDefinitions[0].Width = new GridLength(listWidth);
+        };
         var root = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 12, Margin = new Avalonia.Thickness(12) };
-        root.Children.Add(Ui.Row(Ui.Text("Проверка схем", 22), count, Ui.Button("Обновить", () => owner.Safe(() => Load(offset)))));
+        root.Children.Add(GraphiteUi.WrapActions(Ui.Text("Проверка схем", 22), count, Ui.Button("Обновить", () => owner.Safe(() => Load(offset)))));
         Grid.SetRow(body, 1); root.Children.Add(body); queueRoot = root; Content = root;
     }
 
@@ -129,19 +135,19 @@ public sealed class ElectronicsReviewQueueView : UserControl, IDisposable
             var code = await api.Post<ReviewAccessCode>("teacher/review-access", new CreateReviewAccess(item.StudentId));
             var input = Ui.Input(code.Code); input.IsReadOnly = true; input.Width = 190;
             codePanel.Content = Ui.Stack(Ui.Text("Одноразовый код · " + item.StudentName + " · до " + ElectronicsLabels.Date(code.Expires), 12),
-                Ui.Row(input, Ui.Button("Отозвать доступ", () => owner.Safe(async () => { await api.Delete<System.Text.Json.JsonElement>("teacher/review-access/" + code.Id); codePanel.Content = Ui.Text("Доступ отозван."); }))));
+                GraphiteUi.WrapActions(input, Ui.Button("Отозвать доступ", () => owner.Safe(async () => { await api.Delete<System.Text.Json.JsonElement>("teacher/review-access/" + code.Id); codePanel.Content = Ui.Text("Доступ отозван."); }))));
         }));
         codeButton.IsVisible = !restrictedReview;
         ToolTip.SetTip(codeButton, "Новый код завершает прежний доступ к проверке этого ученика.");
         var prompt = Ui.Scroll(Ui.Text(data.Prompt)); prompt.MaxHeight = 90;
         var summary = Ui.Stack(Ui.Text(item.StudentName + " · " + item.GroupName, 20), Ui.Text(item.Title, 18), prompt,
-            Ui.Text("Сдано: " + ElectronicsLabels.Date(item.SubmittedAt), 12), Ui.Row(Ui.Stack(Ui.Text("Результат", 12), decision), Ui.Stack(Ui.Text("Оценка", 12), grade)), comment, Ui.Row(save, grant), failure,
+            Ui.Text("Сдано: " + ElectronicsLabels.Date(item.SubmittedAt), 12), GraphiteUi.WrapActions(Ui.Stack(Ui.Text("Результат", 12), decision), Ui.Stack(Ui.Text("Оценка", 12), grade)), comment, GraphiteUi.WrapActions(save, grant), failure,
             new Expander { Header = "История проверки", Content = history });
         var pane = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 12 };
         var form = Ui.Scroll(summary); form.MaxHeight = 360; pane.Children.Add(form);
         var snapshot = new ElectronicsSnapshotView(new(data.ProjectJson, "submitted", item.SubmittedAt, ""));
         var preview = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 8 };
-        preview.Children.Add(Ui.Stack(Ui.Row(Ui.Button("Открыть и запустить копию", () => owner.Safe(() => OpenWorkspace(data))), codeButton), codePanel));
+        preview.Children.Add(Ui.Stack(GraphiteUi.WrapActions(Ui.Button("Открыть и запустить копию", () => owner.Safe(() => OpenWorkspace(data))), codeButton), codePanel));
         Grid.SetRow(snapshot, 1); preview.Children.Add(snapshot);
         Grid.SetRow(preview, 1); pane.Children.Add(preview); detail.Content = pane;
     }

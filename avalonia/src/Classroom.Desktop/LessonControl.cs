@@ -54,13 +54,14 @@ public sealed class LessonControl : UserControl
         {
             if (current is not null) current = await api.Put<LessonView>($"teacher/lessons/{current.Id}/policy", Policy());
         }));
+        var commands = GraphiteUi.WrapActions(start, finish, Ui.Button("Подключить учеников", connection));
         Content = Ui.Scroll(Ui.Stack(Ui.Text("Занятие", 26),
-            Ui.Card(Ui.Stack(status, participants, Ui.Row(start, finish, Ui.Button("Подключить учеников", connection)))),
-            Ui.Card(Ui.Stack(Ui.Field("Группа", group), Ui.Row(sql, electronics), admission, allGroups, registration,
+            GraphiteUi.Panel(Ui.Stack(status, participants, commands)),
+            GraphiteUi.Panel(Ui.Stack(Ui.Field("Группа", group), Ui.Row(sql, electronics), admission, allGroups, registration,
                 practice, apply)),
             taskPicker,
             electronicsPicker,
-            Ui.Card(Ui.Stack(Ui.Text("Предыдущие занятия", 20), history))));
+            GraphiteUi.Panel(Ui.Stack(Ui.Text("Предыдущие занятия", 20), history))));
     }
 
     LessonPolicyRequest Policy() => new((group.SelectedItem as GroupChoice)?.Id is { Length: > 0 } id ? id : null,

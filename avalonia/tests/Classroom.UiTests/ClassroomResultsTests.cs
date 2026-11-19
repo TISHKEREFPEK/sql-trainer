@@ -212,8 +212,8 @@ public sealed class ClassroomResultsTests
         var work=await f.Student.Get<StudentTask>("tasks/database");await f.Student.Post<ExecutionDto>("tasks/database/execute",new ExecuteRequest(Guid.NewGuid().ToString(),Solution(work),true));
         var window=new MainWindow(true,false){Width=width,Height=850};using var shell=new TeacherScreen(window,f.Admin,new HostManager());
         window.Preview(shell);window.Show();
-        var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
-        ((TabControl)typeof(TeacherScreen).GetField("tabs",flags)!.GetValue(shell)!).SelectedIndex=3;
+        shell.GetVisualDescendants().OfType<Button>().Single(button =>
+            Avalonia.Automation.AutomationProperties.GetName(button) == "Работы и результаты").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         window.UpdateLayout();
         var view=window.GetVisualDescendants().OfType<ClassroomResultsView>().Single();
         for(var i=0;i<100&&!view.GetVisualDescendants().OfType<DataGrid>().Any();i++)await Task.Delay(30);

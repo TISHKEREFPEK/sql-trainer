@@ -6,7 +6,6 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Path=Avalonia.Controls.Shapes.Path;
 
 namespace Classroom.Desktop;
 
@@ -15,7 +14,7 @@ sealed class StudentNavigation : Border
     protected override Type StyleKeyOverride=>typeof(Border);
     readonly Dictionary<string,(Button Button,TextBlock Label)> entries=new();
     readonly ContentControl work=new(),progress=new(),utilities=new();
-    readonly TextBlock brand=Ui.Text("Classroom",16),name=Ui.Text("",13),group=Ui.Muted("",12),initials=Ui.Text("",13);
+    readonly TextBlock name=Ui.Text("",13),group=Ui.Muted("",12),initials=Ui.Text("",13);
     readonly Button profileMenu;
     readonly Popup profilePopup=new(){ShouldUseOverlayLayer=true,IsLightDismissEnabled=true,Placement=PlacementMode.Right,HorizontalOffset=6},
         taskPopup=new(){ShouldUseOverlayLayer=true,IsLightDismissEnabled=true,Placement=PlacementMode.Right,HorizontalOffset=6};
@@ -29,31 +28,17 @@ sealed class StudentNavigation : Border
 
     public StudentNavigation(Func<string,Task> navigate,Action<Control> configurePopup)
     {
-        Classes.Add("student-navigation");
-        var brandMark=Icon("M2,6 L9,2 L16,6 L9,10 Z M2,10 L9,14 L16,10 M2,14 L9,18 L16,14");
-        brandMark.StrokeThickness=1.6;
-        Ui.BindBrush(brandMark,Path.StrokeProperty,"AccentInk");
-        var logo=new Border{Child=brandMark,Width=28,Height=28,CornerRadius=new CornerRadius(8)};Ui.BindBrush(logo,BackgroundProperty,"Accent");
-        var brandRow=new Grid{ColumnDefinitions=new("28,*"),ColumnSpacing=8,Margin=new Thickness(0,8,0,2)};
-        brand.FontWeight=FontWeight.SemiBold;brand.VerticalAlignment=VerticalAlignment.Center;
-        brandRow.Children.Add(logo);Grid.SetColumn(brand,1);brandRow.Children.Add(brand);
+        Classes.Add("classroom-navigation");
+        var brandRow = GraphiteUi.ClassroomBrand(out var brand);
         var menu=new StackPanel{Spacing=6};
         Button Add(string key,string label,string geometry)
         {
-            var title=Ui.Text(label,13);title.VerticalAlignment=VerticalAlignment.Center;
-            var icon=Icon(geometry);
-            var content=new Grid{ColumnDefinitions=new("18,*"),ColumnSpacing=8};content.Children.Add(icon);Grid.SetColumn(title,1);content.Children.Add(title);
-            var button=Ui.Button("",async()=>
+            var button=GraphiteUi.NavigationButton(label,geometry,async()=>
             {
                 if(key=="tasks"){taskPopup.IsOpen=!taskPopup.IsOpen;return;}
                 if(busy||!Allowed(key))return;
                 SetBusy(true);try{await navigate(key);}finally{SetBusy(false);}
-            },()=>!busy&&Allowed(key));
-            button.Content=content;button.Classes.Add("student-nav");
-            icon.Bind(Path.StrokeProperty,new Avalonia.Data.Binding("Foreground"){Source=button});
-            button.Padding=new Thickness(8,7);button.MinHeight=38;button.HorizontalAlignment=HorizontalAlignment.Stretch;
-            button.HorizontalContentAlignment=HorizontalAlignment.Stretch;
-            AutomationProperties.SetName(button,label);ToolTip.SetTip(button,label);
+            },out var title,()=>!busy&&Allowed(key));
             entries.Add(key,(button,title));menu.Children.Add(button);return button;
         }
         Add("home","Моё занятие","M2,2 H7 V7 H2 Z M11,2 H16 V7 H11 Z M2,11 H7 V16 H2 Z M11,11 H16 V16 H11 Z");
@@ -69,7 +54,7 @@ sealed class StudentNavigation : Border
         Ui.BindBrush(avatar,BackgroundProperty,"SelectedTask");initials.HorizontalAlignment=HorizontalAlignment.Center;initials.VerticalAlignment=VerticalAlignment.Center;
         var identity=Ui.Stack(name,group);identity.Spacing=2;identity.Name="StudentIdentity";
         profile.Children.Add(avatar);Grid.SetColumn(identity,1);profile.Children.Add(identity);
-        profileMenu=Ui.Button("",()=>{profilePopup.IsOpen=!profilePopup.IsOpen;return Task.CompletedTask;});profileMenu.Content=Icon("M3,5 H15 M3,9 H15 M3,13 H15");
+        profileMenu=Ui.Button("",()=>{profilePopup.IsOpen=!profilePopup.IsOpen;return Task.CompletedTask;});profileMenu.Content=GraphiteUi.NavigationIcon("M3,5 H15 M3,9 H15 M3,13 H15");
         profileMenu.MinWidth=28;profileMenu.Padding=new Thickness(6);profileMenu.IsVisible=false;
         AutomationProperties.SetName(profileMenu,"Меню профиля");ToolTip.SetTip(profileMenu,"Меню профиля");profilePopup.PlacementTarget=profileMenu;
         var footer=Ui.Stack(profile,utilities,profileMenu);footer.Spacing=10;
@@ -110,11 +95,6 @@ sealed class StudentNavigation : Border
         };
     }
 
-    static Path Icon(string geometry)
-    {
-        var icon=new Path{Data=Geometry.Parse(geometry),Width=18,Height=18,Stretch=Stretch.Uniform,StrokeThickness=1.6,VerticalAlignment=VerticalAlignment.Center};
-        Ui.BindBrush(icon,Path.StrokeProperty,"Ink");return icon;
-    }
     bool Allowed(string key)=>key is "home" or "review"||canWork&&(key=="electronics"?allowElectronics:allowSql)&&(key!="tasks"||!overlay);
     public Button Entry(string key)=>entries[key].Button;
     public void SetPermission(bool allowed,bool sql=true,bool electronics=true){canWork=allowed;allowSql=sql;allowElectronics=electronics;ApplyAvailability();}

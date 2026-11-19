@@ -9,7 +9,7 @@ using Classroom.Client;
 using Classroom.Contracts;
 
 namespace Classroom.Desktop;
-public sealed class TeacherScreen : UserControl, IDisposable
+public sealed partial class TeacherScreen : UserControl, IDisposable
 {
     readonly MainWindow owner;
     readonly ClassroomApi api;
@@ -54,7 +54,6 @@ public sealed class TeacherScreen : UserControl, IDisposable
     string? selectedId;
     bool loading, refreshing, disposed;
     long generation;
-    readonly TabControl tabs;
     readonly Control connectionPage;
     readonly TabControl reportTabs = new();
     readonly ClassroomResultsView learning;
@@ -63,7 +62,6 @@ public sealed class TeacherScreen : UserControl, IDisposable
     readonly Electronics.ElectronicsResultsView electronicsResults;
     readonly ElectronicsTaskAuthoring electronicsAuthoring;
     readonly Electronics.ElectronicsReviewQueueView reviewQueue;
-    readonly Button reviewButton;
     long? latestSubmission;
     int previousPendingCount;
     public TeacherScreen(MainWindow owner, ClassroomApi api, HostManager host)
@@ -76,7 +74,11 @@ public sealed class TeacherScreen : UserControl, IDisposable
         electronicsResults = new(owner, api);
         electronicsAuthoring = new(owner, api);
         reviewQueue = new(owner, api);
-        reviewButton = Ui.Button("Проверка схем", () => owner.Safe(OpenReviewQueue));
+        reviewButton = CreateReviewShortcut();
+        standButton = GraphiteUi.NavigationButton("Редактор схем",
+            "M5,5 H13 V13 H5 Z M2,6 H5 M2,10 H5 M13,6 H16 M13,10 H16 M6,2 V5 M10,2 V5 M6,13 V16 M10,13 V16",
+            () => openStand?.Invoke() ?? Task.CompletedTask, out _);
+        standButton.IsVisible = false;
         students.SelectionChanged += (_, _) =>
         {
         };
@@ -95,8 +97,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var results = new TabControl { ItemsSource = new[] {
             new TabItem { Header = "Результаты", Content = Ui.Card(learning) },
             new TabItem { Header = "Журнал курса SQL", Content = Reports() },
-            new TabItem { Header = "Архив схем", Content = electronicsResults },
-            new TabItem { Header = "Проверка схем", Content = reviewQueue }
+            new TabItem { Header = "Архив схем", Content = electronicsResults }
         }};
         resultPages = results;
         var authoringPages = new TabControl { ItemsSource = new[] {
@@ -107,59 +108,23 @@ public sealed class TeacherScreen : UserControl, IDisposable
         {
             if (e.Source == authoringPages && authoringPages.SelectedIndex == 1) await owner.Safe(electronicsAuthoring.Refresh);
         };
+        AddSection(Section.Lesson, "Занятие",
+            "M2,2 H7 V7 H2 Z M11,2 H16 V7 H11 Z M2,11 H7 V16 H2 Z M11,11 H16 V16 H11 Z", lessonControl);
+        AddSection(Section.Accounts, "Группы и ученики",
+            "M8,6 A3,3 0 1 1 2,6 A3,3 0 0 1 8,6 M1,16 V14 Q1,10 5,10 Q9,10 9,14 V16 M11,3 Q15,3 15,6 Q15,9 11,9 M11,11 Q17,11 17,16", Accounts());
+        AddSection(Section.Assignments, "Задания",
+            "M4,2 H14 V16 H4 Z M7,6 H11 M7,9 H11 M7,12 H11", authoringPages);
+        AddSection(Section.Results, "Работы и результаты",
+            "M2,16 H16 M4,13 V9 M9,13 V6 M14,13 V3", results);
+        AddSection(Section.Settings, "Настройки",
+            "M2,5 H6 M10,5 H16 M6,3 H10 V7 H6 Z M2,13 H10 M14,13 H16 M10,11 H14 V15 H10 Z", Settings());
+        connectionPage = GraphiteUi.Panel(Ui.Scroll(Ui.Stack(Ui.Button("К занятию", ShowWorkspace), new ConnectionCodeView(host.ConnectionCode, host.Settings.Address == "127.0.0.1"))));
+        Content = CreateTeacherLayout();
+        ShowSurface(lessonControl);
         results.SelectionChanged += async (_, e) =>
         {
-            if (e.Source != results) return;
-            await owner.Safe(async () => { if (results.SelectedIndex == 0) await learning.Refresh(); else if (results.SelectedIndex == 2) await electronicsResults.Load(); else if (results.SelectedIndex == 3) await reviewQueue.Load(); });
-        };
-        tabs = new TabControl
-        {
-            TabStripPlacement = Avalonia.Controls.Dock.Left,
-            ItemsSource = new[]
-            {
-                new TabItem
-                {
-                    Header = "Занятие",
-                    Content = lessonControl
-                },
-                new TabItem
-                {
-                    Header = "Группы и ученики",
-                    Content = Accounts()
-                },
-                new TabItem
-                {
-                    Header = "Задания",
-                    Content = authoringPages
-                },
-                new TabItem
-                {
-                    Header = "Работы и результаты",
-                    Content = results
-                },
-                new TabItem
-                {
-                    Header = "Настройки",
-                    Content = Settings()
-                }
-            },
-            Margin = new Thickness(12)
-        };
-        connectionPage = Ui.Card(Ui.Scroll(Ui.Stack(Ui.Button("Назад к SQL", ShowWorkspace), new ConnectionCodeView(host.ConnectionCode, host.Settings.Address == "127.0.0.1"))));
-        connectionPage.Margin = new Thickness(12);
-        connectionPage.IsVisible = false;
-        var pages = new Grid { RowDefinitions = new("Auto,*") };
-        reviewButton.Margin = new Thickness(12, 8, 12, 0);
-        reviewButton.HorizontalAlignment = HorizontalAlignment.Left;
-        pages.Children.Add(reviewButton);
-        Grid.SetRow(tabs, 1); Grid.SetRow(connectionPage, 1);
-        pages.Children.Add(tabs);
-        pages.Children.Add(connectionPage);
-        Content = pages;
-        tabs.SelectionChanged += async (_, e) =>
-        {
-            if (e.Source == tabs && tabs.SelectedIndex == 3)
-                await owner.Safe(() => learning.Refresh());
+            if (e.Source != results || changingResultPage) return;
+            await owner.Safe(() => RefreshResultPage(results.SelectedIndex));
         };
         poll.Tick += async (_, _) =>
         {
@@ -183,9 +148,8 @@ public sealed class TeacherScreen : UserControl, IDisposable
 
     async Task OpenReviewQueue()
     {
-        await ShowWorkspace();
-        tabs.SelectedIndex = 3;
-        resultPages.SelectedIndex = 3;
+        owner.ClosePage(false);
+        ShowSurface(reviewQueue);
         await reviewQueue.Load();
     }
 
@@ -193,20 +157,22 @@ public sealed class TeacherScreen : UserControl, IDisposable
     {
         await Refresh(true);
         poll.Start();
-        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1") tabs.SelectedIndex = 3;
+        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
+        {
+            ShowSection(Section.Results);
+            await SelectResultPage(0);
+        }
     }
 
     public Task ShowConnectionCode()
     {
-        tabs.IsVisible = false;
-        connectionPage.IsVisible = true;
+        ShowSurface(connectionPage);
         return Task.CompletedTask;
     }
 
     public Task ShowWorkspace()
     {
-        connectionPage.IsVisible = false;
-        tabs.IsVisible = true;
+        ShowSection(selectedSection);
         return Task.CompletedTask;
     }
 
@@ -220,6 +186,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var password = Ui.Input();
         password.PasswordChar = '●';
         var groupName = Ui.Input();
+        groupName.Name = "NewGroupName";
         var controls = Ui.Stack(Ui.Text("Новый ученик", 20), Ui.Field("Логин", login), Ui.Field("Пароль", password), Ui.Field("Группа", groups), Ui.Button("Добавить ученика", () => owner.Safe(async () =>
         {
             await api.Post<JsonElement>("teacher/students", new CreateStudentRequest(login.Text ?? "", password.Text ?? "", (groups.SelectedItem as Choice)?.Id is { Length: > 0 } id ? id : null));
@@ -425,7 +392,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
                 await api.Post<JsonElement>($"teacher/backups/{Uri.EscapeDataString(backup.Id)}/restore");
                 owner.Message("База восстановлена. Выйдите и войдите снова.");
             }
-        })), Ui.Text("Экспорт статистики", 20), Ui.Button("Открыть результаты и экспорт", () => owner.Safe(async () => { tabs.SelectedIndex = 3; resultPages.SelectedIndex = 0; await learning.Refresh(); })), Ui.Text("Данные преподавателя: " + host.DataDirectory));
+        })), Ui.Text("Экспорт статистики", 20), Ui.Button("Открыть результаты и экспорт", () => owner.Safe(async () => { ShowSection(Section.Results); await SelectResultPage(0); })), Ui.Text("Данные преподавателя: " + host.DataDirectory));
         return Ui.Card(Ui.Scroll(panel));
     }
 
@@ -437,13 +404,14 @@ public sealed class TeacherScreen : UserControl, IDisposable
         await lessonControl.Refresh(availableGroups: data.Groups, availableTasks: data.Tasks);
         var queue = await api.Get<ElectronicsReviewQueue>("teacher/reviews/electronics");
         if (disposed) return;
-        reviewButton.Content = $"Проверка схем ({queue.PendingCount})";
+        SetReviewCount(queue.PendingCount);
         var newest = queue.Items.Select(i => i.SubmittedAt).DefaultIfEmpty(0).Max();
         if (latestSubmission is { } previous && (newest > previous || queue.PendingCount > previousPendingCount)) owner.Message("Поступила схема на проверку.");
         latestSubmission = Math.Max(latestSubmission ?? 0, newest);
         previousPendingCount = queue.PendingCount;
         RenderOverview(data, updateEditorList);
-        if(tabs.SelectedIndex==3&&resultPages.SelectedIndex==0)await learning.Refresh();
+        if (ReferenceEquals(Presentation.Content, sections[Section.Results].Page) && resultPages.SelectedIndex == 0)
+            await learning.Refresh();
     }
 
     void RenderOverview(TeacherOverview data, bool updateEditorList)
@@ -562,7 +530,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         version.SelectedIndex = 0;
         loading = false;
         RenderDocument();
-        tabs.SelectedIndex = reports ? 3 : 2;
+        ShowSection(reports ? Section.Results : Section.Assignments);
         if (reports)
         {
             resultPages.SelectedIndex = 1;

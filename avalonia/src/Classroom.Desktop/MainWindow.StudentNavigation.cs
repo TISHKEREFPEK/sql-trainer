@@ -10,6 +10,26 @@ public sealed partial class MainWindow
     readonly Border shellHeader;
     StudentNavigation? studentNavigation;
 
+    void SetTeacherToolbar(TeacherScreen? workspace)
+    {
+        if (ReferenceEquals(teacherToolbarOwner, workspace)) return;
+        teacherToolbarOwner?.SetToolbar(null);
+        if (actions.Parent is Panel parent) parent.Children.Remove(actions);
+        teacherToolbarOwner = workspace;
+        shellHeader.IsVisible = workspace is null;
+        if (workspace is null)
+        {
+            actions.MaxWidth = 680;
+            Grid.SetColumn(actions, 1);
+            ((Grid)shellHeader.Child!).Children.Add(actions);
+        }
+        else
+        {
+            actions.MaxWidth = double.PositiveInfinity;
+            workspace.SetToolbar(actions);
+        }
+    }
+
     void StartStudentNavigation()
     {
         if(teacher||login is null||api is null||studentNavigation is not null)return;

@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Automation;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
@@ -40,6 +41,20 @@ public sealed class LessonRoutingTests
             await WaitFor(()=>teacher.GetVisualDescendants().OfType<Button>().Any(b=>b.Content?.ToString()=="Код подключения"));
             var selector=teacher.GetVisualDescendants().OfType<ComboBox>().Single(c=>Avalonia.Automation.AutomationProperties.GetName(c)=="Стенд"); selector.SelectedIndex=1;
             await WaitFor(()=>selector.IsEnabled&&teacher.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
+            var teacherEditor = teacher.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
+            Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(),button =>
+                button.IsEffectivelyVisible && AutomationProperties.GetName(button) == "Проверка схем. Ожидают: 0");
+            Click(teacher,"Оформление");
+            await WaitFor(()=>teacher.GetVisualDescendants().OfType<AppearancePage>().Any());
+            Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(),button =>
+                button.IsEffectivelyVisible && AutomationProperties.GetName(button) == "Проверка схем. Ожидают: 0");
+            Click(teacher,"Назад");
+            await WaitFor(()=>teacher.GetVisualDescendants().Any(control=>ReferenceEquals(control,teacherEditor)));
+            Click(teacher,"Занятие");
+            Assert.DoesNotContain(teacher.GetVisualDescendants(),control=>ReferenceEquals(control,teacherEditor));
+            Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(),button=>button.Content?.ToString()=="Пауза для всех");
+            Click(teacher,"Редактор схем");
+            await WaitFor(()=>selector.IsEnabled && teacher.GetVisualDescendants().Any(control=>ReferenceEquals(control,teacherEditor)));
             Click(teacher,"Код подключения"); teacher.UpdateLayout();
             Assert.Equal(1,selector.SelectedIndex);
             Assert.Contains(teacher.GetVisualDescendants().OfType<TextBlock>(),t=>t.Text=="Стенд: Электроника");
@@ -56,6 +71,7 @@ public sealed class LessonRoutingTests
             await WaitFor(()=>student.GetVisualDescendants().OfType<StudentNavigation>().Single().Entry("electronics").IsEnabled);
             Click(student,"Электроника"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsProjectPicker>().Any());student.UpdateLayout();
             student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Name=="FreeProjectName").Text="Схема маршрутизации";
+            await WaitFor(()=>student.GetVisualDescendants().OfType<Button>().Any(b=>b.Content?.ToString()=="Создать схему"&&b.IsEffectivelyEnabled));
             Click(student,"Создать схему");await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
             Assert.DoesNotContain(student.GetVisualDescendants(),v=>v is StudentScreen);
             var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
@@ -69,7 +85,7 @@ public sealed class LessonRoutingTests
             Assert.Contains(student.GetVisualDescendants().OfType<TextBlock>(),t=>t.Text?.Contains("Занятие на паузе") == true);
             await fixture.Admin.Post<LessonView>($"teacher/lessons/{lesson.Id}/resume");
             await WaitFor(()=>body.IsEnabled);
-            selector.SelectedIndex=0; await WaitFor(()=>selector.IsEnabled&&teacher.GetVisualDescendants().OfType<TeacherScreen>().Any());
+            selector.SelectedIndex=0; await WaitFor(()=>selector.IsEnabled&&teacher.GetVisualDescendants().OfType<LessonControl>().Any());
             teacher.UpdateLayout();
             var output=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??AppContext.BaseDirectory; Directory.CreateDirectory(output);
             using(var frame=teacher.CaptureRenderedFrame()) frame!.Save(Path.Combine(output,"teacher-lesson-1320.png"));

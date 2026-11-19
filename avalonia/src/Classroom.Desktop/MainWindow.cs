@@ -35,6 +35,7 @@ public sealed partial class MainWindow : Window
     readonly Dictionary<string, ElectronicsScreen> freeElectronics = new();
     StudentHomeControl? studentHome;
     object? pageReturnContent;
+    ContentControl? pageTarget;
     Action? pageCleanup;
     bool pageOpen;
     StudentReviewPage? teacherReview;
@@ -47,6 +48,7 @@ public sealed partial class MainWindow : Window
         ItemSpacing = 10,
         LineSpacing = 8
     };
+    TeacherScreen? teacherToolbarOwner;
     readonly NotificationState state = new();
     readonly NotificationToast notification = new();
     bool quitting;
@@ -281,21 +283,24 @@ public sealed partial class MainWindow : Window
     public void ShowPage(string title, Control content, Action? cleanup = null)
     {
         ClosePage();
-        pageReturnContent = body.Content;
+        var target = body.Content is TeacherScreen teacherWorkspace ? teacherWorkspace.Presentation : body;
+        pageTarget = target;
+        pageReturnContent = target.Content;
         pageCleanup = cleanup;
         pageOpen = true;
         var page = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 12, Margin = new Thickness(18) };
         page.Children.Add(Ui.Card(Ui.Row(Ui.Button("Назад", () => { ClosePage(); return Task.CompletedTask; }), Ui.Text(title,24))));
         Grid.SetRow(content,1); page.Children.Add(content);
-        body.Content = page;
+        target.Content = page;
     }
     internal void ClosePage(bool restore = true)
     {
         if (!pageOpen) return;
-        var previous = pageReturnContent; var cleanup = pageCleanup;
-        pageOpen = false; pageReturnContent = null; pageCleanup = null;
+        var previous = pageReturnContent; var cleanup = pageCleanup; var target = pageTarget ?? body;
+        pageOpen = false; pageTarget = null; pageReturnContent = null; pageCleanup = null;
         cleanup?.Invoke();
-        if (restore) body.Content = previous;
+        if (restore) target.Content = previous;
+        else if (!ReferenceEquals(target, body)) target.Content = null;
         RefreshSurface();
         Protect(student?.Restricted == true);
     }
@@ -360,6 +365,7 @@ public sealed partial class MainWindow : Window
         admissionPoll?.Stop(); lessonPoll.Stop();
         ClosePage(false);
         StopStudentNavigation();
+        SetTeacherToolbar(null);
         body.IsEnabled = true; lessonBlock.IsVisible = false;
         screen?.Dispose();
         if (!ReferenceEquals(screen, student)) student?.Dispose();
@@ -463,45 +469,49 @@ public sealed partial class MainWindow : Window
                 body.Content = view;
                 await view.Load();
                 if (login?.Token != enteringToken) return;
+                SetTeacherToolbar(view);
                 var selectedStand = login.Destination?.StandId == "electronics" ? 1 : 0;
                 var stands = new ComboBox { ItemsSource = new[] { "SQL", "Электроника" }, SelectedIndex = selectedStand, MinWidth = 160, MinHeight = 36 };
                 Avalonia.Automation.AutomationProperties.SetName(stands, "Стенд");
+                ToolTip.SetTip(stands, "Рабочий стенд преподавателя");
                 actions.Children.Insert(0, stands);
                 async Task ShowStand()
                 {
                     ClosePage(false);
                     if (selectedStand == 0)
                     {
-                        electronics?.Suspend(); body.Content = view; await view.ShowWorkspace();
+                        await view.ShowWorkspace();
                     }
                     else
                     {
                         var path = Path.Combine(host!.DataDirectory, "electronics", "teacher-project.json");
                         electronics ??= new ElectronicsScreen(this, path,api,teacher:true);
-                        body.Content = electronics;
+                        view.ShowStand(electronics);
                     }
                 }
                 var selecting = false;
-                stands.SelectionChanged += async (_, _) =>
+                async Task SelectStand(int next)
                 {
-                    if (selecting) return;
+                    if (selecting || !stands.IsEnabled || login?.Token != enteringToken || next < 0) return;
                     stands.IsEnabled = false;
                     try { await Safe(async () =>
                     {
-                        var next = stands.SelectedIndex;
-                        await api.Put<LessonDestination>("teacher/lesson", new LessonDestination(next == 1 ? "electronics" : "sql"));
+                        if (next != selectedStand)
+                            await api.Put<LessonDestination>("teacher/lesson", new LessonDestination(next == 1 ? "electronics" : "sql"));
+                        if (login?.Token != enteringToken) return;
                         selectedStand = next;
                         await ShowStand();
                     }); }
                     finally { selecting = true; stands.SelectedIndex = selectedStand; selecting = false; stands.IsEnabled = true; }
-                };
+                }
+                stands.SelectionChanged += async (_, _) => await SelectStand(stands.SelectedIndex);
+                view.SetStandShortcut(() => SelectStand(1));
                 actions.Children.Add(Ui.Button("Код подключения", () => Safe(async () =>
                 {
                     if (!stands.IsEnabled) return;
                     ClosePage(false);
-                    electronics?.Suspend();
-                    body.Content = Ui.Card(Ui.Stack(Ui.Button("Назад к стенду", ShowStand),
-                        new ConnectionCodeView(host!.ConnectionCode, host.Settings.Address == "127.0.0.1", selectedStand == 1 ? "Электроника" : "SQL")));
+                    view.ShowConnectionCode(GraphiteUi.Panel(Ui.Scroll(Ui.Stack(Ui.Button("Назад к стенду", ShowStand),
+                        new ConnectionCodeView(host!.ConnectionCode, host.Settings.Address == "127.0.0.1", selectedStand == 1 ? "Электроника" : "SQL")))));
                     await Task.CompletedTask;
                 })));
                 await ShowStand();
@@ -989,15 +999,20 @@ static class NativeWindowProtection
     static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     static extern bool GetWindowDisplayAffinity(nint window, out uint affinity);
+
+    internal static uint PreferredAffinity(bool enabled, bool supportsExclusion) =>
+        !enabled ? 0u : supportsExclusion ? 0x11u : 1u;
+
     public static bool TrySet(nint handle, bool enabled, out int error)
     {
-        var desired = enabled ? 0x11u : 0u;
+        var desired = PreferredAffinity(enabled, OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041));
         if (!SetWindowDisplayAffinity(handle, desired) || !GetWindowDisplayAffinity(handle, out var actual))
         {
             error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
             return false;
         }
-        error = 0;
+        // ERROR_INVALID_DATA: Windows returned an affinity other than the one requested.
+        error = actual == desired ? 0 : 13;
         return actual == desired;
     }
 }

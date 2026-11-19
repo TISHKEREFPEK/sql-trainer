@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Automation;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
@@ -31,12 +33,26 @@ public sealed class ElectronicsReviewUiTests
         await f.Admin.Put<ElectronicsSelection>($"teacher/lessons/{lesson.Id}/electronics-tasks", new ElectronicsSelectionRequest([task]));
         var work = await f.Student.Get<ElectronicsAssignmentDto>("electronics/tasks/" + task);
         var report = Guid.NewGuid().ToString("N");
-        await f.Student.Put<ElectronicsSyncReceipt>("electronics/work", new ElectronicsSyncRequest(Guid.NewGuid().ToString("N"), 1, work.ProjectJson, [new(report, "submitted", work.ProjectJson, "", 1)], work.Id));
         var window = new MainWindow(true, false) { Width = 1320, Height = 900 };
-        using var queue = new ElectronicsReviewQueueView(window, f.Admin); window.Preview(queue); window.Show();
+        using var workspace = new TeacherScreen(window, f.Admin, new HostManager());
+        window.Preview(workspace); window.Show();
+        Button Navigation(string name) => workspace.GetVisualDescendants().OfType<Button>()
+            .Single(button => AutomationProperties.GetName(button) == name && button.IsEffectivelyVisible);
         try
         {
-            await queue.Load(); window.UpdateLayout();
+            await workspace.Load(); window.UpdateLayout();
+            Assert.NotNull(Navigation("Проверка схем. Ожидают: 0"));
+            Navigation("Группы и ученики").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            window.UpdateLayout();
+            var groupForm = workspace.GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "NewGroupName");
+            groupForm.Text = "Черновик группы";
+            await f.Student.Put<ElectronicsSyncReceipt>("electronics/work", new ElectronicsSyncRequest(Guid.NewGuid().ToString("N"), 1, work.ProjectJson, [new(report, "submitted", work.ProjectJson, "", 1)], work.Id));
+            await WaitFor(() => Task.FromResult(workspace.GetVisualDescendants().OfType<Button>()
+                .Any(button => AutomationProperties.GetName(button) == "Проверка схем. Ожидают: 1")));
+            var review = Navigation("Проверка схем. Ожидают: 1");
+            review.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
+            var queue = workspace.GetVisualDescendants().OfType<ElectronicsReviewQueueView>().Single();
+            await WaitFor(() => Task.FromResult(queue.GetVisualDescendants().OfType<ListBox>().Any(x => x.ItemCount == 1)));
             var list = queue.GetVisualDescendants().OfType<ListBox>().Single(); list.SelectedIndex = 0;
             await WaitFor(() => Task.FromResult(queue.GetVisualDescendants().OfType<ElectronicsSnapshotView>().Any())); window.UpdateLayout();
             queue.GetVisualDescendants().OfType<ComboBox>().Single(c => c.Items.Count == 6).SelectedIndex = 4;
@@ -45,8 +61,17 @@ public sealed class ElectronicsReviewUiTests
             queue.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Сохранить результат").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitFor(async () => (await f.Student.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + work.Id + "/status")).LatestReview?.Grade == 4);
             await WaitFor(() => Task.FromResult(queue.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Разрешить пересдачу" && b.IsVisible)));
+            await WaitFor(() => Task.FromResult(AutomationProperties.GetName(review) == "Проверка схем. Ожидают: 0"));
             window.Width = 900; await Task.Delay(150); window.UpdateLayout();
             Assert.Equal(900, window.Bounds.Width);
+            var commands = queue.GetVisualDescendants().OfType<Button>().Where(button => button.IsEffectivelyVisible &&
+                button.Content?.ToString() is "Сохранить результат" or "Разрешить пересдачу" or "Код проверки у ученика").ToArray();
+            Assert.Equal(3, commands.Length);
+            foreach (var button in commands)
+            {
+                var at = button.TranslatePoint(default, window)!.Value;
+                Assert.True(at.X + button.Bounds.Width <= window.ClientSize.Width);
+            }
             Capture(window, "electronics-review-900.png");
             queue.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Разрешить пересдачу").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitFor(async () => (await f.Student.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + work.Id + "/status")).CanSubmit);
@@ -54,6 +79,10 @@ public sealed class ElectronicsReviewUiTests
             Assert.Equal(work.ProjectJson, detail.ProjectJson); Assert.Equal(2, detail.History.Length);
             Assert.Equal("allow-resubmit", detail.History[1].Action);
             Assert.Empty((await f.Admin.Get<ElectronicsReviewQueue>("teacher/reviews/electronics")).Items);
+            Navigation("Группы и ученики").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            window.UpdateLayout();
+            Assert.Same(groupForm, workspace.GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "NewGroupName"));
+            Assert.Equal("Черновик группы", groupForm.Text);
         }
         finally { window.Close(); }
     }

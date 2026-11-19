@@ -210,7 +210,8 @@ public sealed class UiTests
         window.UpdateLayout();
         var editor = view.GetVisualDescendants().OfType<TextEditor>().Single();
         var labels = view.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").ToArray();
-        Assert.Contains(labels, t => restricted ? t.Contains("Запрещено: Ctrl+C") && t.Contains("снимки этого окна") : t.Contains("Копирование и вставка разрешены"));
+        if(restricted)Assert.Contains(labels,t=>t.Contains("Запрещено: Ctrl+C")&&t.Contains("снимки этого окна"));
+        else{Assert.False(view.Restricted);Assert.DoesNotContain(labels,t=>t.Contains("Запрещено: Ctrl+C"));}
         editor.TextArea.Selection = Selection.Create(editor.TextArea, 0, editor.Text.Length);
         ApplicationCommands.Cut.Execute(null, editor.TextArea);
         Assert.Equal(restricted ? source.Solution : "", editor.Text);

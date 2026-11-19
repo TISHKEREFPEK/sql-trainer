@@ -24,5 +24,5 @@ public sealed partial class StudentScreen
         navigationContainer.Children.Add(navigationBody);navigationContainer.Children.Add(navigationSummary);
         navigationHosted=false;refreshNavigationLayout();
     }
-    internal Task OpenGlossary()=>Glossary();
+    internal Task OpenGlossary(Control? trigger)=>Glossary(trigger);
 }

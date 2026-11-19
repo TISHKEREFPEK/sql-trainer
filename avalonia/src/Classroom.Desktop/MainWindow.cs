@@ -736,8 +736,17 @@ public sealed partial class MainWindow : Window
     {
         if (api is null || login is null || teacher||quitting||stopping) return;
         var client=api;var session=login.Token;
-        var lesson = await client.Get<StudentLessonDto>("student/lesson");
+        StudentLessonDto lesson;
+        try { lesson = await client.Get<StudentLessonDto>("student/lesson"); }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            if (!quitting && !stopping && ReferenceEquals(api, client) && login?.Token == session)
+                student?.ShowLessonConnection(null, connected: false);
+            throw;
+        }
         if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
+        if (!lesson.CanWork || lesson.Lesson?.AllowSql != true) CloseGlossary();
+        student?.ShowLessonConnection(lesson.Lesson?.GroupName, connected: true);
         if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
         if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
         if(studentNavigation is { } nav)
@@ -806,8 +815,9 @@ public sealed partial class MainWindow : Window
 
     async void OnKey(object? sender, KeyEventArgs e)
     {
-        if (!IsLessonVisible || !body.IsEnabled) return;
-        if (student is not null && e.Key == Key.Enter && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
+        if (HandleGlossaryKey(e)) return;
+        if (!IsLessonVisible || (!body.IsEnabled && !IsGlossaryOpen)) return;
+        if (!IsGlossaryOpen && student is not null && e.Key == Key.Enter && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
         {
             e.Handled = true;
             await Safe(student.CheckShortcut);
@@ -832,7 +842,7 @@ public sealed partial class MainWindow : Window
 
     async void OnDrop(object? sender, DragEventArgs e)
     {
-        if (!IsLessonVisible || !body.IsEnabled) return;
+        if (!IsLessonVisible || (!body.IsEnabled && !IsGlossaryOpen)) return;
         if (student?.Restricted == true)
         {
             e.Handled = true;
@@ -844,7 +854,7 @@ public sealed partial class MainWindow : Window
 
     async void OnClipboard(object? sender, RoutedEventArgs e)
     {
-        if (!IsLessonVisible || !body.IsEnabled) return;
+        if (!IsLessonVisible || (!body.IsEnabled && !IsGlossaryOpen)) return;
         if (student?.Restricted != true)
             return;
         e.Handled = true;
@@ -919,6 +929,7 @@ public sealed partial class MainWindow : Window
         if (quitting||stopping)
             return;
         stopping=true;var lessonWasPolling=lessonPoll.IsEnabled;var sqlWasPolling=sqlDeliveryPoll.IsEnabled;
+        CloseGlossary();
         studentNavigation?.SetBusy(true);
         lessonPoll.Stop();sqlDeliveryPoll.Stop();
         try

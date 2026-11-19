@@ -48,6 +48,7 @@ public sealed class SqlJournalView : UserControl, IDisposable
         "run-result" => "Получен результат запуска", "check-result" => "Получен результат проверки", "run-rejected" => "Запуск отклонён", "check-rejected" => "Проверка отклонена",
         "hint-request" => "Запрошена подсказка", "hint-opened" => "Открыта подсказка", "work-open" => "Открыта работа", "work-leave" => "Переход из работы", "work-close" => "Работа закрыта",
         "dictionary-open" => "Открыт справочник", "dictionary-close" => "Закрыт справочник", "window-blur" => "Переход в другое окно", "window-focus" => "Возврат в окно",
+        "materials-condition" => "Открыто условие", "materials-explanation" => "Открыто объяснение",
         "window-minimize" => "Окно свёрнуто", "window-restore" => "Окно восстановлено", "restricted-copy" => "Запрет копирования", "restricted-cut" => "Запрет вырезания",
         "restricted-paste" => "Запрет вставки", "restricted-capture" => "Обнаружена попытка снимка", "restricted-drop" => "Запрет перетаскивания", "restricted-clipboard" => "Запрет буфера обмена", _ => value };
 

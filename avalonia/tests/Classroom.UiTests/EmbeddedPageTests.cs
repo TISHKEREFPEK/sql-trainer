@@ -55,21 +55,25 @@ public sealed class EmbeddedPageTests
         finally { window.Close(); ThemeManager.Apply(new()); }
     }
     [AvaloniaFact]
-    public async Task GlossaryOpensAsSearchablePageAndReturnsToSameSqlDraft()
+    public async Task GlossaryOpensAsSearchableDialogAndEscapeReturnsFocusToItsButton()
     {
         await using var fixture=await LiveClassroom.Start();
         var window=new MainWindow(false,false){Width=900,Height=900}; using var view=new StudentScreen(window,fixture.Student); window.Preview(view); window.Show(); await view.Load(); window.UpdateLayout();
         var editor=view.GetVisualDescendants().OfType<TextEditor>().Single(); editor.Text="SELECT 17 AS page_preserved;";
         Click(window,"Справочник"); await WaitFor(()=>window.GetVisualDescendants().OfType<TextBlock>().Any(t=>t.Text=="Справочник SQL"));
         Assert.Empty(window.OwnedWindows);
-        Assert.False(window.IsLessonVisible);
+        Assert.True(window.IsLessonVisible);
+        Assert.Same(editor,view.GetVisualDescendants().OfType<TextEditor>().Single());
         typeof(MainWindow).GetField("student",Flags)!.SetValue(window,view);
         var shortcut = new KeyEventArgs { RoutedEvent=InputElement.KeyDownEvent,Key=Key.Enter,KeyModifiers=KeyModifiers.Control };
         window.RaiseEvent(shortcut); Assert.False(shortcut.Handled);
         var term=(await fixture.Student.Get<Dictionary<string,string>>("glossary")).Keys.First();
         var filter=window.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Watermark=="Поиск термина"); filter.Text=term;
-        await Task.Delay(50); Assert.All(window.GetVisualDescendants().OfType<Expander>(),e=>Assert.Contains(term,e.Header!.ToString()!,StringComparison.OrdinalIgnoreCase)); Capture(window,"glossary-page-900.png");
-        Click(window,"Назад"); Assert.True(window.IsLessonVisible); Assert.Contains(window.GetVisualDescendants(),v=>ReferenceEquals(v,view)); Assert.Equal("SELECT 17 AS page_preserved;",editor.Text); Assert.Empty(window.OwnedWindows);
+        await Task.Delay(50); Assert.All(window.GetVisualDescendants().OfType<Expander>().Where(e=>!view.IsVisualAncestorOf(e)),e=>Assert.Contains(term,e.Header!.ToString()!,StringComparison.OrdinalIgnoreCase)); Capture(window,"glossary-dialog-900.png");
+        var escape=new KeyEventArgs{RoutedEvent=InputElement.KeyDownEvent,Key=Key.Escape};
+        filter.RaiseEvent(escape);Assert.True(escape.Handled);
+        await WaitFor(()=>window.FocusManager?.GetFocusedElement() is Button { Content: "Справочник" });
+        Assert.True(window.IsLessonVisible);Assert.Same(editor,view.GetVisualDescendants().OfType<TextEditor>().Single());Assert.Equal("SELECT 17 AS page_preserved;",editor.Text);Assert.Empty(window.OwnedWindows);
         typeof(MainWindow).GetField("student",Flags)!.SetValue(window,null);
         window.Close();
     }

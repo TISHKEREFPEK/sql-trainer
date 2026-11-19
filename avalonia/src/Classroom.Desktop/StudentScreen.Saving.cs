@@ -5,27 +5,41 @@ namespace Classroom.Desktop;
 
 public sealed partial class StudentScreen
 {
+    static bool HasHistoryToSend(SqlLocalWork work) => work.Actions?.Length > 0 ||
+        (work.Journal?.Changes.LongLength ?? 0) > (work.JournalDelivery?.Acknowledged ?? 0);
+
     void RefreshSaveStatus()
     {
         if (current is null || disposed) return;
         var work = local.Find(lessonId!, workScope, current.Id);
-        if (work is not null && work.Code != editor.Text)
+        if(work is null)
+        {
+            resolveConflict.IsVisible=false;retrySave.IsVisible=true;
+            saved.Text="На этом ПК нет сохранённой копии работы. Повторите сохранение или сохраните код отдельно.";
+            return;
+        }
+        if (work.Code != editor.Text)
         {
             resolveConflict.IsVisible = false; retrySave.IsVisible = true;
             saved.Text = "Последние изменения не сохранены на ПК. Повторите сохранение или сохраните код отдельно.";
             return;
         }
-        resolveConflict.IsVisible = work?.Conflict is not null;
-        retrySave.IsVisible = work?.Conflict is null && (work?.Dirty == true || work?.PendingDraft is not null || work?.Error is not null || work?.Actions?.Length > 0);
-        saved.Text = work?.Conflict is not null ? "На ПК и у преподавателя разные черновики. Выберите нужный вариант."
-            : work?.Error is { } error ? "Сохранено на ПК; передача не завершена. " + error
-            : work?.Dirty == true || work?.PendingDraft is not null ? "Сохранено на ПК, ожидает передачи."
-            : work?.Task.Draft.Length > 0 ? "Черновик сохранён у преподавателя и на ПК." : "Работа сохранена на ПК.";
-        if (work?.Execution is not null) saved.Text += " Есть незавершённый запрос: следующий запуск повторит прежний SQL.";
-        if (work?.Actions?.Length > 0) saved.Text += " События ожидают передачи.";
+        resolveConflict.IsVisible = work.Conflict is not null;
+        retrySave.IsVisible = work.Conflict is null && (work.Dirty || work.PendingDraft is not null || work.Error is not null || HasHistoryToSend(work));
+        var message = work.Conflict is not null ? "На ПК и у преподавателя разные черновики. Выберите нужный вариант."
+            : work.Error is { } error ? "Сохранено на ПК. Передача не завершена. " + error
+            : work.Dirty || work.PendingDraft is not null ? "Сохранено на ПК, ожидает передачи."
+            : work.Task.Draft.Length > 0 ? "Черновик сохранён у преподавателя и на ПК." : "Работа сохранена на ПК.";
+        if (work.Execution is not null) message += executing
+            ? " Запрос выполняется."
+            : " Есть незавершённый запрос: следующий запуск повторит прежний SQL.";
+        if (HasHistoryToSend(work)) message += " История ожидает передачи.";
+        saved.Text = message;
+        RefreshSaveCaption();
     }
     Task ShowDraftConflict()
     {
+        savePopup.IsOpen=false;
         if (current is null) return Task.CompletedTask;
         var id = current.Id; var scope = workScope; var work = local.Find(lessonId!, scope, id);
         if (work?.Conflict is not { } conflict) return Task.CompletedTask;

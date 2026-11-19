@@ -159,6 +159,17 @@ public static class SqlEngine
         return Wire.Write(new { result.Columns, Rows = rows.ToArray() });
     }
 
+    static string ExplainMismatch(SqlResult actual, SqlResult expected, bool ordered)
+    {
+        if (!actual.Columns.SequenceEqual(expected.Columns, StringComparer.Ordinal))
+            return "Проверьте состав, названия и порядок столбцов.";
+        if (actual.Values.Length != expected.Values.Length)
+            return "Проверьте, какие строки должны попасть в результат.";
+        if (ordered && Normalize(actual, false) == Normalize(expected, false))
+            return "Проверьте порядок строк в результате.";
+        return "Проверьте значения в полученных строках.";
+    }
+
     static string State(SqliteConnection db)
     {
         var tables = Query(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").Values.Select(row =>
@@ -212,6 +223,7 @@ public static class SqlEngine
                 throw new InvalidDataException("Для этого задания нужен запрос SELECT или WITH.");
             var output = Query(actual, request.Code);
             var correct = false;
+            string? explanation = null;
             if (request.Check)
             {
                 var target = Query(expected, task.Solution);
@@ -249,6 +261,10 @@ public static class SqlEngine
                         Run(actual, "ROLLBACK TO constraint_probe; RELEASE constraint_probe");
                     }
                 }
+                if (!correct)
+                    explanation = task.Mode == "state"
+                        ? "Проверьте структуру и состояние базы по условию задания."
+                        : ExplainMismatch(output, target, task.Ordered);
             }
 
             var tables = Query(actual, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").Values.Select(row =>
@@ -259,7 +275,7 @@ public static class SqlEngine
                 return new TablePreview(name, Query(actual, $"SELECT * FROM {Quote(name)} LIMIT 8"), columns, keys);
             }).ToArray();
             var snapshot = correct && task.Mode == "state" && task.Project is not null ? Snapshot(actual) : null;
-            return new(new(correct, output with { Values = output.Values.Take(200).ToArray() }, tables, null, null), snapshot, before);
+            return new(new(correct, output with { Values = output.Values.Take(200).ToArray() }, tables, null, explanation), snapshot, before);
         }
         catch (Exception e)when (e is SqliteException or InvalidDataException or FormatException)
         {

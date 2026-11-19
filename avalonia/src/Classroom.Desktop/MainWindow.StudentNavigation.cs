@@ -22,7 +22,7 @@ public sealed partial class MainWindow
                 case "sql":await SwitchStudentSubject("sql");break;
                 case "electronics":await SwitchStudentSubject("electronics");break;
                 case "glossary":
-                    student??=new(this,api);await student.OpenGlossary();break;
+                    student??=new(this,api);await student.OpenGlossary(studentNavigation?.Entry("glossary"));break;
                 case "review":await ShowTeacherReview();break;
             }
         }),ConfigureStudentPopup);
@@ -46,6 +46,7 @@ public sealed partial class MainWindow
 
     void StopStudentNavigation()
     {
+        CloseGlossary();
         if(studentNavigation is null)return;
         studentNavigation.SetWork(null,null);studentNavigation.SetUtilities(null);
         student?.RestoreNavigation();shellRoot.Children.Remove(studentNavigation);studentNavigation=null;
@@ -71,7 +72,7 @@ public sealed partial class MainWindow
         shellRoot.ColumnDefinitions[0].Width=new GridLength(Bounds.Width<850?52:168);
         shellRoot.ColumnSpacing=Bounds.Width<850?13:18;
     }
-    void ConfigureStudentPopup(Control content)
+    internal void ConfigureStudentPopup(Control content)
     {
         content.AddHandler(KeyDownEvent,OnKey,Avalonia.Interactivity.RoutingStrategies.Tunnel);
         content.AddHandler(Avalonia.Input.DragDrop.DropEvent,OnDrop,Avalonia.Interactivity.RoutingStrategies.Tunnel);

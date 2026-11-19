@@ -92,9 +92,9 @@ public sealed class StudentNavigationTests
             await WaitFor(()=>!nav.IsBusy&&nav.Entry("glossary").IsEnabled);
             // Opening the dictionary before the first SQL visit must not leave
             // a constructed-but-never-loaded editor on the next transition.
-            Click(window,"Справочник");await WaitFor(()=>!nav.IsBusy&&window.GetVisualDescendants().OfType<TextBlock>().Any(t=>t.Text=="Справочник SQL"));
+            Click(window,"Справочник");await WaitFor(()=>nav.IsBusy&&window.IsGlossaryOpen);
             Capture(window,"student-shell-dictionary-before-back.png");
-            Click(window,"Назад");Click(window,"SQL");
+            Click(window,"Закрыть");await WaitFor(()=>!nav.IsBusy);Click(window,"SQL");
             await WaitFor(()=>!nav.IsBusy&&window.GetVisualDescendants().OfType<StudentScreen>().Any());
             var sql=window.GetVisualDescendants().OfType<StudentScreen>().Single();
             var editor=sql.GetVisualDescendants().OfType<TextEditor>().Single();Assert.True(sql.HasLoaded);

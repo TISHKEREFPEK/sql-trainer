@@ -74,7 +74,9 @@ public sealed class SqlLocalStoreTests
             view.GetVisualDescendants().OfType<TextEditor>().Single().Text = "SELECT 71 AS local;";
             await f.Student.Put<System.Text.Json.JsonElement>("tasks/database/draft", new DraftRequest("SELECT 82 AS other_device;", f.Student.LessonId, "course"));
             await view.SaveDraft(); window.UpdateLayout();
-            var button = view.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Разрешить конфликт черновика"); Assert.True(button.IsVisible);
+            var details=view.GetVisualDescendants().OfType<Button>().Single(b=>Avalonia.Automation.AutomationProperties.GetName(b)?.StartsWith("Сохранение: На ПК и у преподавателя разные черновики.",StringComparison.Ordinal)==true);
+            details.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
+            var button = window.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Разрешить конфликт черновика"); Assert.True(button.IsVisible);
             button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
             Assert.Contains(window.GetVisualDescendants().OfType<TextBox>(), b => b.IsReadOnly && b.Text == "SELECT 71 AS local;");
             Assert.Contains(window.GetVisualDescendants().OfType<TextBox>(), b => b.IsReadOnly && b.Text == "SELECT 82 AS other_device;");

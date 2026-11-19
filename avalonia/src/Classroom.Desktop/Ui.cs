@@ -96,19 +96,20 @@ public static class Ui
         TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
         MinHeight = multiline ? 100 : 36
     };
-    public static Control Table(SqlResult result)
+    public static Control Table(SqlResult result,bool fill=false)
     {
         var grid = new DataGrid
         {
             AutoGenerateColumns = false,
             IsReadOnly = true,
             GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
-            MaxHeight = 340,
-            MinHeight = 80
+            MaxHeight = fill?double.PositiveInfinity:340,
+            MinHeight = fill?0:80
         };
         for (var i = 0; i < result.Columns.Length; i++)
             grid.Columns.Add(new DataGridTextColumn { Header = result.Columns[i], Binding = new Binding($"[{i}]"), MinWidth = 80, Width = new DataGridLength(1, DataGridLengthUnitType.Auto) });
         grid.ItemsSource = result.Values.Select(row => row.Select(Display).ToArray()).ToArray();
+        if(fill){grid.RowHeight=double.NaN;grid.Classes.Add("sql-result-table");}
         return grid;
     }
 
@@ -197,7 +198,7 @@ public static class ThemeManager
             ["PrimaryHover"]=graphite&&accent==p.Accent?"#3A3A40":accent,
             ["Connected"]="#55715D",["ProgressTrack"]=graphite&&surface==p.Surface?"#D8D8DF":brushes["Line"],
             ["ProgressFill"]=graphite&&accent==p.Accent?"#55555F":accent,
-            ["StaleResultInk"]="#876337",["Focus"]=graphite&&surface==p.Surface?"#797984":brushes["Ink"],
+            ["StaleResultInk"]=graphite&&surface==p.Surface?"#876337":brushes["Muted"],["Focus"]=graphite&&surface==p.Surface?"#797984":brushes["Ink"],
             ["EditorFocus"]=graphite&&editor==p.Editor?"#8A8A98":brushes["EditorInk"],
             ["SuccessInk"]="#405747",["SuccessBackground"]="#E3E9E3",["SuccessLine"]="#D2DFD3",
             ["ErrorInk"]="#85474F",["ErrorBackground"]="#F0E6E7",["ErrorLine"]="#E6D4D6",

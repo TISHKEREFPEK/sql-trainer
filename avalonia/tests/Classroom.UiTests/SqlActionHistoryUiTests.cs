@@ -34,11 +34,11 @@ public sealed class SqlActionHistoryUiTests
             Assert.Single(History().Changes, c => c.Kind == "window-minimize"); Assert.Single(History().Changes, c => c.Kind == "window-restore");
             Click(view, "Открыть подсказку"); await Until(() => History().Changes.Any(c => c.Kind == "hint-opened"));
             Assert.Equal(0, History().Changes.First(c => c.Kind == "hint-opened").Reference!.HintIndex);
-            Click(view, "Справочник"); await Until(() => window.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Назад"));
+            Click(view, "Справочник"); await Until(() => window.IsGlossaryOpen);
             Assert.Contains(History().Changes, c => c.Kind == "dictionary-open"); Assert.Contains(History().Changes, c => c.Kind == "work-leave");
             var count = History().Changes.Count(c => c.Kind == "window-minimize"); window.WindowState = WindowState.Minimized; window.WindowState = WindowState.Normal;
             Assert.Equal(count, History().Changes.Count(c => c.Kind == "window-minimize"));
-            Click(window, "Назад"); window.UpdateLayout();
+            Click(window, "Закрыть"); await Until(()=>History().Changes.Any(c=>c.Kind=="dictionary-close")); window.UpdateLayout();
             Assert.Contains(History().Changes, c => c.Kind == "dictionary-close"); Assert.True(History().Changes.Count(c => c.Kind == "work-open") >= 2);
             Assert.Equal(changed, editor.Text); Assert.Equal(changed, History().Replay());
             await window.SqlStore(f.Student).Drain(f.Student);

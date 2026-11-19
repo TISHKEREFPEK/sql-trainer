@@ -62,7 +62,7 @@ class QTest:
 
 
 @contextmanager
-def open_qemu(executable, bios, flash=None):
+def open_qemu(executable, bios, flash=None, devices=()):
     with tempfile.TemporaryDirectory(prefix="classroom-s3-qtest-") as folder:
         root = Path(folder)
         log = root / "uart0.log"
@@ -84,6 +84,8 @@ def open_qemu(executable, bios, flash=None):
             for port in range(3):
                 name = f"classroom-uart{port}"
                 args += ["-chardev", f"ringbuf,id={name},size=16", "-serial", f"chardev:{name}"]
+        for device in devices:
+            args += ["-device", device]
         with (root / "qemu.log").open("w+", encoding="utf-8", errors="replace") as diagnostics:
             process = subprocess.Popen(
                 args, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -154,6 +156,36 @@ def check_adc(qtest):
         assert sample(pad_force | start_force) == 0
 
 
+def check_empty_i2c_buses(qtest):
+    for base in (0x60013000, 0x60027000):
+        start_master, done = (1 << 4) | (1 << 5), 1 << 31
+        nack, timeout = 1 << 10, 1 << 8
+        qtest.write(base + 0x28, nack | timeout)
+        qtest.write(base + 0x58, 6 << 11)
+        qtest.write(base + 0x5C, (1 << 11) | (1 << 8) | 1)
+        qtest.write(base + 0x1C, 0x50 << 1)
+        qtest.write(base + 4, start_master)
+        assert qtest.read(base + 0x2C) == nack
+        assert qtest.read(base + 0x5C) & done
+        assert not qtest.read(base + 8) & (1 << 4)
+        qtest.write(base + 0x24, nack)
+        assert not qtest.read(base + 0x2C)
+
+        # The second command needs a byte that has not been placed in the FIFO.
+        qtest.write(base + 4, start_master)
+        assert qtest.read(base + 0x2C) == timeout
+
+
+def check_i2c_pin_selection(qtest):
+    for pin, signal in ((8, 90), (9, 89), (15, 92), (16, 91)):
+        matrix_input = qtest.read(GPIO + 0x154 + signal * 4)
+        matrix_output = qtest.read(GPIO + 0x554 + pin * 4)
+        mux = qtest.read(IOMUX + (pin + 1) * 4)
+        assert (matrix_input & 0xFF) == (0x80 | pin)
+        assert (matrix_output & 0x1FF) == signal
+        assert ((mux >> 12) & 7) == 1
+
+
 def check_registers(qtest):
     low_pin = 2
     high_pin = 39
@@ -214,26 +246,27 @@ def check_registers(qtest):
     assert_register(qtest, 0x04, 0)
 
 
-def check_firmware(qtest, log):
-    def wait_for(message):
-        deadline = time.monotonic() + 8
-        output = ""
-        while time.monotonic() < deadline:
-            if log.exists():
-                output = log.read_text(encoding="utf-8", errors="replace")
-                if message in output:
-                    return
-            time.sleep(.03)
-        raise RuntimeError(f"Missing UART message {message!r}.\n{output}")
+def wait_uart(log, message):
+    deadline = time.monotonic() + 8
+    output = ""
+    while time.monotonic() < deadline:
+        if log.exists():
+            output = log.read_text(encoding="utf-8", errors="replace")
+            if message in output:
+                return output
+        time.sleep(.03)
+    raise RuntimeError(f"Missing UART message {message!r}.\n{output}")
 
-    wait_for("GPIO_READY")
-    wait_for("gpio=1 irq=0")
+
+def check_firmware(qtest, log):
+    wait_uart(log, "GPIO_READY")
+    wait_uart(log, "gpio=1 irq=0")
     assert_register(qtest, 0x10, 1 << (39 - 32))
     qtest.pad(12, 0)
-    wait_for("gpio=0 irq=1")
+    wait_uart(log, "gpio=0 irq=1")
     assert_register(qtest, 0x10, 0)
     qtest.pad(12, 1)
-    wait_for("gpio=1 irq=2")
+    wait_uart(log, "gpio=1 irq=2")
     assert_register(qtest, 0x10, 1 << (39 - 32))
 
 
@@ -242,9 +275,13 @@ def main():
     parser.add_argument("--qemu", type=Path, required=True)
     parser.add_argument("--bios", type=Path, required=True)
     parser.add_argument("--flash", type=Path, help="4 MiB flash image built from gpio-probe.ino")
+    parser.add_argument("--i2c-flash", type=Path, help="4 MiB flash image built from i2c-probe.ino")
     args = parser.parse_args()
     qemu = str(args.qemu.resolve(strict=True))
     bios = args.bios.resolve(strict=True)
+    for image in (args.flash, args.i2c_flash):
+        if image and image.stat().st_size != 4 * 1024 * 1024:
+            parser.error("the test flash image must be 4 MiB")
     with open_qemu(qemu, bios) as (qtest, _):
         check_registers(qtest)
         print("ESP32-S3 GPIO register and pad checks passed")
@@ -252,13 +289,21 @@ def main():
         print("ESP32-S3 UART RX capacity and TX overflow checks passed")
         check_adc(qtest)
         print("ESP32-S3 RTC ADC channel, start/done and attenuation checks passed")
+        check_empty_i2c_buses(qtest)
+        print("ESP32-S3 I2C FIFO limits and masked interrupts passed")
     if args.flash:
-        flash = args.flash.resolve(strict=True)
-        if flash.stat().st_size != 4 * 1024 * 1024:
-            parser.error("the test flash image must be 4 MiB")
-        with open_qemu(qemu, bios, flash) as (qtest, log):
+        with open_qemu(qemu, bios, args.flash) as (qtest, log):
             check_firmware(qtest, log)
         print("Arduino GPIO read, interrupt and output checks passed")
+    if args.i2c_flash:
+        eeproms = [f"at24c-eeprom,bus=esp32s3-i2c{port},address=0x50,rom-size=8192" for port in range(2)]
+        with open_qemu(qemu, bios, args.i2c_flash, eeproms) as (qtest, log):
+            output = wait_uart(log, "I2C_PROBE_OK")
+            for port in range(2):
+                assert f"I2C{port}_MISSING=2" in output
+                assert f"I2C{port}_RESTART_OK=73" in output
+            check_i2c_pin_selection(qtest)
+        print("Arduino Wire and Wire1 verified independent EEPROMs, NACK, repeated START and pin selection")
 
 
 if __name__ == "__main__":

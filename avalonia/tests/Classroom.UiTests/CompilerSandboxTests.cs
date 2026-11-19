@@ -6,6 +6,33 @@ namespace Classroom.UiTests;
 public sealed class CompilerSandboxTests
 {
     [Fact]
+    public async Task PreparedRuntimePublishesAtomicallyAfterTemporaryWindowsLock()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var directory = Directory.CreateTempSubdirectory("classroom-runtime-rename-");
+        try
+        {
+            var staging = directory.CreateSubdirectory("staging").FullName;
+            var target = Path.Combine(directory.FullName, "runtime");
+            var marker = Path.Combine(staging, "ready.txt");
+            File.WriteAllText(marker, "prepared");
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            Task publish;
+            using (File.Open(marker, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                Assert.ThrowsAny<IOException>(() => Directory.Move(staging, target));
+                publish = CompilerRuntime.PublishSnapshot(staging, target, cancellation.Token);
+                Assert.False(publish.IsCompleted);
+                Assert.False(Directory.Exists(target));
+            }
+            await publish;
+            Assert.False(Directory.Exists(staging));
+            Assert.Equal("prepared", File.ReadAllText(Path.Combine(target, "ready.txt")));
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
     public async Task AbruptHostExitKillsJobAndNextStartRecoversOnlyOwnedResources()
     {
         Assert.True(OperatingSystem.IsWindows()); if (!OperatingSystem.IsWindows()) return;

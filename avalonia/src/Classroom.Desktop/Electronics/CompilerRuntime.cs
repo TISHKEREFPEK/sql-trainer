@@ -69,13 +69,32 @@ public static class CompilerRuntime
                     File.WriteAllText(Path.Combine(staging, "ready.txt"), fingerprint);
                 }, cancellation);
                 CheckChild(staging, cache); CheckChild(target, cache);
-                Directory.Move(staging, target);
+                await PublishSnapshot(staging, target, cancellation);
                 return target;
             }
             finally { if (Directory.Exists(staging)) { CheckChild(staging, cache); Directory.Delete(staging, true); } }
         }
         finally { gate.Release(); }
     }
+    internal static async Task PublishSnapshot(string staging, string target, CancellationToken cancellation)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            try
+            {
+                Directory.Move(staging, target);
+                return;
+            }
+            catch (Exception e) when (attempt < 20 && (e is IOException or UnauthorizedAccessException)
+                && (e.HResult & 0xffff) is 5 or 32 or 33)
+            {
+                // Windows can deny rename while another process has a file open inside staging.
+                await Task.Delay(100, cancellation);
+            }
+        }
+    }
+
     static void CheckChild(string target, string root)
     {
         if (!Path.GetFullPath(target).StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||

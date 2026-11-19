@@ -517,29 +517,367 @@ index 0a0e477..d2cc212 100644
 @@ -37 +309 @@ static const TypeInfo esp32s3_gpio_info = {
 -    .parent = TYPE_ESP32_GPIO,
 +    .parent = TYPE_SYS_BUS_DEVICE,
+diff --git a/hw/i2c/esp32s3_i2c.c b/hw/i2c/esp32s3_i2c.c
+new file mode 100644
+index 0000000..d38823f
+--- /dev/null
++++ b/hw/i2c/esp32s3_i2c.c
+@@ -0,0 +1,302 @@
++/*
++ * ESP32-S3 I2C master controller.
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "hw/i2c/esp32s3_i2c.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "qemu/bitops.h"
++#include "qemu/module.h"
++
++enum {
++    CONTROL = 0x04, STATUS = 0x08, FIFO_CONFIG = 0x18, DATA = 0x1c,
++    INT_RAW = 0x20, INT_CLEAR = 0x24, INT_ENABLE = 0x28, INT_STATUS = 0x2c,
++    COMMAND = 0x58, BUS_CLEAR = 0x80,
++};
++
++enum {
++    OP_WRITE = 1, OP_STOP = 2, OP_READ = 3, OP_END = 4, OP_RESTART = 6,
++};
++
++#define MASTER BIT(4)
++#define TRANS_START BIT(5)
++#define FSM_RESET BIT(10)
++#define CONF_UPDATE BIT(11)
++#define BUS_BUSY BIT(4)
++#define NONFIFO BIT(10)
++#define RESET_RX BIT(12)
++#define RESET_TX BIT(13)
++#define RX_OVERFLOW BIT(2)
++#define END_DETECT BIT(3)
++#define COMPLETE BIT(7)
++#define TIMEOUT BIT(8)
++#define NACK BIT(10)
++#define TX_OVERFLOW BIT(11)
++#define CMD_ACK_CHECK BIT(8)
++#define CMD_ACK_EXPECT_NACK BIT(9)
++#define CMD_READ_NACK BIT(10)
++#define CMD_DONE BIT(31)
++#define COMMAND_COUNT 8
++#define FIFO_LENGTH 32
++
++static void update_irq(ESP32S3I2CState *s)
++{
++    qemu_set_irq(s->irq, !!(s->regs[INT_RAW / 4] & s->regs[INT_ENABLE / 4]));
++}
++
++static void stop_bus(ESP32S3I2CState *s)
++{
++    i2c_end_transfer(s->bus);
++    s->addressed = false;
++    s->start_pending = false;
++    s->receive = false;
++}
++
++static bool write_byte(ESP32S3I2CState *s, uint8_t byte)
++{
++    if (s->start_pending) {
++        uint8_t address = byte >> 1;
++
++        /* The QEMU bus keeps its target on a same-address repeated START. */
++        if (s->addressed && address != s->address) {
++            i2c_end_transfer(s->bus);
++        }
++        s->start_pending = false;
++        s->receive = byte & 1;
++        s->address = address;
++        s->addressed = i2c_start_transfer(s->bus, address, s->receive) == 0;
++        return s->addressed;
++    }
++    return s->addressed && !s->receive && i2c_send(s->bus, byte) == 0;
++}
++
++static uint32_t write_command(ESP32S3I2CState *s, uint32_t cmd, unsigned count)
++{
++    bool expected_ack = !(cmd & CMD_ACK_EXPECT_NACK);
++
++    if (count > fifo8_num_used(&s->tx)) {
++        return TIMEOUT;
++    }
++    for (unsigned i = 0; i < count; i++) {
++        bool ack = write_byte(s, fifo8_pop(&s->tx));
++
++        if ((cmd & CMD_ACK_CHECK) && ack != expected_ack) {
++            return NACK;
++        }
++    }
++    return 0;
++}
++
++static uint32_t read_command(ESP32S3I2CState *s, uint32_t cmd, unsigned count)
++{
++    if (!s->addressed || s->start_pending || !s->receive) {
++        return TIMEOUT;
++    }
++    if (count > fifo8_num_free(&s->rx)) {
++        return TIMEOUT | RX_OVERFLOW;
++    }
++    for (unsigned i = 0; i < count; i++) {
++        fifo8_push(&s->rx, i2c_recv(s->bus));
++    }
++    if (count && (cmd & CMD_READ_NACK)) {
++        i2c_nack(s->bus);
++    }
++    return 0;
++}
++
++static void run_commands(ESP32S3I2CState *s)
++{
++    uint32_t *program = &s->regs[COMMAND / 4];
++    uint32_t event = 0;
++
++    for (int i = 0; i < COMMAND_COUNT && !event; i++) {
++        uint32_t cmd = program[i];
++        unsigned count = extract32(cmd, 0, 8);
++
++        switch (extract32(cmd, 11, 3)) {
++        case OP_RESTART:
++            s->start_pending = true;
++            break;
++        case OP_WRITE:
++            event = write_command(s, cmd, count);
++            break;
++        case OP_READ:
++            event = read_command(s, cmd, count);
++            break;
++        case OP_STOP:
++            stop_bus(s);
++            event = COMPLETE;
++            break;
++        case OP_END:
++            event = END_DETECT;
++            break;
++        default:
++            event = TIMEOUT;
++            break;
++        }
++        program[i] |= CMD_DONE;
++    }
++    if (!event || (event & (NACK | TIMEOUT))) {
++        stop_bus(s);
++    }
++    s->regs[INT_RAW / 4] |= event ? event : TIMEOUT;
++    update_irq(s);
++}
++
++static uint64_t i2c_read(void *opaque, hwaddr addr, unsigned size)
++{
++    ESP32S3I2CState *s = opaque;
++
++    switch (addr) {
++    case STATUS:
++        return ((s->addressed || s->start_pending) ? BUS_BUSY : 0) |
++               (fifo8_num_used(&s->rx) << 8) | (fifo8_num_used(&s->tx) << 18);
++    case DATA:
++        return fifo8_is_empty(&s->rx) ? 0 : fifo8_pop(&s->rx);
++    case INT_STATUS:
++        return s->regs[INT_RAW / 4] & s->regs[INT_ENABLE / 4];
++    default:
++        return s->regs[addr / 4];
++    }
++}
++
++static void i2c_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    ESP32S3I2CState *s = opaque;
++    uint32_t *reg = &s->regs[addr / 4];
++
++    switch (addr) {
++    case CONTROL:
++        *reg = value & ~(TRANS_START | FSM_RESET | CONF_UPDATE);
++        if (value & FSM_RESET) {
++            stop_bus(s);
++        }
++        if (value & TRANS_START) {
++            if ((value & MASTER) && !(s->regs[FIFO_CONFIG / 4] & NONFIFO)) {
++                run_commands(s);
++            } else {
++                s->regs[INT_RAW / 4] |= TIMEOUT;
++                update_irq(s);
++            }
++        }
++        break;
++    case FIFO_CONFIG:
++        *reg = value & ~(RESET_RX | RESET_TX);
++        if (value & RESET_RX) {
++            fifo8_reset(&s->rx);
++        }
++        if (value & RESET_TX) {
++            fifo8_reset(&s->tx);
++        }
++        break;
++    case DATA:
++        if (fifo8_is_full(&s->tx)) {
++            s->regs[INT_RAW / 4] |= TX_OVERFLOW;
++            update_irq(s);
++        } else {
++            fifo8_push(&s->tx, value);
++        }
++        break;
++    case INT_CLEAR:
++        s->regs[INT_RAW / 4] &= ~value;
++        update_irq(s);
++        break;
++    case INT_ENABLE:
++        *reg = value;
++        update_irq(s);
++        break;
++    case INT_RAW:
++    case INT_STATUS:
++    case STATUS:
++        break;
++    case BUS_CLEAR:
++        *reg = value & ~BIT(0);
++        if (value & BIT(0)) {
++            stop_bus(s);
++        }
++        break;
++    default:
++        *reg = addr >= COMMAND && addr < COMMAND + 4 * COMMAND_COUNT
++            ? value & ~CMD_DONE : value;
++        break;
++    }
++}
++
++static const MemoryRegionOps ops = {
++    .read = i2c_read,
++    .write = i2c_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void i2c_reset_hold(Object *obj, ResetType type)
++{
++    ESP32S3I2CState *s = ESP32S3_I2C(obj);
++
++    stop_bus(s);
++    fifo8_reset(&s->rx);
++    fifo8_reset(&s->tx);
++    memset(s->regs, 0, sizeof(s->regs));
++    update_irq(s);
++}
++
++static void i2c_realize(DeviceState *dev, Error **errp)
++{
++    ESP32S3I2CState *s = ESP32S3_I2C(dev);
++    g_autofree char *bus_name = g_strdup_printf("esp32s3-i2c%u", s->port);
++
++    s->bus = i2c_init_bus(dev, bus_name);
++}
++
++static void i2c_init(Object *obj)
++{
++    ESP32S3I2CState *s = ESP32S3_I2C(obj);
++    SysBusDevice *busdev = SYS_BUS_DEVICE(obj);
++
++    memory_region_init_io(&s->mmio, obj, &ops, s, TYPE_ESP32S3_I2C,
++                          ESP32S3_I2C_REGISTER_SIZE);
++    sysbus_init_mmio(busdev, &s->mmio);
++    sysbus_init_irq(busdev, &s->irq);
++    fifo8_create(&s->rx, FIFO_LENGTH);
++    fifo8_create(&s->tx, FIFO_LENGTH);
++}
++
++static void i2c_finalize(Object *obj)
++{
++    ESP32S3I2CState *s = ESP32S3_I2C(obj);
++
++    fifo8_destroy(&s->tx);
++    fifo8_destroy(&s->rx);
++}
++
++static Property i2c_properties[] = {
++    DEFINE_PROP_UINT8("port", ESP32S3I2CState, port, 0),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void i2c_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->realize = i2c_realize;
++    device_class_set_props(dc, i2c_properties);
++    RESETTABLE_CLASS(klass)->phases.hold = i2c_reset_hold;
++}
++
++static const TypeInfo i2c_info = {
++    .name = TYPE_ESP32S3_I2C,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(ESP32S3I2CState),
++    .instance_init = i2c_init,
++    .instance_finalize = i2c_finalize,
++    .class_init = i2c_class_init,
++};
++
++static void i2c_register_types(void)
++{
++    type_register_static(&i2c_info);
++}
++
++type_init(i2c_register_types)
+diff --git a/hw/i2c/meson.build b/hw/i2c/meson.build
+index e72dca0..52f9b17 100644
+--- a/hw/i2c/meson.build
++++ b/hw/i2c/meson.build
+@@ -19 +19 @@ i2c_ss.add(when: 'CONFIG_XTENSA_ESP32', if_true: files('esp32_i2c.c'))
+-i2c_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files('esp32_i2c.c'))
++i2c_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files('esp32s3_i2c.c'))
+diff --git a/hw/xtensa/Kconfig b/hw/xtensa/Kconfig
+index 5866207..0d595e5 100644
+--- a/hw/xtensa/Kconfig
++++ b/hw/xtensa/Kconfig
+@@ -45,0 +46,2 @@ config XTENSA_ESP32S3
++    select I2C
++    select AT24C
 diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
-index 4a24a04..a63b751 100644
+index 4a24a04..17b2173 100644
 --- a/hw/xtensa/esp32s3.c
 +++ b/hw/xtensa/esp32s3.c
+@@ -24 +24 @@
+-#include "hw/i2c/i2c.h"
++#include "hw/i2c/esp32s3_i2c.h"
 @@ -63,0 +64 @@
 +#include "hw/adc/esp32s3_adc.h"
-@@ -125,0 +127 @@ typedef struct Esp32s3SocState {
+@@ -125,0 +127,2 @@ typedef struct Esp32s3SocState {
 +    ESP32S3ADCState adc;
-@@ -540 +542 @@ static void esp32s3_soc_init(Object *obj)
++    ESP32S3I2CState i2c[2];
+@@ -540 +543 @@ static void esp32s3_soc_init(Object *obj)
 -    // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
 +    qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
-@@ -642,0 +645 @@ static void esp32s3_machine_init(MachineState *machine)
+@@ -642,0 +646,3 @@ static void esp32s3_machine_init(MachineState *machine)
 +    object_initialize_child(OBJECT(ss), "adc", &ss->adc, TYPE_ESP32S3_ADC);
-@@ -775,0 +779,4 @@ static void esp32s3_machine_init(MachineState *machine)
++    object_initialize_child(OBJECT(ss), "i2c0", &ss->i2c[0], TYPE_ESP32S3_I2C);
++    object_initialize_child(OBJECT(ss), "i2c1", &ss->i2c[1], TYPE_ESP32S3_I2C);
+@@ -775,0 +782,18 @@ static void esp32s3_machine_init(MachineState *machine)
 +        mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpio), 1);
 +        memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
 +        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpio), 0,
 +                           qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
-@@ -777,0 +785,3 @@ static void esp32s3_machine_init(MachineState *machine)
++    }
++
 +    sysbus_realize(SYS_BUS_DEVICE(&ss->adc), &error_fatal);
 +    esp32s3_soc_add_periph_device(sys_mem, &ss->adc, DR_REG_SENS_BASE);
 +
-@@ -873 +882,0 @@ static void esp32s3_machine_init(MachineState *machine)
++    const hwaddr i2c_bases[] = { DR_REG_I2C_EXT_BASE, DR_REG_I2C1_EXT_BASE };
++    const int i2c_irqs[] = { ETS_I2C_EXT0_INTR_SOURCE, ETS_I2C_EXT1_INTR_SOURCE };
++    for (int i = 0; i < ARRAY_SIZE(ss->i2c); i++) {
++        SysBusDevice *controller = SYS_BUS_DEVICE(&ss->i2c[i]);
++
++        qdev_prop_set_uint8(DEVICE(controller), "port", i);
++        sysbus_realize(controller, &error_fatal);
++        esp32s3_soc_add_periph_device(sys_mem, controller, i2c_bases[i]);
++        sysbus_connect_irq(controller, 0, qdev_get_gpio_in(intmatrix_dev, i2c_irqs[i]));
+@@ -873 +896,0 @@ static void esp32s3_machine_init(MachineState *machine)
 -    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.iomux", DR_REG_IO_MUX_BASE, 0x2000);
 diff --git a/include/chardev/char.h b/include/chardev/char.h
 index 01df55f..791a9c3 100644
@@ -613,6 +951,40 @@ index 7d6bb4b..467bc48 100644
 @@ -21 +41 @@ typedef struct ESP32S3GPIOClass {
 -    Esp32GpioClass parent;
 +    SysBusDeviceClass parent;
+diff --git a/include/hw/i2c/esp32s3_i2c.h b/include/hw/i2c/esp32s3_i2c.h
+new file mode 100644
+index 0000000..008e644
+--- /dev/null
++++ b/include/hw/i2c/esp32s3_i2c.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef HW_I2C_ESP32S3_I2C_H
++#define HW_I2C_ESP32S3_I2C_H
++
++#include "hw/sysbus.h"
++#include "hw/i2c/i2c.h"
++#include "qemu/fifo8.h"
++
++#define TYPE_ESP32S3_I2C "esp32s3.i2c"
++#define ESP32S3_I2C_REGISTER_SIZE 0x100
++OBJECT_DECLARE_SIMPLE_TYPE(ESP32S3I2CState, ESP32S3_I2C)
++
++struct ESP32S3I2CState {
++    SysBusDevice parent_obj;
++    MemoryRegion mmio;
++    I2CBus *bus;
++    qemu_irq irq;
++    Fifo8 tx;
++    Fifo8 rx;
++    uint32_t regs[ESP32S3_I2C_REGISTER_SIZE / 4];
++    uint8_t port;
++    uint8_t address;
++    bool addressed;
++    bool start_pending;
++    bool receive;
++};
++
++#endif
 diff --git a/meson.build b/meson.build
 index 7f28871..f0ec7a8 100644
 --- a/meson.build

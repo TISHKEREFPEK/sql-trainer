@@ -4,7 +4,7 @@ namespace Classroom.Desktop.Electronics;
 
 // Foundation API only. No runnable catalog part until Arduino and peripheral
 // compatibility are verified; QEMU's current GPIO/IOMUX is a stub.
-public static class Esp32S3Compiler
+public static partial class Esp32S3Compiler
 {
     public const string ClangVersion="19.1.2_20250312",QemuVersion="9.2.2_20260417";
     static readonly SemaphoreSlim slots=new(1,1);

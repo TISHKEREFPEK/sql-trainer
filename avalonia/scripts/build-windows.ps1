@@ -1,10 +1,11 @@
-param([switch]$SkipTests,[switch]$SkipInstaller,[switch]$SkipPackageCheck,[string]$PublishPath,[string]$ElectronicsRuntimePath,[string]$PicoRuntimePath,[string]$InnoCompilerPath,[string]$InstallerOutputPath)
+param([switch]$SkipTests,[switch]$SkipInstaller,[switch]$SkipPackageCheck,[string]$PublishPath,[string]$ElectronicsRuntimePath,[string]$PicoRuntimePath,[string]$InnoCompilerPath,[string]$InstallerOutputPath,[string]$Esp32S3RuntimePath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = Split-Path $PSScriptRoot -Parent
 if($PublishPath){$PublishPath=[IO.Path]::GetFullPath($PublishPath)}
 if($ElectronicsRuntimePath){$ElectronicsRuntimePath=[IO.Path]::GetFullPath($ElectronicsRuntimePath)}
 if($PicoRuntimePath){$PicoRuntimePath=[IO.Path]::GetFullPath($PicoRuntimePath)}
+if($Esp32S3RuntimePath){$Esp32S3RuntimePath=[IO.Path]::GetFullPath($Esp32S3RuntimePath)}
 if($InnoCompilerPath){$InnoCompilerPath=[IO.Path]::GetFullPath($InnoCompilerPath)}
 if($InstallerOutputPath){$InstallerOutputPath=[IO.Path]::GetFullPath($InstallerOutputPath)}
 Set-Location $root
@@ -16,9 +17,10 @@ if(-not($allowed | Where-Object {$publish.StartsWith($_,[StringComparison]::Ordi
 if(Test-Path -LiteralPath $publish){if(Get-ChildItem -LiteralPath $publish -Force | Select-Object -First 1){throw 'Publish output is not empty. Choose a new PublishPath; previous files were preserved.'}}
 if(-not $ElectronicsRuntimePath){$ElectronicsRuntimePath=Join-Path $root 'artifacts/electronics-runtime'}
 if(-not $PicoRuntimePath){$PicoRuntimePath=Join-Path $root 'artifacts/pico-runtime'}
+if(-not $Esp32S3RuntimePath){$Esp32S3RuntimePath=Join-Path $root 'artifacts/esp32s3-arduino-runtime'}
 $ElectronicsRuntimePath=[IO.Path]::GetFullPath($ElectronicsRuntimePath)
 $PicoRuntimePath=[IO.Path]::GetFullPath($PicoRuntimePath)
-foreach($sdk in @($ElectronicsRuntimePath,$PicoRuntimePath)){if($publish -eq $sdk -or $publish.StartsWith($sdk.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or $sdk.StartsWith($publish+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Publish output and source SDK folders must be separate.'}}
+foreach($sdk in @($ElectronicsRuntimePath,$PicoRuntimePath,$Esp32S3RuntimePath)){if($publish -eq $sdk -or $publish.StartsWith($sdk.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or $sdk.StartsWith($publish+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Publish output and source SDK folders must be separate.'}}
 if(-not $SkipInstaller){
     & "$PSScriptRoot/build-installers.ps1" -PublishPath $publish -InnoCompilerPath $InnoCompilerPath -OutputPath $InstallerOutputPath -CheckPrerequisitesOnly
 }
@@ -31,8 +33,10 @@ Run-DotNet @('build', 'Classroom.sln', '-c', 'Release', '--no-restore', '-m:1', 
 & "$PSScriptRoot/prepare-electronics.ps1" -RuntimePath $ElectronicsRuntimePath
 & "$PSScriptRoot/prepare-pico.ps1" -RuntimePath $PicoRuntimePath -BaseRuntimePath $ElectronicsRuntimePath
 if (-not $SkipTests) {
+    & "$PSScriptRoot/prepare-esp32s3.ps1" -RuntimePath $Esp32S3RuntimePath -BaseRuntimePath $ElectronicsRuntimePath -IncludeArduino
     $env:CLASSROOM_ELECTRONICS_RUNTIME=$ElectronicsRuntimePath
     $env:CLASSROOM_PICO_RUNTIME = $PicoRuntimePath
+    $env:CLASSROOM_ESP32S3_RUNTIME = $Esp32S3RuntimePath
     $env:CLASSROOM_UI_OUTPUT = Join-Path $root 'artifacts/ui'
     Run-DotNet @('test', 'Classroom.sln', '-c', 'Release', '--no-build', '--no-restore', '--logger', 'trx', '--results-directory', 'artifacts/tests')
 }

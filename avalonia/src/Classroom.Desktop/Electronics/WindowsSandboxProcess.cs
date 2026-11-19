@@ -14,7 +14,10 @@ namespace Classroom.Desktop.Electronics;
 [SupportedOSPlatform("windows")]
 public static class WindowsSandboxProcess
 {
-    public sealed record Result(int ExitCode, string Output, string Error);
+    public sealed record Result(int ExitCode, string Output, string Error)
+    {
+        public bool StoppedAtLimit { get; init; }
+    }
     const string RuntimeCapability = "sqlClassroomCompilerRuntimeRead";
     static readonly Lazy<byte[]> capability = new(DeriveRuntimeCapability);
     static IOException Failure(string operation) => new($"Не удалось включить изоляцию компилятора ({operation}, Windows {Marshal.GetLastWin32Error()}).");
@@ -116,8 +119,13 @@ public static class WindowsSandboxProcess
         =>RunCore(executable,arguments,readOnlyRoot,scratch,settings,cancellation,TimeSpan.FromSeconds(60),prepareFiles);
     internal static Task<Result> PrepareTrustedRuntime(string executable,IEnumerable<string> arguments,string readOnlyRoot,string scratch,IReadOnlyDictionary<string,string> settings,CancellationToken cancellation)
         =>RunCore(executable,arguments,readOnlyRoot,scratch,settings,cancellation,TimeSpan.FromMinutes(5),null);
+    internal static Task<Result> RunFor(string executable, IEnumerable<string> arguments, string readOnlyRoot,
+        string scratch, TimeSpan duration, CancellationToken cancellation)
+        => RunCore(executable, arguments, readOnlyRoot, scratch, new Dictionary<string, string>(), cancellation,
+            duration, null, returnAtLimit: true);
     static async Task<Result> RunCore(string executable, IEnumerable<string> arguments, string readOnlyRoot, string scratch,
-        IReadOnlyDictionary<string, string> settings, CancellationToken cancellation,TimeSpan timeLimit,Action<string>? prepareFiles)
+        IReadOnlyDictionary<string, string> settings, CancellationToken cancellation,TimeSpan timeLimit,Action<string>? prepareFiles,
+        bool returnAtLimit = false)
     {
         cancellation.ThrowIfCancellationRequested();
         executable = Path.GetFullPath(executable); scratch = Path.GetFullPath(scratch); readOnlyRoot = Path.GetFullPath(readOnlyRoot);
@@ -185,10 +193,13 @@ public static class WindowsSandboxProcess
             using var registration = limit.Token.Register(() => TerminateJobObject(job, 1));
             if (ResumeThread(pi.Thread) == uint.MaxValue) throw Failure("process resume");
             await process.WaitForExitAsync();
+            if (returnAtLimit) limit.CancelAfter(Timeout.InfiniteTimeSpan);
             // Kill descendants retaining pipes before collecting the bounded output.
             TerminateJobObject(job, 1);
             await WaitForJob(job);
             var result = new Result(process.ExitCode, await outputTask, await errorTask);
+            if (returnAtLimit && limit.IsCancellationRequested && !cancellation.IsCancellationRequested)
+                return result with { StoppedAtLimit = true };
             if (limit.IsCancellationRequested) throw new IOException($"Компиляция остановлена: отмена или превышен лимит {timeLimit.TotalSeconds:0} секунд.\n" + result.Error[..Math.Min(result.Error.Length, 4000)]+"\n"+result.Output[^Math.Min(result.Output.Length,8000)..]);
             return result;
         }

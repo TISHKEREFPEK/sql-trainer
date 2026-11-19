@@ -111,6 +111,11 @@ public sealed class ElectronicsReviewTests
         await other.Put<ElectronicsSyncReceipt>("electronics/work", new ElectronicsSyncRequest(Guid.NewGuid().ToString("N"), 1, otherWork.ProjectJson, [new(report, "submitted", otherWork.ProjectJson, "", 1)], otherWork.Id));
         await Decide(f, report, "accepted", 5, "Комментарий только первому ученику.");
         Assert.Null((await other.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + otherWork.Id + "/status")).LatestReview);
+        var ownHome = Assert.Single((await f.Student.Get<StudentHomeDto>("student/home")).Electronics!);
+        var otherHome = Assert.Single((await other.Get<StudentHomeDto>("student/home")).Electronics!);
+        Assert.Equal(5, ownHome.EffectiveGrade);
+        Assert.Null(otherHome.EffectiveGrade);
+        Assert.Null(otherHome.EffectiveReviewState);
         Assert.Equal(403, (await Assert.ThrowsAsync<ApiException>(() => f.Student.Put<ElectronicsReviewDecision>(Route(f, report) + "/decisions/" + Guid.NewGuid().ToString("N"), new ElectronicsReviewRequest("accepted", "", 5, null, 2)))).Status);
         // An explicit replacement archives the frozen old intent, including its original version.
         using (var sync = new ElectronicsSync(f.Student, path, _ => { }, false, assignment.Id))

@@ -87,6 +87,10 @@ public sealed class StudentHomeTests
             await home.Refresh(); window.UpdateLayout();
             Assert.Contains(home.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.Contains("Решено раньше") == true);
             Assert.Contains(home.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.Contains("Не начато") == true);
+            Assert.Contains(home.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Выполнено 1 из 2");
+            var progress = Assert.Single(home.GetVisualDescendants().OfType<ProgressBar>());
+            Assert.Equal(2, progress.Maximum);
+            Assert.Equal(1, progress.Value);
             Assert.DoesNotContain(home.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.Contains("секунд") == true);
             home.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Посмотреть").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal("database",opened);

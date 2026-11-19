@@ -73,7 +73,7 @@ public sealed class ClassroomResultsTests
         Assert.Equal(second.Id,course.Students.Single(p=>p.Id==f.StudentId).GroupKey);
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task PendingResubmissionRetainsAcceptedCreditAndGradeUntilNewDecision()
     {
         await using var f=await LiveClassroom.Start();var lesson=(await f.Admin.Get<LessonDashboard>("teacher/lessons")).Current!;
@@ -89,17 +89,50 @@ public sealed class ClassroomResultsTests
             var route=$"teacher/reviews/electronics/{f.StudentId}/{report}";var detail=await f.Admin.Get<ElectronicsReviewDetail>(route);
             await f.Admin.Put<ElectronicsReviewDecision>(route+"/decisions/"+Guid.NewGuid().ToString("N"),new ElectronicsReviewRequest(action,"Проверено.",grade,detail.History.LastOrDefault()?.Id,detail.AssignmentVersion));
         }
-        var first=await Submit(1,assignment.StateVersion);
-        var pending=await Results(f,"?subject=electronics");Assert.Equal(1,pending.Summary.Pending);Assert.Equal(0,pending.Difficulties.Single().Checked);Assert.Null(pending.Difficulties.Single().UnsolvedPercent);
-        await Decide(first,"accepted",4);await Decide(first,"allow-resubmit",null);
-        var status=await f.Student.Get<ElectronicsAssignmentStatus>($"electronics/assignments/{assignment.Id}/status");var second=await Submit(2,status.StateVersion);
-        var waiting=await Results(f,"?subject=electronics");var row=Assert.Single(waiting.Works);
-        Assert.Equal("awaiting-review",row.State);Assert.True(row.Completed);Assert.Equal(4,row.Grade);Assert.Equal(100,waiting.Summary.AveragePercent);Assert.Equal(0,waiting.Difficulties.Single().Checked);
-        var versions=await f.Admin.Get<ElectronicsReviewQueue>($"teacher/reviews/electronics?status=all&studentId={f.StudentId}&assignmentId={assignment.Id}");
-        Assert.Equal(2,versions.Items.Length);Assert.Contains(versions.Items,v=>v.ReportId==first&&v.Grade==4);Assert.Contains(versions.Items,v=>v.ReportId==second&&v.State=="awaiting-review");
-        await Decide(second,"accepted",5);var accepted=Assert.Single((await Results(f,"?subject=electronics")).Works);Assert.True(accepted.Completed);Assert.Equal(5,accepted.Grade);
-        await Decide(second,"changes-requested",null);var returned=Assert.Single((await Results(f,"?subject=electronics")).Works);Assert.False(returned.Completed);Assert.Null(returned.Grade);
-        Assert.Null(returned.ActiveSeconds);Assert.Null(returned.Hints);Assert.Null(returned.Violations);
+        var window = new MainWindow(false, false) { Width = 1008, Height = 680 };
+        var home = new StudentHomeControl(window, f.Student, (_, _) => Task.CompletedTask);
+        window.Preview(home);
+        window.Show();
+        async Task AssertHome(string message, int completed, int? grade)
+        {
+            var dto = Assert.Single((await f.Student.Get<StudentHomeDto>("student/home")).Electronics!);
+            Assert.Equal(grade, dto.EffectiveGrade);
+            await home.Refresh();
+            window.UpdateLayout();
+            var summary = Assert.Single(home.GetVisualDescendants().OfType<ProgressBar>());
+            Assert.Equal(1, summary.Maximum);
+            Assert.Equal(completed, summary.Value);
+            var labels = home.GetVisualDescendants().OfType<TextBlock>().Select(text => text.Text).ToArray();
+            Assert.Contains(labels, text => text?.Contains(message, StringComparison.Ordinal) == true);
+            if (grade is not null)
+                Assert.Contains(labels, text => text?.Contains($"Оценка {grade} из 5", StringComparison.Ordinal) == true);
+            else
+                Assert.DoesNotContain(labels, text => text?.Contains("Оценка", StringComparison.Ordinal) == true);
+        }
+        try
+        {
+            var first=await Submit(1,assignment.StateVersion);
+            var pending=await Results(f,"?subject=electronics");Assert.Equal(1,pending.Summary.Pending);Assert.Equal(0,pending.Difficulties.Single().Checked);Assert.Null(pending.Difficulties.Single().UnsolvedPercent);
+            await AssertHome("Ожидает проверки", 0, null);
+            await Decide(first,"accepted",4);await Decide(first,"allow-resubmit",null);
+            await AssertHome("Пересдача разрешена", 1, 4);
+            var status=await f.Student.Get<ElectronicsAssignmentStatus>($"electronics/assignments/{assignment.Id}/status");var second=await Submit(2,status.StateVersion);
+            var waiting=await Results(f,"?subject=electronics");var row=Assert.Single(waiting.Works);
+            Assert.Equal("awaiting-review",row.State);Assert.True(row.Completed);Assert.Equal(4,row.Grade);Assert.Equal(100,waiting.Summary.AveragePercent);Assert.Equal(0,waiting.Difficulties.Single().Checked);
+            await AssertHome("Пересдача на проверке · Прежний зачёт сохранён", 1, 4);
+            var output = Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT") ?? AppContext.BaseDirectory;
+            Directory.CreateDirectory(output);
+            using (var frame = window.CaptureRenderedFrame())
+                frame!.Save(Path.Combine(output, "student-home-resubmission-1008.png"));
+            var versions=await f.Admin.Get<ElectronicsReviewQueue>($"teacher/reviews/electronics?status=all&studentId={f.StudentId}&assignmentId={assignment.Id}");
+            Assert.Equal(2,versions.Items.Length);Assert.Contains(versions.Items,v=>v.ReportId==first&&v.Grade==4);Assert.Contains(versions.Items,v=>v.ReportId==second&&v.State=="awaiting-review");
+            await Decide(second,"accepted",5);var accepted=Assert.Single((await Results(f,"?subject=electronics")).Works);Assert.True(accepted.Completed);Assert.Equal(5,accepted.Grade);
+            await AssertHome("Принято", 1, 5);
+            await Decide(second,"changes-requested",null);var returned=Assert.Single((await Results(f,"?subject=electronics")).Works);Assert.False(returned.Completed);Assert.Null(returned.Grade);
+            await AssertHome("На доработке", 0, null);
+            Assert.Null(returned.ActiveSeconds);Assert.Null(returned.Hints);Assert.Null(returned.Violations);
+        }
+        finally { window.Close(); }
     }
 
     [Fact]

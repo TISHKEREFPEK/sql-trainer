@@ -36,9 +36,38 @@ public static class ElectronicsAssignments
     public static async Task<StudentElectronicsWork[]> Home(ClassroomDb db, Session session)
     {
         if (session.LessonId is null) return [];
-        var assignments = await db.ElectronicsAssignments.Where(a => a.LessonId == session.LessonId && a.StudentId == session.ProfileId).ToDictionaryAsync(a => a.TaskId);
-        return (await Issued(db, session.LessonId)).Select(t => new StudentElectronicsWork(t.TaskId, t.Title,
-            assignments.GetValueOrDefault(t.TaskId)?.State ?? "not-started", assignments.GetValueOrDefault(t.TaskId)?.Id, t.Revision)).ToArray();
+        // The newest resolved submission stays effective until the teacher
+        // decides on a newer submission. Fetch only the pupil's review summary.
+        var assignments = await (
+            from assignment in db.ElectronicsAssignments
+            where assignment.LessonId == session.LessonId && assignment.StudentId == session.ProfileId
+            select new
+            {
+                assignment.TaskId,
+                assignment.Id,
+                assignment.State,
+                assignment.CanSubmit,
+                ReviewId = (from report in db.ElectronicsReports
+                            join review in db.ElectronicsReviews on new { report.StudentId, ReportId = report.Id }
+                                equals new { review.StudentId, review.ReportId }
+                            where report.AssignmentId == assignment.Id && report.StudentId == assignment.StudentId
+                                && report.Kind == "submitted" && review.Action != "allow-resubmit"
+                            orderby report.At descending, report.Id descending, review.Sequence descending
+                            select review.Id).FirstOrDefault()
+            }).ToDictionaryAsync(assignment => assignment.TaskId);
+        var reviewIds = assignments.Values.Select(assignment => assignment.ReviewId).OfType<string>().ToArray();
+        var reviews = await db.ElectronicsReviews
+            .Where(review => review.StudentId == session.ProfileId && reviewIds.Contains(review.Id))
+            .Select(review => new { review.Id, review.Action, review.Grade })
+            .ToDictionaryAsync(review => review.Id);
+
+        return (await Issued(db, session.LessonId)).Select(task =>
+        {
+            var assignment = assignments.GetValueOrDefault(task.TaskId);
+            var review = assignment?.ReviewId is { } id ? reviews.GetValueOrDefault(id) : null;
+            return new StudentElectronicsWork(task.TaskId, task.Title, assignment?.State ?? "not-started",
+                assignment?.Id, task.Revision, review?.Action, review?.Grade, assignment?.CanSubmit ?? false);
+        }).ToArray();
     }
     public static void Map(RouteGroupBuilder api, ServerState state)
     {

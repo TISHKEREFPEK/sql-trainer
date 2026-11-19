@@ -36,6 +36,46 @@ public sealed class StudentHomeControl : UserControl
         action.IsEnabled=canWork&&!opening;workActions.Add(action);return action;
     }
     void EnableActions(){foreach(var action in workActions)action.IsEnabled=canWork&&!opening;}
+
+    static string ElectronicsStatus(StudentElectronicsWork work)
+    {
+        var status = work.State switch
+        {
+            "awaiting-review" when work.EffectiveReviewState is not null => "Пересдача на проверке",
+            "awaiting-review" => "Ожидает проверки",
+            "accepted" => "Принято",
+            "changes-requested" => "На доработке",
+            "rejected" => "Не принято",
+            "draft" => "В работе",
+            _ => "Не начато"
+        };
+        if (work.State == "awaiting-review" && work.EffectiveReviewState == "accepted")
+            status += " · Прежний зачёт сохранён";
+        if (work.EffectiveGrade is int grade)
+            status += $" · Оценка {grade} из 5";
+        if (work.CanSubmit && work.State is "accepted" or "rejected")
+            status += " · Пересдача разрешена";
+        return status;
+    }
+
+    static StackPanel WorkProgress(int completed, int total)
+    {
+        var progress = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = total,
+            Value = completed,
+            Height = 4
+        };
+        Ui.BindBrush(progress, ProgressBar.ForegroundProperty, "ProgressFill");
+        Ui.BindBrush(progress, ProgressBar.BackgroundProperty, "ProgressTrack");
+        Avalonia.Automation.AutomationProperties.SetName(progress, "Прогресс по выданным работам");
+        var summary = Ui.Stack(Ui.Muted($"Выполнено {completed} из {total}", 12), progress);
+        summary.Spacing = 4;
+        summary.VerticalAlignment = VerticalAlignment.Center;
+        return summary;
+    }
+
     public async Task Refresh()
     {
         var data = await api.Get<StudentHomeDto>("student/home");
@@ -64,10 +104,13 @@ public sealed class StudentHomeControl : UserControl
             Grid.SetColumn(state,compact?0:1);Grid.SetRow(state,compact?1:0);lesson.RowSpacing=compact?12:0;
         };
         page.Children.Add(GraphiteUi.Panel(lesson));
-        var rows=new StackPanel{Spacing=2};var count=0;
-        void Add(string title,string detail,Button action)
+        var rows = new StackPanel { Spacing = 2 };
+        var count = 0;
+        var completed = 0;
+        void Add(string title, string detail, Button action, bool hasCredit)
         {
             if(count++>0)rows.Children.Add(GraphiteUi.Separator());
+            if (hasCredit) completed++;
             rows.Children.Add(GraphiteUi.WorkRow(title,detail,action));
         }
         if (data.Lesson.AllowSql)
@@ -77,21 +120,28 @@ public sealed class StudentHomeControl : UserControl
                 var status = work.State switch { "completed-before" => "Решено раньше", "completed" => "Выполнено", "in-progress" => "В работе", _ => "Не начато" };
                 if (work.RequireNewSolution && work.State == "not-started") status = "Нужно решить на занятии";
                 var label=work.State switch{"completed-before" or "completed"=>"Посмотреть","in-progress"=>"Продолжить",_=>"Открыть"};
-                Add(work.Title,"SQL · "+work.Module+" · "+status,Action(label,"sql",work.Id,work.State=="in-progress"));
+                Add(work.Title, "SQL · "+work.Module+" · "+status, Action(label,"sql",work.Id,work.State=="in-progress"),
+                    work.State is "completed" or "completed-before");
             }
         }
         if (data.Lesson.AllowElectronics)
         {
             foreach (var work in data.Electronics ?? [])
             {
-                var status = work.State switch { "awaiting-review" => "Ожидает проверки", "accepted" => "Принято", "changes-requested" => "На доработке", "rejected" => "Не принято", "draft" => "В работе", _ => "Не начато" };
                 var label=work.State=="draft"?"Продолжить схему":"Открыть схему";
-                Add(work.Title,"Электроника · "+status,Action(label,"electronics",work.TaskId,work.State=="draft"));
+                Add(work.Title, "Электроника · " + ElectronicsStatus(work), Action(label,"electronics",work.TaskId,work.State=="draft"),
+                    work.State == "accepted" || work.State == "awaiting-review" && work.EffectiveReviewState == "accepted");
             }
         }
         var heading=new Grid{ColumnDefinitions=new("*,Auto"),ColumnSpacing=12};
         heading.Children.Add(Ui.Text("Выданные работы",16));
-        var number=Ui.Muted($"Работ: {count}",12);Grid.SetColumn(number,1);heading.Children.Add(number);page.Children.Add(heading);
+        if (count > 0)
+        {
+            var progress = WorkProgress(completed, count);
+            Grid.SetColumn(progress, 1);
+            heading.Children.Add(progress);
+        }
+        page.Children.Add(heading);
         if(count==0)rows.Children.Add(Ui.Muted("Преподаватель пока не выдал работы.",14));
         page.Children.Add(GraphiteUi.Panel(rows));
         // Preserve existing permissions: FreePractice gates SQL catalogue;

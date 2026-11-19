@@ -24,7 +24,8 @@ public record ElectronicsLessonTask(string Id,string Title,string Prompt,bool Re
 public record ElectronicsSelectionRequest(string[] TaskIds);
 public record ElectronicsSelection(ElectronicsLessonTask[] Tasks);
 public record ElectronicsAssignmentDto(string Id,string LessonId,string TaskId,string Title,string Prompt,int Revision,bool Restricted,string ProjectJson,string State,bool CanSubmit,bool Available=true,int StateVersion=1);
-public record StudentElectronicsWork(string TaskId,string Title,string State,string? AssignmentId,int Revision);
+public record StudentElectronicsWork(string TaskId, string Title, string State, string? AssignmentId, int Revision,
+    string? EffectiveReviewState = null, int? EffectiveGrade = null, bool CanSubmit = false);
 public record ElectronicsAssignmentStatus(string Id,string State,bool CanSubmit,bool Available,int StateVersion,ElectronicsReviewDecision? LatestReview=null);
 
 public record ElectronicsReviewRequest(string Action,string Comment,int? Grade,string? ExpectedReviewId,int? ExpectedAssignmentVersion);

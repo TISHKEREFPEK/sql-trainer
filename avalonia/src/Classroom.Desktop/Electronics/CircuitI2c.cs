@@ -2,20 +2,30 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public sealed record I2cDevice(string Id,int Address,int Columns,int Rows,bool Connected,bool Powered,string Kind="lcd",ElectronicsMotion? Motion=null);
+public sealed record I2cDevice(string Id,int Address,int Columns,int Rows,bool Connected,bool Powered,string Kind="lcd",ElectronicsMotion? Motion=null,
+    long? RtcStart=null,bool Backup=false);
 public sealed record OledFrame(string Id,int Width,int Height,bool Powered,bool Display,int Contrast,string Pixels,string Memory);
 public sealed record LcdFrame(string Id,int Columns,int Rows,int[] Cells,int[] Cgram,bool Powered,bool Display,bool Backlight,int Cursor,bool Blink,bool Underline);
 public static class CircuitI2c
 {
     public static bool IsDisplay(CircuitPart part) => part.Kind is PartKind.LcdI2c or PartKind.OledI2c;
-    public static bool IsDevice(CircuitPart part) => IsDisplay(part) || part.Kind == PartKind.Mpu6050;
-    public static string PowerPin(CircuitPart part) => part.Kind == PartKind.LcdI2c ? "VCC" : "VDD";
+    public static bool IsDevice(CircuitPart part) => IsDisplay(part) || part.Kind is PartKind.Mpu6050 or PartKind.Ds1307;
+    internal static bool HasFiveVoltPullups(CircuitPart part) => part.Kind is PartKind.LcdI2c or PartKind.Ds1307;
+    public static string PowerPin(CircuitPart part) => HasFiveVoltPullups(part) ? "VCC" : "VDD";
     public static (int Columns, int Rows) Size(CircuitPart part) => part.Kind switch
     {
         PartKind.OledI2c => (128, 64),
-        PartKind.Mpu6050 => (0, 0),
+        PartKind.Mpu6050 or PartKind.Ds1307 => (0, 0),
         _ => part.ModelId == "lcd-i2c-20x4" ? (20, 4) : (16, 2)
     };
+
+    internal static void ValidateRun(CircuitProject project)
+    {
+        var clocks = project.Parts.Where(p => p.Kind == PartKind.Ds1307).Select(p => p.Id).ToHashSet();
+        if (project.Wires.Any(w => IsSquareWave(w.From) || IsSquareWave(w.To)))
+            throw new InvalidDataException("Выход SQW DS1307 пока доступен только на схеме. Для симуляции часов отсоедините SQW.");
+        bool IsSquareWave(Terminal terminal) => terminal.Pin == "SQW" && clocks.Contains(terminal.Part);
+    }
 
     internal static I2cDevice Describe(CircuitPart part, CircuitConnections nets, CircuitResult result, Terminal ground, bool connected)
     {
@@ -29,6 +39,9 @@ public static class CircuitI2c
             return new(part.Id, address < 0 ? 0x68 : address, columns, rows, connected && address >= 0,
                 commonGround && voltage is >= 3.0 and <= 3.45, "mpu6050", CircuitMpu6050.Motion(part));
         }
+        if (part.Kind == PartKind.Ds1307)
+            return new(part.Id, 0x68, columns, rows, connected, commonGround && voltage is >= 4.5 and <= 5.5,
+                "ds1307", RtcStart: part.RtcStart ?? 0, Backup: part.Active);
         var oled = part.Kind == PartKind.OledI2c;
         return new(part.Id, (int)part.Value, columns, rows, connected,
             commonGround && voltage >= (oled ? 3.0 : 4.5) && voltage <= 5.5, oled ? "ssd1306" : "lcd");

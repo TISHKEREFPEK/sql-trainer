@@ -401,7 +401,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         if (CircuitBoards.IsBoardKind(kind) && project.Parts.Any(CircuitBoards.IsBoard)) throw new InvalidDataException("Пока доступна одна исполняемая плата на схеме.");
         Checkpoint(); var id = Guid.NewGuid().ToString("N");
         var center=viewport.ToWorld(new(viewport.Bounds.Width/2,viewport.Bounds.Height/2));
-        var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null,Setting:kind==PartKind.Dht11?4.0/7:0.5,Active:kind==PartKind.Hcsr04);
+        var part = new CircuitPart(id, kind, PartArtwork.Coordinate(center.X-70+project.Parts.Count%3*20), PartArtwork.Coordinate(center.Y-70+project.Parts.Count%3*20), definition.Value, ModelId: definition.Id, CustomPins: kind == PartKind.Visual ? definition.Pins ?? [] : null,Setting:kind==PartKind.Dht11?4.0/7:0.5,Active:kind is PartKind.Hcsr04 or PartKind.Ds1307);
         var trial = CircuitProject.Parse(project.Serialize()); trial.Parts.Add(part); trial.Validate();
         project.Parts.Add(part);
         selected = id; selectedWire = null; Refresh(); Save("part-add");
@@ -488,6 +488,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         }
         if(CircuitI2c.IsDisplay(p))InspectI2c(p);
         if(p.Kind==PartKind.Mpu6050)InspectMpu6050(p);
+        if(p.Kind==PartKind.Ds1307)InspectDs1307(p);
         if(p.Kind==PartKind.I2cLevelShifter)properties.Children.Add(Ui.Muted(I2cLevelShifter.Wiring,12));
         if(p.Kind==PartKind.Dht11)InspectDht11(p);
         if(p.Kind==PartKind.Hcsr04)InspectHcsr04(p);
@@ -704,7 +705,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             try
             {
                 var hasUno = controller is not null;
-                if(run){CircuitSpi.ValidateRun(project);CircuitDht11.ValidateRun(project);CircuitHcsr04.ValidateRun(project);CircuitDs18b20.ValidateRun(project);}
+                if(run){CircuitI2c.ValidateRun(project);CircuitSpi.ValidateRun(project);CircuitDht11.ValidateRun(project);CircuitHcsr04.ValidateRun(project);CircuitDs18b20.ValidateRun(project);}
                 if (run && project.Parts.FirstOrDefault(p => !PartCatalog.CanSimulate(p)) is { } unsupported)
                     throw new InvalidDataException($"«{PartLibrary.Name(unsupported)}» добавлена для схемы. Её симуляция пока не реализована. Уберите такие детали или работайте в режиме схемы.");
                 if (!hasUno && !run) throw new InvalidDataException("Для проверки кода добавьте исполняемую плату на схему.");

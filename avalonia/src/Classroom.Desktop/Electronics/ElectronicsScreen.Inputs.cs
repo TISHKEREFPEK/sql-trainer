@@ -116,7 +116,7 @@ public sealed partial class ElectronicsScreen
         if (PrimaryInput(part.Kind) is { } input)
             DrawSlider(face, part, input, body, part.Kind == PartKind.Dht11 ? 64 : null);
         if (part.Kind == PartKind.Dht11) DrawSlider(face, part, humidity, body);
-        if (part.Kind is PartKind.Switch or PartKind.Hcsr04)
+        if (part.Kind is PartKind.Switch or PartKind.Hcsr04 or PartKind.Ds1307)
         {
             var isSwitch = part.Kind == PartKind.Switch;
             var label = SwitchLabel(part);
@@ -130,7 +130,7 @@ public sealed partial class ElectronicsScreen
             button.Child!.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
             AutomationProperties.SetName(button, label);
             ToolTip.SetTip(button, "ЛКМ — переключить. ПКМ — свойства.");
-            Canvas.SetLeft(button, (body.Width - button.Width) / 2);
+            Canvas.SetLeft(button, part.Kind == PartKind.Ds1307 ? body.Width - button.Width - 14 : (body.Width - button.Width) / 2);
             Canvas.SetTop(button, isSwitch ? 57 : 12);
             face.Children.Add(button);
             button.PointerPressed += (_, e) =>
@@ -256,17 +256,23 @@ public sealed partial class ElectronicsScreen
         };
     }
 
-    static string SwitchLabel(CircuitPart part) => part.Kind == PartKind.Hcsr04
-        ? part.Active ? "Цель на месте" : "Цели нет"
-        : part.Active ? "Замкнута" : "Разомкнута";
+    static string SwitchLabel(CircuitPart part) => part.Kind switch
+    {
+        PartKind.Hcsr04 => part.Active ? "Цель на месте" : "Цели нет",
+        PartKind.Ds1307 => part.Active ? "CR2032 на месте" : "Батареи нет",
+        _ => part.Active ? "Замкнута" : "Разомкнута"
+    };
 
     void ToggleInput(string id) => ChangeInput(id, p => p with { Active = !p.Active }, remember: true);
 
     void AddInspectorToggle(CircuitPart part)
     {
-        string ActionLabel(CircuitPart p) => p.Kind == PartKind.Hcsr04
-            ? p.Active ? "Убрать цель" : "Вернуть цель"
-            : p.Active ? "Разомкнуть" : "Замкнуть";
+        static string ActionLabel(CircuitPart p) => p.Kind switch
+        {
+            PartKind.Hcsr04 => p.Active ? "Убрать цель" : "Вернуть цель",
+            PartKind.Ds1307 => p.Active ? "Извлечь CR2032" : "Установить CR2032",
+            _ => p.Active ? "Разомкнуть" : "Замкнуть"
+        };
         var toggle = Ui.Button(ActionLabel(part), () => Perform(() => ToggleInput(part.Id)));
         updateInspectorInputs.Add(p => toggle.Content = ActionLabel(p));
         properties.Children.Add(toggle);

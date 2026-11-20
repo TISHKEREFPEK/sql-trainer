@@ -104,23 +104,23 @@ public static class Esp32S3Board
         int ConnectedGpio(Terminal endpoint) => gpioNets.GetValueOrDefault(nets.Root(endpoint), -1);
         return parts.Select(part =>
         {
-            var lcd = part.Kind == PartKind.LcdI2c;
+            var highSide = CircuitI2c.HasFiveVoltPullups(part);
             var supply = new Terminal(part.Id, CircuitI2c.PowerPin(part));
             var data = new Terminal(part.Id, "SDA");
             var clock = new Terminal(part.Id, "SCL");
-            var (sda, scl) = lcd ? I2cLevelShifter.DevicePins(part, nets, result, ground, shifters, supplies, gpioNets)
+            var (sda, scl) = highSide ? I2cLevelShifter.DevicePins(part, nets, result, ground, shifters, supplies, gpioNets)
                 : (ConnectedGpio(data), ConnectedGpio(clock));
             bool GoodSignal(Terminal signal) =>
                 !nets.Same(signal, ground) && !nets.Same(signal, new(board.Id, V3))
                 && !nets.Same(signal, new(board.Id, V5)) && !nets.Same(signal, supply)
                 && result.Voltages[signal] is >= 2.475 and <= 3.6;
-            var connected = sda >= 0 && scl >= 0 && sda != scl && (lcd || GoodSignal(data) && GoodSignal(clock));
+            var connected = sda >= 0 && scl >= 0 && sda != scl && (highSide || GoodSignal(data) && GoodSignal(clock));
             if (part.Kind == PartKind.Mpu6050)
                 connected &= CircuitMpu6050.SignalIsValid(part, data, nets, result, ground, supplies) &&
                     CircuitMpu6050.SignalIsValid(part, clock, nets, result, ground, supplies);
             var device = CircuitI2c.Describe(part, nets, result, ground, connected);
             return new Esp32S3I2cDevice(device.Id, device.Address, device.Columns, device.Rows, device.Connected,
-                device.Powered, device.Kind, sda, scl, device.Motion);
+                device.Powered, device.Kind, sda, scl, device.Motion, device.RtcStart, device.Backup);
         }).ToArray();
     }
 }

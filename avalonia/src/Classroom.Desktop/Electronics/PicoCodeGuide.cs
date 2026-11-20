@@ -42,6 +42,8 @@ public static class PicoCodeGuide
                 setup.Add($"{name}.clearDisplay(); {name}.setTextColor(SSD1306_WHITE); {name}.setTextSize(1); {name}.setCursor(8,8); {name}.println(\"Pico ready\"); {name}.drawRect(0,0,128,64,SSD1306_WHITE); {name}.display();");
             }else if(part.Kind==PartKind.Mpu6050){
                 notes.Add("MPU-6050: подключите питание 3,3 В. В Wire снимите SLEEP в регистре 0x6B, затем считывайте 14 байт с 0x3B.");ready=false;
+            }else if(part.Kind==PartKind.Ds1307){
+                notes.Add("DS1307: VCC 5 В, SDA/SCL через преобразователь уровней. Wire 100 кГц, адрес 0x68. Настройте скетч вручную.");ready=false;
             }else if(part.Kind is PartKind.LcdI2c or PartKind.Servo or PartKind.Motor or PartKind.Buzzer){notes.Add(PartLibrary.Name(part)+": для этой комбинации подготовьте код вручную; автоматический шаблон ещё не подключён.");ready=false;}
         }
         if(!ready)return new(string.Join('\n',notes),null);

@@ -4,10 +4,10 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3, I2cLevelShifter, Mpu6050 }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3, I2cLevelShifter, Mpu6050, Ds1307 }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
-public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int[]? DeviceMemory = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] ElectronicsMotion? Motion = null);
+public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int[]? DeviceMemory = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] ElectronicsMotion? Motion = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] long? RtcStart = null);
 public sealed record CircuitProject
 {
     public int Version { get; init; } = 1;
@@ -47,6 +47,8 @@ public sealed record CircuitProject
         {
             if (p.Motion is not null && (p.Kind != PartKind.Mpu6050 || !p.Motion.IsValid))
                 throw new InvalidDataException("Некорректные параметры MPU-6050.");
+            if (p.RtcStart is { } rtc && (p.Kind != PartKind.Ds1307 || rtc is < 0 or > ElectronicsProjectFormat.RtcStartMax))
+                throw new InvalidDataException("Начальная дата DS1307 должна быть в диапазоне 2000–2099.");
             if(p.Kind==PartKind.LcdI2c&&(p.Value!=Math.Truncate(p.Value)||!(p.Value is >=32 and <=39 or >=56 and <=63)))throw new InvalidDataException("Адрес PCF8574: 0x20–0x27 или 0x38–0x3F.");
             if(p.DeviceMemory is not null&&(p.Kind!=PartKind.Ds18b20||!CircuitDs18b20.ValidMemory(p.DeviceMemory)))throw new InvalidDataException("DS18B20: повреждена память настроек.");
             if(p.Kind==PartKind.Ds18b20&&p.Value is < -55 or >125)throw new InvalidDataException("DS18B20: температура от −55 до 125 °C.");
@@ -95,6 +97,7 @@ public static class PartLibrary
         PartKind.OledI2c => "OLED 128×64 · I2C",
         PartKind.I2cLevelShifter => I2cLevelShifter.Name,
         PartKind.Mpu6050 => CircuitMpu6050.Name,
+        PartKind.Ds1307 => "DS1307 · часы реального времени",
         PartKind.Ds18b20 => "DS18B20 · температура · 1-Wire",
         PartKind.Hcsr04 => "HC-SR04 · расстояние",
         PartKind.Dht11 => "DHT11 · температура и влажность",
@@ -113,6 +116,7 @@ public static class PartLibrary
         PartKind.OledI2c => ["VDD","GND","SCL","SDA"],
         PartKind.I2cLevelShifter => I2cLevelShifter.Pins,
         PartKind.Mpu6050 => CircuitMpu6050.Pins,
+        PartKind.Ds1307 => ["VCC", "GND", "SDA", "SCL", "SQW"],
         PartKind.Ds18b20 => ["GND","DQ","VDD"],
         PartKind.Hcsr04 => ["VCC","TRIG","ECHO","GND"],
         PartKind.Dht11 => ["VDD","DATA","NC","GND"],
@@ -165,6 +169,11 @@ public static class CircuitSolver
                 case PartKind.LcdI2c:
                     branches.Add((part,T("VCC"),T("GND"),1.0/1000,0,false));
                     branches.Add((part,T("SDA"),T("VCC"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VCC"),1.0/4700,0,false));break;
+                case PartKind.Ds1307:
+                    branches.Add((part, T("VCC"), T("GND"), 1.0 / 10_000, 0, false));
+                    branches.Add((part, T("SDA"), T("VCC"), 1.0 / 4700, 0, false));
+                    branches.Add((part, T("SCL"), T("VCC"), 1.0 / 4700, 0, false));
+                    break;
                 case PartKind.OledI2c:
                     branches.Add((part,T("VDD"),T("GND"),1.0/330,0,false));branches.Add((part,T("SDA"),T("VDD"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VDD"),1.0/4700,0,false));break;
                 case PartKind.Mpu6050:

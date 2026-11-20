@@ -20,7 +20,7 @@
 | DS18B20 Temperature Sensor | Visual, 1-Wire открыт |
 | MPU6050 Accelerometer + Gyroscope | [Регистровая модель I²C](mpu6050-2026-11-20.md) с шестью интерактивными осями и температурой. INT, FIFO/DMP, вспомогательная шина и точная графика открыты. |
 | OLED 128x64 I2C Monochrome Display VDD-GND | Есть SSD1306/GFX и native/teacher scenarios; полные режимы/графика ещё не приняты |
-| DS1307 RTC | Visual; внутренние часы Pico эту внешнюю деталь не заменяют |
+| DS1307 RTC | [Отдельная I²C-модель](ds1307-2026-11-20.md) с календарём, RAM, начальной датой и резервной батареей. SQW и точная графика открыты. |
 | Photoresistor (LDR) Sensor | Базовый двухконтактный LDR есть; конкретный sensor module не принят |
 | PIR Motion Sensor | Visual, timing/interactive input открыты |
 | 1 Channel 5V Relay Module | Visual, driver/contact model открыта |

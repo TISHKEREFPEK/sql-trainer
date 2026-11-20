@@ -7,6 +7,7 @@ namespace Classroom.Contracts;
 public static class ElectronicsProjectFormat
 {
     public const double CoordinateLimit=1_000_000;
+    public const long RtcStartMax = 3_155_759_999;
     public static readonly string[] ReportKinds=["submitted","compiled","compile-error","started","run-error"];
     public static (string Name,int Parts,int Wires) Inspect(string json)
     {
@@ -26,7 +27,10 @@ public static class ElectronicsProjectFormat
             {
                 if(!ids.Add(Text(p.GetProperty("id"),64))) throw new InvalidDataException("Повтор компонента.");
                 var kind=Text(p.GetProperty("kind"),32);
-                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c","OledI2c","Pico","TftSpi","Dht11","Hcsr04","Ds18b20","Esp32S3","I2cLevelShifter","Mpu6050"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c","OledI2c","Pico","TftSpi","Dht11","Hcsr04","Ds18b20","Esp32S3","I2cLevelShifter","Mpu6050","Ds1307"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if (p.TryGetProperty("rtcStart", out var rtc) && rtc.ValueKind != JsonValueKind.Null &&
+                    (kind != "Ds1307" || rtc.ValueKind != JsonValueKind.Number || !rtc.TryGetInt64(out var seconds) || seconds < 0 || seconds > RtcStartMax))
+                    throw new InvalidDataException("Начальная дата DS1307 должна быть в диапазоне 2000–2099.");
                 if (p.TryGetProperty("motion", out var motion) && motion.ValueKind != JsonValueKind.Null)
                 {
                     if (kind != "Mpu6050" || motion.ValueKind != JsonValueKind.Object)

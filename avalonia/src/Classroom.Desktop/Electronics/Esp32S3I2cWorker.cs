@@ -6,7 +6,8 @@ using Classroom.Contracts;
 namespace Classroom.Desktop.Electronics;
 
 internal sealed record Esp32S3I2cDevice(string Id, int Address, int Columns, int Rows,
-    bool Connected, bool Powered, string Kind, int Sda, int Scl, ElectronicsMotion? Motion = null);
+    bool Connected, bool Powered, string Kind, int Sda, int Scl, ElectronicsMotion? Motion = null,
+    long? RtcStart = null, bool Backup = false);
 internal sealed record Esp32S3I2cRequest(int Port, uint Epoch, long TimeNs, int Sda, int Scl,
     int Frequency, int RxFree, uint[] Commands, int[] Tx);
 internal sealed record Esp32S3I2cReply(int Event, int Commands, int Tx, int[] Rx, bool Busy);

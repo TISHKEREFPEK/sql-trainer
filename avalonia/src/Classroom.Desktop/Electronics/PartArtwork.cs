@@ -36,6 +36,7 @@ public static class PartArtwork
         Add(1,"buck",32,972,316,213); Add(1,"jack",382,944,251,275); Add(1,"battery",708,913,210,320); Add(1,"slide",997,947,228,280);
         var keys = new[] { "rgb-led","toggle","dip-switch","four-digit","stepper","l298n","a4988","joystick","dht11","pir","flame","ldr-module","mpu","rtc","breadboard-power","matrix" };
         for (var i = 0; i < keys.Length; i++) Add(2, keys[i], i % 4 * 320 + 4, i / 4 * 320 + 4, 312, 312);
+        Add(2, "ds1307-rtc", 310, 979, 304, 190);
         Add(3,"led-red",115,10,145,292); Add(3,"led-green",415,10,140,292); Add(3,"led-blue",715,10,140,292); Add(3,"led-yellow",1010,8,150,292);
         Add(3,"lm35",115,302,130,298); Add(3,"ir-receiver",407,303,155,295); Add(3,"phototransistor",714,300,154,290); Add(3,"regulator",1013,298,167,302);
         Add(3,"mq2",58,602,247,303); Add(3,"soil",403,588,173,322); Add(3,"water",699,587,179,325); Add(3,"bmp",984,638,210,271);
@@ -78,6 +79,7 @@ public static class PartArtwork
         if (p.Kind == PartKind.OledI2c) return new(220,200);
         if (p.Kind == PartKind.I2cLevelShifter) return I2cLevelShifterFace.Body;
         if (p.Kind == PartKind.Mpu6050) return Mpu6050Face.Body;
+        if (p.Kind == PartKind.Ds1307) return new(224, 140);
         if (p.Kind == PartKind.Ds18b20) return new(100,140);
         if (p.Kind == PartKind.Hcsr04) return new(260,140);
         if (p.Kind == PartKind.Dht11) return new(120,160);
@@ -158,6 +160,7 @@ public static class PartArtwork
         else if(p.Kind==PartKind.OledI2c){x=43+i*44;y=8;}
         else if(p.Kind==PartKind.I2cLevelShifter){var header=I2cLevelShifterFace.Header(i);x=header.X;y=header.Y;}
         else if(p.Kind==PartKind.Mpu6050){var header=Mpu6050Face.Header(i);x=header.X;y=header.Y;}
+        else if(p.Kind==PartKind.Ds1307){x=5;y=39+i*14.6;}
         else if(p.Kind==PartKind.Ds18b20){x=25+i*25;y=132;}
         else if(p.Kind==PartKind.Hcsr04){x=102+i*20;y=134;}
         else if(p.Kind==PartKind.Dht11){x=32+i*20;y=155;}

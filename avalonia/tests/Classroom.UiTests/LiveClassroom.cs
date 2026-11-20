@@ -17,6 +17,13 @@ internal sealed class LiveClassroom : IAsyncDisposable
     public string DatabasePath => Path.Combine(directory, "classroom.sqlite");
     public PairingAnnouncement Pairing => Wire.Read<PairingAnnouncement>(File.ReadAllText(Path.Combine(directory, "pairing.json")));
 
+    internal (long PeakWorkingSetBytes, TimeSpan ProcessorTime) ProcessMetrics()
+    {
+        var running = process ?? throw new InvalidOperationException("The synthetic server is not running.");
+        running.Refresh();
+        return (running.PeakWorkingSet64, running.TotalProcessorTime);
+    }
+
     public static async Task<LiveClassroom> Start()
     {
         var fixture = new LiveClassroom();

@@ -31,6 +31,12 @@ public static class Routes
         LearningAnalytics.Map(api, state);
         ClassroomResults.Map(api, state);
         api.MapGet("/status", () => state.Read(async db => new StatusDto(!await db.Profiles.AnyAsync(p => p.Role == "teacher"), "0.1.0")));
+        api.MapGet("/teacher/diagnostics/sql-worker", (HttpContext ctx) =>
+        {
+            state.Authorize(ctx, "teacher");
+            ctx.Response.Headers.CacheControl = "no-store";
+            return worker.Diagnostics();
+        });
         api.MapPost("/setup", async (HttpContext ctx, PasswordRequest input) =>
         {
             if (!Local(ctx))

@@ -14,6 +14,7 @@ public sealed class ClassroomLoadTests(ITestOutputHelper output)
 {
     const int pupilCount = 35;
     const int schemeCount = 12;
+    const string workerRoute = "teacher/diagnostics/sql-worker";
     sealed record Pupil(string Id, string Login, ClassroomApi Api);
     sealed record SqlWork(Pupil Pupil, StudentTask Task, SqlTextJournal Journal, string Draft, string Answer);
     sealed record SchemeWork(Pupil Pupil, ElectronicsJournal Journal, string ReportId);
@@ -30,6 +31,9 @@ public sealed class ClassroomLoadTests(ITestOutputHelper output)
         try
         {
             var (lesson, taskId) = await CreateClass(fixture, pupils);
+            using var guest = new ClassroomApi(fixture.Admin.Connection);
+            Assert.Equal(401, (await Assert.ThrowsAsync<ApiException>(() => guest.Get<SqlWorkerDiagnostics>(workerRoute))).Status);
+            Assert.Equal(403, (await Assert.ThrowsAsync<ApiException>(() => fixture.Student.Get<SqlWorkerDiagnostics>(workerRoute))).Status);
             await Task.WhenAll(pupils.Select(p => Measure("student-login", () =>
                 p.Api.Login(new("student", p.Login, "synthetic-student-password")))));
             var initialMetrics = fixture.ProcessMetrics();
@@ -38,11 +42,13 @@ public sealed class ClassroomLoadTests(ITestOutputHelper output)
             var teacher = PollTeacher(fixture.Admin, lesson.Id, stop.Token);
             SqlWork[] sqlWorks;
             SchemeWork[] schemes;
+            SqlWorkerDiagnostics beforeChecks;
             try
             {
                 var opened = await Task.WhenAll(pupils.Select(p => Measure("open-sql", () => p.Api.Get<StudentTask>("tasks/database"))));
                 sqlWorks = pupils.Select((p, i) => PrepareSql(p, opened[i], i)).ToArray();
                 await Task.WhenAll(sqlWorks.Select(work => DeliverSql(work, lesson.Id)));
+                beforeChecks = await fixture.Admin.Get<SqlWorkerDiagnostics>(workerRoute);
 
                 var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var sqlChecks = sqlWorks.Select(work => Check(work, lesson.Id, start.Task)).ToArray();
@@ -68,6 +74,16 @@ public sealed class ClassroomLoadTests(ITestOutputHelper output)
             Assert.Equal(pupilCount, peakChecksOutstanding);
             Assert.Contains(measurements, sample => sample.Operation == "teacher-activity" && sample.Ok);
             Assert.All(measurements, sample => Assert.True(sample.Ok, sample.Operation));
+            var worker = await fixture.Admin.Get<SqlWorkerDiagnostics>(workerRoute);
+            output.WriteLine($"SQL worker: peak waiting={worker.PeakWaiting}, admitted={worker.Admitted}, " +
+                $"rejected={worker.Rejected}, samples={worker.WaitSamples}, p95={worker.WaitP95Milliseconds:F1} ms, max={worker.WaitMaxMilliseconds:F1} ms");
+            Assert.Equal(0, worker.Running);
+            Assert.Equal(0, worker.Waiting);
+            Assert.Equal(pupilCount, worker.Admitted - beforeChecks.Admitted);
+            Assert.Equal(beforeChecks.Rejected, worker.Rejected);
+            Assert.Equal(pupilCount, worker.WaitSamples - beforeChecks.WaitSamples);
+            Assert.InRange(worker.PeakWaiting, 1, pupilCount - 4);
+            Assert.True(worker.WaitP95Milliseconds > 0 && worker.WaitMaxMilliseconds >= worker.WaitP95Milliseconds);
             var queue = await fixture.Admin.Get<ElectronicsReviewQueue>("teacher/reviews/electronics?lessonId=" + lesson.Id);
             Assert.Equal(schemeCount, queue.PendingCount);
             Assert.Equal(schemeCount, queue.Items.Select(item => item.StudentId).Distinct().Count());
@@ -90,6 +106,7 @@ public sealed class ClassroomLoadTests(ITestOutputHelper output)
 
             await fixture.Restart();
             await fixture.Admin.Login(new("teacher", "", "synthetic-teacher-password"));
+            Assert.Equal(new(0, 0, 0, 0, 0, 0, null, null), await fixture.Admin.Get<SqlWorkerDiagnostics>(workerRoute));
             var savedLesson = (await fixture.Admin.Get<LessonDashboard>("teacher/lessons")).Current!;
             Assert.Equal(lesson.Id, savedLesson.Id);
             Assert.False(savedLesson.Activated);

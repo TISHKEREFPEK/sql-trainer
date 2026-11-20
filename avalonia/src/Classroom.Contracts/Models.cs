@@ -10,6 +10,8 @@ public static class Wire
 
 public record ApiError(string Error);
 public record StatusDto(bool NeedsSetup, string Version);
+public record SqlWorkerDiagnostics(int Running, int Waiting, int PeakWaiting, long Admitted, long Rejected,
+    int WaitSamples, double? WaitP95Milliseconds, double? WaitMaxMilliseconds);
 public record LoginRequest(string Role, string Login, string Password);
 public record LoginDto(string Token, string Role, string Id, ThemePreference Theme, ThemePreset[] ThemePresets, LessonDestination? Destination = null, string? LessonId = null);
 public record PasswordRequest(string Password);

@@ -33,15 +33,18 @@ public static class CircuitPico
         var supplies = I2cLevelShifter.SupplyNets(project, nets);
         return project.Parts.Where(CircuitI2c.IsDevice).Select(device=>{
             var data=new Terminal(device.Id,"SDA");var clock=new Terminal(device.Id,"SCL");
-            var oled=device.Kind==PartKind.OledI2c;
-            var (sda, scl) = oled
+            var lcd=device.Kind==PartKind.LcdI2c;
+            var (sda, scl) = !lcd
                 ? (gpioNets.GetValueOrDefault(nets.Root(data), -1), gpioNets.GetValueOrDefault(nets.Root(clock), -1))
-                : I2cLevelShifter.LcdPins(device, nets, result, grounds, shifters, supplies, gpioNets);
-            var connected = sda >= 0 && scl >= 0 && sda != scl && (!oled ||
+                : I2cLevelShifter.DevicePins(device, nets, result, grounds, shifters, supplies, gpioNets);
+            var connected = sda >= 0 && scl >= 0 && sda != scl && (lcd ||
                 !new[]{PicoBoard.Ground,PicoBoard.V3,PicoBoard.Vbus,PicoBoard.Vsys}.Any(pin=>nets.Same(data,new(board.Id,pin))||nets.Same(clock,new(board.Id,pin))));
-            var voltage=result.Voltages.GetValueOrDefault(new(device.Id,CircuitI2c.PowerPin(device)))-result.Voltages.GetValueOrDefault(new(device.Id,"GND"));
-            var size=CircuitI2c.Size(device);
-            return new PicoI2cDevice(device.Id,(int)device.Value,size.Columns,size.Rows,connected,nets.Same(new(device.Id,"GND"),grounds)&&voltage>=(oled?3.0:4.5)&&voltage<=5.5,oled?"ssd1306":"lcd",connected?sda%4/2:0,connected?sda:4,connected?scl:5);
+            if (device.Kind == PartKind.Mpu6050)
+                connected &= CircuitMpu6050.SignalIsValid(device, data, nets, result, grounds, supplies) &&
+                    CircuitMpu6050.SignalIsValid(device, clock, nets, result, grounds, supplies);
+            var config = CircuitI2c.Describe(device, nets, result, grounds, connected);
+            return new PicoI2cDevice(config.Id, config.Address, config.Columns, config.Rows, config.Connected, config.Powered,
+                config.Kind, connected?sda%4/2:0,connected?sda:4,connected?scl:5,config.Motion);
         }).ToArray();
     }
     public static (bool?[] Digital,double[] Analog) Inputs(CircuitProject project,CircuitResult result,PicoI2cDevice[] devices,IReadOnlyList<SpiDisplayDevice>? spiDevices=null,IReadOnlyList<Dht11Device>? dht11Devices=null,IReadOnlyList<Hcsr04Device>? hcsr04Devices=null,IReadOnlyList<Ds18b20Device>? ds18b20Devices=null)

@@ -87,35 +87,35 @@ public static class Esp32S3Board
         return voltages;
     }
 
-    internal static Esp32S3I2cDevice[] DisplayDevices(CircuitProject project, CircuitPart board, CircuitResult result)
+    internal static Esp32S3I2cDevice[] I2cDevices(CircuitProject project, CircuitPart board, CircuitResult result)
     {
-        var panels = project.Parts.Where(CircuitI2c.IsDevice).ToArray();
-        if (panels.Length == 0) return [];
+        var parts = project.Parts.Where(CircuitI2c.IsDevice).ToArray();
+        if (parts.Length == 0) return [];
         var nets = new CircuitConnections(project);
         var gpioNets = I2cLevelShifter.GpioNets(nets, board, GpioCount, Gpio);
         var shifters = project.Parts.Where(p => p.Kind == PartKind.I2cLevelShifter).ToArray();
         var supplies = I2cLevelShifter.SupplyNets(project, nets);
         var ground = new Terminal(board.Id, Ground);
         int ConnectedGpio(Terminal endpoint) => gpioNets.GetValueOrDefault(nets.Root(endpoint), -1);
-        return panels.Select(panel =>
+        return parts.Select(part =>
         {
-            var oled = panel.Kind == PartKind.OledI2c;
-            var supply = new Terminal(panel.Id, CircuitI2c.PowerPin(panel));
-            var low = new Terminal(panel.Id, "GND");
-            var data = new Terminal(panel.Id, "SDA");
-            var clock = new Terminal(panel.Id, "SCL");
-            var (sda, scl) = oled ? (ConnectedGpio(data), ConnectedGpio(clock))
-                : I2cLevelShifter.LcdPins(panel, nets, result, ground, shifters, supplies, gpioNets);
-            var voltage = result.Voltages[supply] - result.Voltages[low];
-            var powered = nets.Same(ground, low) && voltage >= (oled ? 3.0 : 4.5) && voltage <= 5.5;
+            var lcd = part.Kind == PartKind.LcdI2c;
+            var supply = new Terminal(part.Id, CircuitI2c.PowerPin(part));
+            var data = new Terminal(part.Id, "SDA");
+            var clock = new Terminal(part.Id, "SCL");
+            var (sda, scl) = lcd ? I2cLevelShifter.DevicePins(part, nets, result, ground, shifters, supplies, gpioNets)
+                : (ConnectedGpio(data), ConnectedGpio(clock));
             bool GoodSignal(Terminal signal) =>
                 !nets.Same(signal, ground) && !nets.Same(signal, new(board.Id, V3))
                 && !nets.Same(signal, new(board.Id, V5)) && !nets.Same(signal, supply)
                 && result.Voltages[signal] is >= 2.475 and <= 3.6;
-            var connected = sda >= 0 && scl >= 0 && sda != scl && (!oled || GoodSignal(data) && GoodSignal(clock));
-            var (columns, rows) = CircuitI2c.Size(panel);
-            return new Esp32S3I2cDevice(panel.Id, (int)panel.Value, columns, rows, connected, powered,
-                oled ? "ssd1306" : "lcd", sda, scl);
+            var connected = sda >= 0 && scl >= 0 && sda != scl && (lcd || GoodSignal(data) && GoodSignal(clock));
+            if (part.Kind == PartKind.Mpu6050)
+                connected &= CircuitMpu6050.SignalIsValid(part, data, nets, result, ground, supplies) &&
+                    CircuitMpu6050.SignalIsValid(part, clock, nets, result, ground, supplies);
+            var device = CircuitI2c.Describe(part, nets, result, ground, connected);
+            return new Esp32S3I2cDevice(device.Id, device.Address, device.Columns, device.Rows, device.Connected,
+                device.Powered, device.Kind, sda, scl, device.Motion);
         }).ToArray();
     }
 }

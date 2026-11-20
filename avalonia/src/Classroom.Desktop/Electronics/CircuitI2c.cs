@@ -1,37 +1,65 @@
+using Classroom.Contracts;
+
 namespace Classroom.Desktop.Electronics;
 
-public sealed record I2cDevice(string Id,int Address,int Columns,int Rows,bool Connected,bool Powered,string Kind="lcd");
+public sealed record I2cDevice(string Id,int Address,int Columns,int Rows,bool Connected,bool Powered,string Kind="lcd",ElectronicsMotion? Motion=null);
 public sealed record OledFrame(string Id,int Width,int Height,bool Powered,bool Display,int Contrast,string Pixels,string Memory);
 public sealed record LcdFrame(string Id,int Columns,int Rows,int[] Cells,int[] Cgram,bool Powered,bool Display,bool Backlight,int Cursor,bool Blink,bool Underline);
 public static class CircuitI2c
 {
-    public static bool IsDevice(CircuitPart part)=>part.Kind is PartKind.LcdI2c or PartKind.OledI2c;
-    public static string PowerPin(CircuitPart part)=>part.Kind==PartKind.OledI2c?"VDD":"VCC";
-    public static (int Columns,int Rows) Size(CircuitPart part)=>part.Kind==PartKind.OledI2c?(128,64):part.ModelId=="lcd-i2c-20x4"?(20,4):(16,2);
-    // Only wires and breadboard strips establish protocol connectivity. A
-    // resistor/source does not make two data nets the same physical bus.
-    public static I2cDevice[] Devices(CircuitProject project,CircuitResult? result=null)
+    public static bool IsDisplay(CircuitPart part) => part.Kind is PartKind.LcdI2c or PartKind.OledI2c;
+    public static bool IsDevice(CircuitPart part) => IsDisplay(part) || part.Kind == PartKind.Mpu6050;
+    public static string PowerPin(CircuitPart part) => part.Kind == PartKind.LcdI2c ? "VCC" : "VDD";
+    public static (int Columns, int Rows) Size(CircuitPart part) => part.Kind switch
     {
-        if(!project.Parts.Any(IsDevice))return [];
-        var controller=project.Parts.FirstOrDefault(p=>AvrBoards.For(p) is not null);if(controller is null)return [];
-        var parents=project.Parts.SelectMany(p=>PartLibrary.Pins(p).Select(pin=>new Terminal(p.Id,pin))).ToDictionary(t=>t,t=>t);
-        Terminal Root(Terminal t){while(parents[t]!=t)t=parents[t];return t;}
-        void Join(Terminal a,Terminal b)=>parents[Root(a)]=Root(b);
-        foreach(var w in project.Wires)Join(w.From,w.To);
-        foreach(var board in project.Parts.Where(p=>p.Kind==PartKind.Breadboard))
+        PartKind.OledI2c => (128, 64),
+        PartKind.Mpu6050 => (0, 0),
+        _ => part.ModelId == "lcd-i2c-20x4" ? (20, 4) : (16, 2)
+    };
+
+    internal static I2cDevice Describe(CircuitPart part, CircuitConnections nets, CircuitResult result, Terminal ground, bool connected)
+    {
+        var returnPin = new Terminal(part.Id, "GND");
+        var voltage = result.Voltages[new(part.Id, PowerPin(part))] - result.Voltages[returnPin];
+        var (columns, rows) = Size(part);
+        var commonGround = nets.Same(returnPin, ground);
+        if (part.Kind == PartKind.Mpu6050)
         {
-            for(var row=1;row<=30;row++)foreach(var group in new[]{"abcde","fghij"})foreach(var c in group.Skip(1))Join(new(board.Id,group[0]+row.ToString(System.Globalization.CultureInfo.InvariantCulture)),new(board.Id,c+row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-            foreach(var rail in new[]{"L+","L−","R+","R−"})for(var row=2;row<=25;row++)Join(new(board.Id,rail+"1"),new(board.Id,rail+row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            var address = CircuitMpu6050.Address(part, result);
+            return new(part.Id, address < 0 ? 0x68 : address, columns, rows, connected && address >= 0,
+                commonGround && voltage is >= 3.0 and <= 3.45, "mpu6050", CircuitMpu6050.Motion(part));
         }
-        var ground=new Terminal(controller.Id,"GND");foreach(var p in project.Parts.Where(p=>p.Kind==PartKind.Ground))Join(ground,new(p.Id,"GND"));
-        result??=CircuitSolver.Solve(project);
-        var sda=Root(new(controller.Id,controller.Kind==PartKind.Mega?"D20":"A4"));var scl=Root(new(controller.Id,controller.Kind==PartKind.Mega?"D21":"A5"));
-        return project.Parts.Where(IsDevice).Select(p=>
+        var oled = part.Kind == PartKind.OledI2c;
+        return new(part.Id, (int)part.Value, columns, rows, connected,
+            commonGround && voltage >= (oled ? 3.0 : 4.5) && voltage <= 5.5, oled ? "ssd1306" : "lcd");
+    }
+
+    public static I2cDevice[] Devices(CircuitProject project, CircuitResult? result = null)
+    {
+        if (!project.Parts.Any(IsDevice)) return [];
+        var controller = project.Parts.FirstOrDefault(p => AvrBoards.For(p) is not null);
+        if (controller is null) return [];
+        var nets = new CircuitConnections(project);
+        result ??= CircuitSolver.Solve(project);
+        var ground = new Terminal(controller.Id, "GND");
+        var sda = nets.Root(new(controller.Id, controller.Kind == PartKind.Mega ? "D20" : "A4"));
+        var scl = nets.Root(new(controller.Id, controller.Kind == PartKind.Mega ? "D21" : "A5"));
+        var shifters = project.Parts.Where(p => p.Kind == PartKind.I2cLevelShifter).ToArray();
+        var supplies = I2cLevelShifter.SupplyNets(project, nets);
+        return project.Parts.Where(IsDevice).Select(part =>
         {
-            var size=Size(p);var gnd=new Terminal(p.Id,"GND");var vcc=new Terminal(p.Id,PowerPin(p));var oled=p.Kind==PartKind.OledI2c;
-            var voltage=result.Voltages.GetValueOrDefault(vcc)-result.Voltages.GetValueOrDefault(gnd);
-            return new I2cDevice(p.Id,(int)p.Value,size.Columns,size.Rows,sda!=scl&&Root(new(p.Id,"SDA"))==sda&&Root(new(p.Id,"SCL"))==scl&&result.Voltages.GetValueOrDefault(new(p.Id,"SDA"))>voltage*.7&&result.Voltages.GetValueOrDefault(new(p.Id,"SCL"))>voltage*.7,
-                Root(gnd)==Root(ground)&&voltage>=(oled?3.0:4.5)&&voltage<=5.5,oled?"ssd1306":"lcd");
+            var data = new Terminal(part.Id, "SDA");
+            var clock = new Terminal(part.Id, "SCL");
+            var voltage = result.Voltages[new(part.Id, PowerPin(part))] - result.Voltages[new(part.Id, "GND")];
+            var connected = sda != scl && nets.Root(data) == sda && nets.Root(clock) == scl &&
+                result.Voltages[data] > voltage * 0.7 && result.Voltages[clock] > voltage * 0.7;
+            if (part.Kind == PartKind.Mpu6050 && sda != scl)
+            {
+                var controllerPins = new Dictionary<Terminal, int> { [sda] = 0, [scl] = 1 };
+                connected = I2cLevelShifter.DevicePins(part, nets, result, ground, shifters, supplies, controllerPins,
+                    deviceOnHighSide: false) == (0, 1);
+            }
+            return Describe(part, nets, result, ground, connected);
         }).ToArray();
     }
 }

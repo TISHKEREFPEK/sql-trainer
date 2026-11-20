@@ -112,6 +112,7 @@ public sealed partial class ElectronicsScreen
 
     void DrawPartInputs(Canvas face, CircuitPart part, Size body)
     {
+        if (part.Kind == PartKind.Mpu6050) DrawMpu6050Inputs(face, part, body);
         if (PrimaryInput(part.Kind) is { } input)
             DrawSlider(face, part, input, body, part.Kind == PartKind.Dht11 ? 64 : null);
         if (part.Kind == PartKind.Dht11) DrawSlider(face, part, humidity, body);
@@ -147,12 +148,13 @@ public sealed partial class ElectronicsScreen
         IsHitTestVisible = false, TextTrimming = TextTrimming.CharacterEllipsis
     };
 
-    void DrawSlider(Canvas face, CircuitPart part, InputRange range, Size body, double? top = null)
+    void DrawSlider(Canvas face, CircuitPart part, InputRange range, Size body, double? top = null,
+        double? left = null, double? sliderWidth = null)
     {
         const double margin = 10;
         const double height = 29;
-        var width = body.Width - 16;
-        var x = (body.Width - width) / 2;
+        var width = sliderWidth ?? body.Width - 16;
+        var x = left ?? (body.Width - width) / 2;
         var y = top ?? body.Height - 54;
         var track = new Rect(x + margin, y, width - margin * 2, height);
         var value = range.Read(part);

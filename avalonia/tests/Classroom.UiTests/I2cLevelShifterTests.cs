@@ -53,7 +53,7 @@ public sealed class I2cLevelShifterTests
         Assert.Equal(snapshot, CircuitProject.Parse(snapshot).Serialize());
         var board = project.Parts[0];
         var idle = CircuitSolver.Solve(project);
-        var lcd = Assert.Single(Esp32S3Board.DisplayDevices(project, board, idle));
+        var lcd = Assert.Single(Esp32S3Board.I2cDevices(project, board, idle));
         Assert.True(lcd.Powered && lcd.Connected);
         Assert.Equal((8, 9), (lcd.Sda, lcd.Scl));
         Assert.Equal(3.3, idle.Voltages[new("adapter", "LV1")], 4);
@@ -70,7 +70,7 @@ public sealed class I2cLevelShifterTests
         var high = CircuitSolver.Solve(project);
         Assert.InRange(high.Voltages[new("adapter", "LV1")], 0, 0.2);
         Assert.Equal(3.3, high.Voltages[new("adapter", "LV2")], 4);
-        Assert.False(Assert.Single(Esp32S3Board.DisplayDevices(project, board, high)).Connected);
+        Assert.False(Assert.Single(Esp32S3Board.I2cDevices(project, board, high)).Connected);
     }
 
     [Theory]
@@ -88,7 +88,7 @@ public sealed class I2cLevelShifterTests
             var result = CircuitSolver.Solve(project);
             var state = pico
                 ? CircuitPico.Devices(project, result).Select(d => (d.Powered, d.Connected))
-                : Esp32S3Board.DisplayDevices(project, project.Parts[0], result).Select(d => (d.Powered, d.Connected));
+                : Esp32S3Board.I2cDevices(project, project.Parts[0], result).Select(d => (d.Powered, d.Connected));
             Assert.Equal((true, false), Assert.Single(state));
         }
     }
@@ -112,7 +112,7 @@ public sealed class I2cLevelShifterTests
         }
         else
         {
-            Assert.False(Assert.Single(Esp32S3Board.DisplayDevices(project, board, result)).Connected);
+            Assert.False(Assert.Single(Esp32S3Board.I2cDevices(project, board, result)).Connected);
             Assert.Throws<InvalidDataException>(() => Esp32S3Board.Inputs(board, result, [8], null));
         }
     }

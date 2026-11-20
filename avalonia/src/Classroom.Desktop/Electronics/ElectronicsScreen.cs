@@ -486,7 +486,8 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
             })));
             properties.Children.Add(new Expander{Header=$"Контакты · {PartLibrary.Pins(p).Length}",Content=pinFields,HorizontalAlignment=HorizontalAlignment.Stretch});
         }
-        if(CircuitI2c.IsDevice(p))InspectI2c(p);
+        if(CircuitI2c.IsDisplay(p))InspectI2c(p);
+        if(p.Kind==PartKind.Mpu6050)InspectMpu6050(p);
         if(p.Kind==PartKind.I2cLevelShifter)properties.Children.Add(Ui.Muted(I2cLevelShifter.Wiring,12));
         if(p.Kind==PartKind.Dht11)InspectDht11(p);
         if(p.Kind==PartKind.Hcsr04)InspectHcsr04(p);
@@ -618,7 +619,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
                 ToolTip.SetTip(button, pin + (result?.Voltages.TryGetValue(new(p.Id, pin), out var v) == true ? $" · {v:F2} В" : ""));
                 Avalonia.Automation.AutomationProperties.SetName(button, PartLibrary.Name(p) + ": " + pin);
                 Canvas.SetLeft(button, (point.X - p.X) * zoom - diameter / 2); Canvas.SetTop(button, (point.Y - p.Y) * zoom - diameter / 2); group.Children.Add(button);
-                if (!hole&&p.Kind is not (PartKind.TftSpi or PartKind.Dht11 or PartKind.Hcsr04 or PartKind.Ds18b20 or PartKind.Esp32S3 or PartKind.I2cLevelShifter))
+                if (!hole&&p.Kind is not (PartKind.TftSpi or PartKind.Dht11 or PartKind.Hcsr04 or PartKind.Ds18b20 or PartKind.Esp32S3 or PartKind.I2cLevelShifter or PartKind.Mpu6050))
                 {
                     var pico = (p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && PartLibrary.Pins(p).Length == 40;
                     var left = point.X - p.X < size.Width / 2;

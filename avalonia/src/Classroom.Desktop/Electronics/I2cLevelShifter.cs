@@ -4,7 +4,7 @@ internal static class I2cLevelShifter
 {
     public const string ModelId = "i2c-level-shifter";
     public const string Name = "Преобразователь уровней I2C · 3,3 / 5 В";
-    public const string Wiring = "LV — 3,3 В, HV — 5 В, GND — общая земля. GPIO к LV1/LV2, SDA/SCL дисплея к соответствующим HV1/HV2.";
+    public const string Wiring = "LV — 3,3 В, HV — 5 В, GND — общая земля. Линии подключаются через пары LV1 ↔ HV1 и LV2 ↔ HV2.";
     public static readonly string[] Pins = ["LV", "GND", "LV1", "LV2", "HV", "HV1", "HV2"];
     public static readonly (string Low, string High)[] Channels = [("LV1", "HV1"), ("LV2", "HV2")];
 
@@ -35,31 +35,35 @@ internal static class I2cLevelShifter
             voltage(high) - voltage(gnd) is >= 4.5 and <= 5.5;
     }
 
-    public static (int Sda, int Scl) LcdPins(
-        CircuitPart lcd, CircuitConnections nets, CircuitResult result, Terminal ground,
-        IEnumerable<CircuitPart> shifters, IReadOnlySet<Terminal> supplies, IReadOnlyDictionary<Terminal, int> gpioNets)
+    public static (int Sda, int Scl) DevicePins(
+        CircuitPart device, CircuitConnections nets, CircuitResult result, Terminal ground,
+        IEnumerable<CircuitPart> shifters, IReadOnlySet<Terminal> supplies, IReadOnlyDictionary<Terminal, int> gpioNets,
+        bool deviceOnHighSide = true)
     {
-        var supply = new Terminal(lcd.Id, "VCC");
-        var data = nets.Root(new(lcd.Id, "SDA"));
-        var clock = nets.Root(new(lcd.Id, "SCL"));
+        var supply = new Terminal(device.Id, CircuitI2c.PowerPin(device));
+        var data = nets.Root(new(device.Id, "SDA"));
+        var clock = nets.Root(new(device.Id, "SCL"));
         double Voltage(Terminal pin) => result.Voltages[pin];
-        bool HighSignal(Terminal pin) => !nets.Same(pin, ground) && !nets.Same(pin, supply) &&
-            !supplies.Contains(pin) && !gpioNets.ContainsKey(pin) &&
-            Voltage(pin) >= Voltage(supply) * 0.7 && Voltage(pin) <= 5.5;
+        bool DeviceSignal(Terminal pin) => !nets.Same(pin, ground) && !nets.Same(pin, supply) &&
+            !supplies.Contains(pin) && !gpioNets.ContainsKey(pin) && (deviceOnHighSide
+                ? Voltage(pin) >= Voltage(supply) * 0.7 && Voltage(pin) <= 5.5
+                : Voltage(pin) is >= 2.475 and <= 3.6);
 
-        if (data == clock || !HighSignal(data) || !HighSignal(clock)) return (-1, -1);
+        if (data == clock || !DeviceSignal(data) || !DeviceSignal(clock)) return (-1, -1);
 
         (int Sda, int Scl) pins = (-1, -1);
         foreach (var shifter in shifters)
         {
             if (!IsPowered(shifter, nets, ground, supplies, Voltage)) continue;
-            int Gpio(Terminal highNet)
+            int Gpio(Terminal deviceNet)
             {
-                var channel = Channels.Where(pair => nets.Same(highNet, new(shifter.Id, pair.High))).ToArray();
+                var channel = Channels.Where(pair => nets.Same(deviceNet,
+                    new(shifter.Id, deviceOnHighSide ? pair.High : pair.Low))).ToArray();
                 if (channel.Length != 1) return -1;
-                var low = nets.Root(new(shifter.Id, channel[0].Low));
-                return !supplies.Contains(low) && Voltage(low) is >= 2.475 and <= 3.6
-                    ? gpioNets.GetValueOrDefault(low, -1) : -1;
+                var pin = nets.Root(new(shifter.Id, deviceOnHighSide ? channel[0].Low : channel[0].High));
+                return !supplies.Contains(pin) && (deviceOnHighSide
+                    ? Voltage(pin) is >= 2.475 and <= 3.6 : Voltage(pin) is >= 3.5 and <= 5.5)
+                    ? gpioNets.GetValueOrDefault(pin, -1) : -1;
             }
             var sda = Gpio(data);
             var scl = Gpio(clock);

@@ -59,7 +59,7 @@ public static class Esp32S3GpioRunner
                         // QEMU exposes the real pad interface, even on a blank board.
                         await session.Probe(startup.Token);
                         if (displayBus && !await session.ProbeExtension("classroom_i2c_version", "I2C", startup.Token))
-                            throw new IOException("Для дисплеев обновите комплект ESP32-S3 до версии с поддержкой I2C.");
+                            throw new IOException("Для деталей I²C нужен обновлённый комплект ESP32-S3 с поддержкой этой шины.");
                     }
                     await simulate(session, lifetime);
                 }, cancellation);

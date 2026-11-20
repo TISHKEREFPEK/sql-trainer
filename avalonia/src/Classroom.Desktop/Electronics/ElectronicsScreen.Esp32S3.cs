@@ -6,7 +6,7 @@ public sealed partial class ElectronicsScreen
 {
     Task? s3Execution;
     Esp32S3GpioSession? s3Session;
-    Esp32S3I2cWorker? s3Displays;
+    Esp32S3I2cWorker? s3I2c;
     int[] s3WiredPins = [];
 
     async Task StartEsp32S3(CircuitPart board, Esp32S3SketchImage image, string runtimePath, long generation, CancellationToken cancellation)
@@ -19,13 +19,13 @@ public sealed partial class ElectronicsScreen
         var circuit = CircuitSolver.Solve(project);
         var initial = Esp32S3Board.Inputs(board, circuit, wired, null);
         var initialAnalog = Esp32S3Board.AnalogInputs(board, circuit, wired);
-        if (project.Parts.Any(CircuitI2c.IsDevice)) s3Displays = new Esp32S3I2cWorker();
+        if (project.Parts.Any(CircuitI2c.IsDevice)) s3I2c = new Esp32S3I2cWorker();
         var execution = Esp32S3GpioRunner.Run(image, runtimePath, async (session, lifetime) =>
         {
             await session.ExchangePads(initial, lifetime);
             connected.TrySetResult(session);
             await Task.Delay(Timeout.InfiniteTimeSpan, lifetime);
-        }, cancellation, initialAnalog, displayBus: s3Displays is not null);
+        }, cancellation, initialAnalog, displayBus: s3I2c is not null);
 
         s3Execution = execution;
         await Task.WhenAny(connected.Task, execution).WaitAsync(cancellation);
@@ -47,8 +47,8 @@ public sealed partial class ElectronicsScreen
         var inputs = Esp32S3Board.Inputs(board, before, s3WiredPins, outputs);
         var analog = session.SupportsAnalog ? Esp32S3Board.AnalogInputs(board, before, s3WiredPins) : null;
         var pins = Esp32S3Board.Drives(await session.ExchangePads(inputs, cancellation, analog));
-        var i2c = s3Displays is { } worker
-            ? await session.ExchangeI2c(worker, Esp32S3Board.DisplayDevices(project, board, before), cancellation)
+        var i2c = s3I2c is { } worker
+            ? await session.ExchangeI2c(worker, Esp32S3Board.I2cDevices(project, board, before), cancellation)
             : null;
         var frame = session.SupportsSerial ? await session.ExchangeSerial(serial, cancellation) : null;
         return (pins, frame, i2c);
@@ -60,8 +60,8 @@ public sealed partial class ElectronicsScreen
         s3Execution = null;
         s3Session = null;
         s3WiredPins = [];
-        s3Displays?.Dispose();
-        s3Displays = null;
+        s3I2c?.Dispose();
+        s3I2c = null;
         if (execution is null) return false;
         // A normal stop cancels the job. Observe faults even if this screen is
         // closed before another tick can see the end of the process.

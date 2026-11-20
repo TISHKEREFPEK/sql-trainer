@@ -9,7 +9,7 @@ public static class CircuitCodeGuide
     {
         if(project.Parts.Any(p=>p.Kind==PartKind.Pico))return PicoCodeGuide.Build(project);
         if (project.Parts.Any(p => p.Kind == PartKind.Esp32S3))
-            return new("ESP32-S3: используйте номера GPIO. Поддерживаются pinMode, digitalRead, digitalWrite и прерывания GPIO. В обновлённом комплекте analogRead читает GPIO1–20. Для потенциометра подключите крайние контакты к 3,3 В и земле, а средний к одному из этих входов.", null);
+            return new("ESP32-S3: используйте номера GPIO. Поддерживаются pinMode, digitalRead, digitalWrite и прерывания GPIO. В обновлённом комплекте analogRead читает GPIO1–20. Для потенциометра подключите крайние контакты к 3,3 В и земле, а средний к аналоговому входу. Для дисплеев и MPU-6050 задайте подключённые GPIO в Wire.begin(SDA, SCL, частота).", null);
         var notes = new List<string> { "setup() — начальная настройка; loop() — повторяющиеся действия. Код меняется только по вашей команде." };
         var unsupported = project.Parts.Where(p => !PartCatalog.CanSimulate(p)).ToArray();
         if (unsupported.Length > 0) notes.Add("Только для схемы: " + string.Join(", ", unsupported.Select(PartLibrary.Name).Distinct()) + ". Автонастройка и исполнение для этих моделей пока недоступны.");
@@ -93,6 +93,10 @@ public static class CircuitCodeGuide
                     foreach(var pin in new[]{data,clock}){if(used.TryGetValue(pin,out var usage)&&usage!="Шина I2C"){notes.Add($"Вывод {pin} занят: {usage}.");ready=false;}used[pin]="Шина I2C";}
                     i2c=true;setup.Add($"lcdBegin(0x{device.Address:X2});");setup.Add($"lcdText(0x{device.Address:X2}, \"LCD ready\");");break;
                 }
+                case PartKind.Mpu6050:
+                    notes.Add("MPU-6050: подключите питание 3,3 В и преобразователь уровней. В Wire снимите SLEEP в регистре 0x6B, затем считывайте 14 байт с 0x3B.");
+                    ready=false;
+                    break;
                 case PartKind.Led:
                 {
                     notes.Add(PartLibrary.Name(part)+": pinMode(..., OUTPUT), digitalWrite(..., HIGH/LOW). Резистор остаётся частью схемы.");

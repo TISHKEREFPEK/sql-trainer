@@ -18,7 +18,7 @@
 | A4988 Stepper Motor Driver Carrier | Visual, step/current/driver модель открыта |
 | DHT11 Humidity and Temperature Sensor | [Отдельный four-pin Dht11](dht11-2026-11-11.md): GPIO-протокол, питание/показания, native и закреплённые библиотеки; приёмка/аналоговая точность/точная графика открыты |
 | DS18B20 Temperature Sensor | Visual, 1-Wire открыт |
-| MPU6050 Accelerometer + Gyroscope | Visual, I2C/registers/controls открыты |
+| MPU6050 Accelerometer + Gyroscope | [Регистровая модель I²C](mpu6050-2026-11-20.md) с шестью интерактивными осями и температурой. INT, FIFO/DMP, вспомогательная шина и точная графика открыты. |
 | OLED 128x64 I2C Monochrome Display VDD-GND | Есть SSD1306/GFX и native/teacher scenarios; полные режимы/графика ещё не приняты |
 | DS1307 RTC | Visual; внутренние часы Pico эту внешнюю деталь не заменяют |
 | Photoresistor (LDR) Sensor | Базовый двухконтактный LDR есть; конкретный sensor module не принят |

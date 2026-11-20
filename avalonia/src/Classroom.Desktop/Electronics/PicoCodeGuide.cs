@@ -40,6 +40,8 @@ public static class PicoCodeGuide
                 var bus=d.Controller==0?"Wire":"Wire1";var name="oled"+globals.Count;oled=true;globals.Add($"Adafruit_SSD1306 {name}(128,64,&{bus},-1);");
                 setup.Add($"if (!{name}.begin(SSD1306_SWITCHCAPVCC,0x{d.Address:X2})) {{ Serial.println(\"OLED: allocation failed\"); return; }}");
                 setup.Add($"{name}.clearDisplay(); {name}.setTextColor(SSD1306_WHITE); {name}.setTextSize(1); {name}.setCursor(8,8); {name}.println(\"Pico ready\"); {name}.drawRect(0,0,128,64,SSD1306_WHITE); {name}.display();");
+            }else if(part.Kind==PartKind.Mpu6050){
+                notes.Add("MPU-6050: подключите питание 3,3 В. В Wire снимите SLEEP в регистре 0x6B, затем считывайте 14 байт с 0x3B.");ready=false;
             }else if(part.Kind is PartKind.LcdI2c or PartKind.Servo or PartKind.Motor or PartKind.Buzzer){notes.Add(PartLibrary.Name(part)+": для этой комбинации подготовьте код вручную; автоматический шаблон ещё не подключён.");ready=false;}
         }
         if(!ready)return new(string.Join('\n',notes),null);

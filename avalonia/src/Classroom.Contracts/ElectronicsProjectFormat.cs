@@ -27,7 +27,13 @@ public static class ElectronicsProjectFormat
             {
                 if(!ids.Add(Text(p.GetProperty("id"),64))) throw new InvalidDataException("Повтор компонента.");
                 var kind=Text(p.GetProperty("kind"),32);
-                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c","OledI2c","Pico","TftSpi","Dht11","Hcsr04","Ds18b20","Esp32S3","I2cLevelShifter","Mpu6050","Ds1307"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if(!new[]{"Uno","Resistor","Led","Switch","Battery","Ground","Potentiometer","AnalogSensor","Breadboard","Diode","Motor","Buzzer","Servo","Pot3","Visual","Mega","LcdI2c","OledI2c","Pico","TftSpi","Dht11","Hcsr04","Ds18b20","Esp32S3","I2cLevelShifter","Mpu6050","Ds1307","Joystick"}.Contains(kind)) throw new InvalidDataException("Неизвестный тип компонента.");
+                if (p.TryGetProperty("joystick", out var joystick) && joystick.ValueKind != JsonValueKind.Null)
+                {
+                    if (kind != "Joystick" || joystick.ValueKind != JsonValueKind.Object ||
+                        !new ElectronicsJoystick(joystick.GetProperty("x").GetDouble(), joystick.GetProperty("y").GetDouble()).IsValid)
+                        throw new InvalidDataException("Координаты джойстика должны быть от 0 до 1.");
+                }
                 if (p.TryGetProperty("rtcStart", out var rtc) && rtc.ValueKind != JsonValueKind.Null &&
                     (kind != "Ds1307" || rtc.ValueKind != JsonValueKind.Number || !rtc.TryGetInt64(out var seconds) || seconds < 0 || seconds > RtcStartMax))
                     throw new InvalidDataException("Начальная дата DS1307 должна быть в диапазоне 2000–2099.");

@@ -36,12 +36,12 @@ public sealed partial class ElectronicsScreen
     static readonly IBrush inputThumb = Brush.Parse("#9AD3FF");
     static readonly Cursor inputCursor = new(StandardCursorType.Hand);
 
-    sealed class InputDrag(string partId, InputRange range, Rect track, IPointer pointer)
+    sealed class InputDrag(string partId, IPointer pointer, Func<CircuitPart, Point, CircuitPart> move, Func<CircuitPart, CircuitPart>? release)
     {
         public string PartId { get; } = partId;
-        public InputRange Range { get; } = range;
-        public Rect Track { get; } = track;
         public IPointer Pointer { get; } = pointer;
+        public Func<CircuitPart, Point, CircuitPart> Move { get; } = move;
+        public Func<CircuitPart, CircuitPart>? Release { get; } = release;
         public string GestureId { get; } = Guid.NewGuid().ToString("N");
         public bool Changed { get; set; }
     }
@@ -113,6 +113,7 @@ public sealed partial class ElectronicsScreen
     void DrawPartInputs(Canvas face, CircuitPart part, Size body)
     {
         if (part.Kind == PartKind.Mpu6050) DrawMpu6050Inputs(face, part, body);
+        if (part.Kind == PartKind.Joystick) DrawJoystickInputs(face, part, body);
         if (PrimaryInput(part.Kind) is { } input)
             DrawSlider(face, part, input, body, part.Kind == PartKind.Dht11 ? 64 : null);
         if (part.Kind == PartKind.Dht11) DrawSlider(face, part, humidity, body);
@@ -182,11 +183,21 @@ public sealed partial class ElectronicsScreen
         Canvas.SetLeft(control, x);
         Canvas.SetTop(control, y);
         face.Children.Add(control);
+        BindInput(control, part.Id, (current, local) =>
+        {
+            var fraction = Math.Clamp((local.X - track.X) / track.Width, 0, 1);
+            var value = range.Minimum + fraction * (range.Maximum - range.Minimum);
+            return range.Write(current, Quantize(range, value));
+        });
+    }
+
+    void BindInput(Control control, string partId, Func<CircuitPart, Point, CircuitPart> move, Func<CircuitPart, CircuitPart>? release = null)
+    {
         control.PointerPressed += (_, e) =>
         {
             if (e.GetCurrentPoint(control).Properties.PointerUpdateKind != PointerUpdateKind.LeftButtonPressed || inputDrag is not null) return;
             e.Handled = true;
-            inputDrag = new(part.Id, range, track, e.Pointer);
+            inputDrag = new(partId, e.Pointer, move, release);
             // The canvas survives repainting during both dragging and firmware ticks.
             e.Pointer.Capture(canvas);
             MoveInput(e.GetPosition(canvas));
@@ -199,9 +210,7 @@ public sealed partial class ElectronicsScreen
         _ = Perform(() => ChangeInput(drag.PartId, part =>
         {
             var local = (at - new Vector(part.X * zoom, part.Y * zoom)).Transform(PartArtwork.TransformMatrix(part, zoom).Invert());
-            var fraction = Math.Clamp((local.X - drag.Track.X) / drag.Track.Width, 0, 1);
-            var value = drag.Range.Minimum + fraction * (drag.Range.Maximum - drag.Range.Minimum);
-            return drag.Range.Write(part, Quantize(drag.Range, value));
+            return drag.Move(part, local);
         }, drag));
     }
 
@@ -210,21 +219,22 @@ public sealed partial class ElectronicsScreen
         if (inputDrag is not { } drag) return;
         inputDrag = null;
         if (drag.Pointer.Captured == canvas) drag.Pointer.Capture(null);
+        if (drag.Release is { } release) _ = Perform(() => ChangeInput(drag.PartId, release, drag, finishing: true));
         if (drag.Changed) _ = Perform(() => Save("control-change", gestureId: drag.GestureId));
     }
 
     static double Quantize(InputRange range, double value) =>
         Math.Clamp(Math.Round(value / range.Step) * range.Step, range.Minimum, range.Maximum);
 
-    void ChangeInput(string id, Func<CircuitPart, CircuitPart> update, InputDrag? drag = null, bool remember = false)
+    void ChangeInput(string id, Func<CircuitPart, CircuitPart> update, InputDrag? drag = null, bool remember = false, bool finishing = false)
     {
-        if (disposed || !IsEffectivelyEnabled) return;
+        if (disposed || (!finishing && !IsEffectivelyEnabled)) return;
         var index = project.Parts.FindIndex(p => p.Id == id);
         if (index < 0) return;
         var before = project.Parts[index];
         var after = update(before);
         if (after == before) return;
-        if (remember || drag is { Changed: false }) CaptureUndo();
+        if (remember || drag is { Changed: false, Release: null }) CaptureUndo();
         if (drag is not null) drag.Changed = true;
         project.Parts[index] = after;
         RecordHistory("control-change", gestureId: drag?.GestureId);

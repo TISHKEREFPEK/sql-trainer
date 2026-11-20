@@ -4,10 +4,10 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3, I2cLevelShifter, Mpu6050, Ds1307 }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3, I2cLevelShifter, Mpu6050, Ds1307, Joystick }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
-public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int[]? DeviceMemory = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] ElectronicsMotion? Motion = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] long? RtcStart = null);
+public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int[]? DeviceMemory = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] ElectronicsMotion? Motion = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] long? RtcStart = null, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] ElectronicsJoystick? Joystick = null);
 public sealed record CircuitProject
 {
     public int Version { get; init; } = 1;
@@ -49,6 +49,8 @@ public sealed record CircuitProject
                 throw new InvalidDataException("Некорректные параметры MPU-6050.");
             if (p.RtcStart is { } rtc && (p.Kind != PartKind.Ds1307 || rtc is < 0 or > ElectronicsProjectFormat.RtcStartMax))
                 throw new InvalidDataException("Начальная дата DS1307 должна быть в диапазоне 2000–2099.");
+            if (p.Joystick is not null && (p.Kind != PartKind.Joystick || !p.Joystick.IsValid))
+                throw new InvalidDataException("Координаты джойстика должны быть от 0 до 1.");
             if(p.Kind==PartKind.LcdI2c&&(p.Value!=Math.Truncate(p.Value)||!(p.Value is >=32 and <=39 or >=56 and <=63)))throw new InvalidDataException("Адрес PCF8574: 0x20–0x27 или 0x38–0x3F.");
             if(p.DeviceMemory is not null&&(p.Kind!=PartKind.Ds18b20||!CircuitDs18b20.ValidMemory(p.DeviceMemory)))throw new InvalidDataException("DS18B20: повреждена память настроек.");
             if(p.Kind==PartKind.Ds18b20&&p.Value is < -55 or >125)throw new InvalidDataException("DS18B20: температура от −55 до 125 °C.");
@@ -98,6 +100,7 @@ public static class PartLibrary
         PartKind.I2cLevelShifter => I2cLevelShifter.Name,
         PartKind.Mpu6050 => CircuitMpu6050.Name,
         PartKind.Ds1307 => "DS1307 · часы реального времени",
+        PartKind.Joystick => "Аналоговый джойстик",
         PartKind.Ds18b20 => "DS18B20 · температура · 1-Wire",
         PartKind.Hcsr04 => "HC-SR04 · расстояние",
         PartKind.Dht11 => "DHT11 · температура и влажность",
@@ -117,6 +120,7 @@ public static class PartLibrary
         PartKind.I2cLevelShifter => I2cLevelShifter.Pins,
         PartKind.Mpu6050 => CircuitMpu6050.Pins,
         PartKind.Ds1307 => ["VCC", "GND", "SDA", "SCL", "SQW"],
+        PartKind.Joystick => ["GND", "VCC", "VRX", "VRY", "SW"],
         PartKind.Ds18b20 => ["GND","DQ","VDD"],
         PartKind.Hcsr04 => ["VCC","TRIG","ECHO","GND"],
         PartKind.Dht11 => ["VDD","DATA","NC","GND"],
@@ -164,6 +168,12 @@ public static class CircuitSolver
                 case PartKind.Pot3:
                     branches.Add((part, T("1"), T("W"), 1 / Math.Max(1, part.Value * part.Setting), 0, false));
                     branches.Add((part, T("W"), T("3"), 1 / Math.Max(1, part.Value * (1 - part.Setting)), 0, false)); break;
+                case PartKind.Joystick:
+                    var joystick = part.Joystick ?? ElectronicsJoystick.Center;
+                    AddJoystickAxis("VRX", joystick.X);
+                    AddJoystickAxis("VRY", joystick.Y);
+                    if (part.Active) branches.Add((part, T("SW"), T("GND"), 100, 0, false));
+                    break;
                 case PartKind.Motor: case PartKind.Buzzer: branches.Add((part, T("+"), T("−"), 1 / part.Value, 0, false)); break;
                 case PartKind.Servo: branches.Add((part, T("VCC"), T("GND"), 1.0 / 200, 0, false)); break;
                 case PartKind.LcdI2c:
@@ -222,6 +232,11 @@ public static class CircuitSolver
                             branches.Add((part, T(pin), T(ground), 1.0 / 50000, 0, false));
                     }
                     break;
+            }
+            void AddJoystickAxis(string pin, double position)
+            {
+                branches.Add((part, T("VCC"), T(pin), 1 / Math.Max(1, 10_000 * (1 - position)), 0, false));
+                branches.Add((part, T(pin), T("GND"), 1 / Math.Max(1, 10_000 * position), 0, false));
             }
         }
         // Unconnected GPIO/visual terminals have zero potential in this model;
@@ -306,6 +321,9 @@ public static class CircuitSolver
             if (readings.TryGetValue(servo.Id, out var reading) && reading.Voltage > 3.5 && pulse is >= 500 and <= 2500)
                 readings[servo.Id] = reading with { Indicator = Math.Clamp((pulse.Value - 500) * 180 / 2000, 0, 180) };
         }
+        foreach (var stick in project.Parts.Where(p => p.Kind == PartKind.Joystick))
+            readings[stick.Id] = new(V(new(stick.Id, "VCC"), volts) - V(new(stick.Id, "GND"), volts),
+                branches.Where(b => b.Part.Id == stick.Id && b.A.Pin == "VCC").Sum(b => (V(b.A, volts) - V(b.B, volts)) * b.G), false);
         if (grounds.Length == 0 && project.Parts.Count > 0) warnings.Add("Нет опорной земли. Добавьте источник питания, Arduino или землю.");
         var solved = new CircuitResult(pins.ToDictionary(p => p, p => V(p, volts)), readings, warnings.ToArray());
         if (reference is null || !project.Parts.Any(p => p.Kind == PartKind.Esp32S3)) return solved;

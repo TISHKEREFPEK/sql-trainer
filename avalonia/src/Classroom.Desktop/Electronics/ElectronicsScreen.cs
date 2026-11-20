@@ -489,6 +489,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
         if(CircuitI2c.IsDisplay(p))InspectI2c(p);
         if(p.Kind==PartKind.Mpu6050)InspectMpu6050(p);
         if(p.Kind==PartKind.Ds1307)InspectDs1307(p);
+        if(p.Kind==PartKind.Joystick)InspectJoystick(p);
         if(p.Kind==PartKind.I2cLevelShifter)properties.Children.Add(Ui.Muted(I2cLevelShifter.Wiring,12));
         if(p.Kind==PartKind.Dht11)InspectDht11(p);
         if(p.Kind==PartKind.Hcsr04)InspectHcsr04(p);
@@ -811,6 +812,7 @@ public sealed partial class ElectronicsScreen : UserControl, IDisposable
     public void Suspend() { EndInput(); SampleActivity(false,true); Stop(); Save(); }
     void Stop()
     {
+        if (inputDrag?.Release is not null) EndInput();
         if (running) { status.Text = "Симуляция остановлена."; _ = Perform(()=>RecordHistory("simulation-stop",true)); }
         runId++; running = false; timer.Stop(); compilation?.Cancel(); compilation?.Dispose(); compilation = null; firmware.Dispose();picoFirmware.Dispose();picoUsbReady=false; outputs = null;
         if (StopEsp32S3() && !disposed) { result = CircuitSolver.Solve(project); Draw(); }

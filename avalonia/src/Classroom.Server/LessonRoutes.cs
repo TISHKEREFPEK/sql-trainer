@@ -85,6 +85,12 @@ public static class LessonRoutes
 
     public static void Map(RouteGroupBuilder api, ServerState state)
     {
+        api.MapGet("/teacher/lessons/{id}/activity", (HttpContext ctx, string id) =>
+        {
+            state.Authorize(ctx, "teacher");
+            var lessonId = Id(id);
+            return state.Read(db => LessonActivityFeed.Read(db, lessonId));
+        });
         api.MapGet("/teacher/lessons", (HttpContext ctx, int? offset) =>
         {
             state.Authorize(ctx, "teacher"); var start = offset ?? 0;

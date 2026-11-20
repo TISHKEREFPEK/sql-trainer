@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Classroom.Contracts;
 
 namespace Classroom.Desktop;
 
@@ -72,7 +73,7 @@ public sealed partial class TeacherScreen
             "M4,2 H14 V16 H4 Z M7,6 H11 M7,10 L9,12 L13,8",
             () => owner.Safe(OpenReviewQueue), out _);
         var content = (Grid)button.Content!;
-        content.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        content.ColumnDefinitions.Add(new(GridLength.Auto));
         var badge = new Border
         {
             Child = reviewCount,
@@ -118,10 +119,10 @@ public sealed partial class TeacherScreen
         standButton.Classes.Set("active", Presentation.Content is Electronics.ElectronicsScreen);
     }
 
-    Task OpenLessonResults(Classroom.Contracts.LessonView lesson)
+    Task OpenLessonResults(LessonView lesson, LessonActivityItem? item)
     {
         ShowSection(Section.Results);
-        return SelectResultPage(0, () => learning.OpenLesson(lesson));
+        return SelectResultPage(0, () => learning.OpenLesson(lesson, item));
     }
 
     async Task SelectResultPage(int index, Func<Task>? open = null)

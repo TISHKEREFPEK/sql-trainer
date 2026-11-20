@@ -7,6 +7,9 @@ public record LessonView(string Id, string? GroupId, string GroupName, string St
     long? StartedAt, long? PausedAt, long? EndedAt, bool AllowSql, bool AllowElectronics,
     bool AdmissionOpen, bool OpenToAllGroups, bool RegistrationOpen, bool FreePractice, bool Activated, int Participants);
 public record LessonDashboard(LessonView? Current, LessonView[] History, bool HasMore, int NextOffset);
+public record LessonActivity(string LessonId, LessonActivityItem[] Items);
+public record LessonActivityItem(string StudentId, string StudentName, string GroupName, string Subject,
+    string TaskId, string? WorkScope, string Title, string Action, long At);
 public record AdmissionDto(string? LessonId, string State, string Message, bool AdmissionOpen,
     bool RegistrationOpen, GroupDto? RegistrationGroup, GroupDto[] Groups);
 public record StudentChoice(string Id, string Name);

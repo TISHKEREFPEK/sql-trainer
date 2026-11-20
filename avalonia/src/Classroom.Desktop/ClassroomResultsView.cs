@@ -20,6 +20,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     readonly Dictionary<string, Vector> positions = new();
     ResultsOverview? data; LessonDashboard? lessons; readonly List<LessonView> older = new();
     LessonView? linkedLesson;
+    LessonActivityItem? linkedActivity;
     string mode = "lesson"; string? lessonId, group, studentId, subject; bool allStudents, initialized, loading, refreshPending, disposed;
     ResultsWork? selectedWork; ResultsSqlDetail? sqlDetail;
     ElectronicsReviewQueue? submissions;
@@ -56,13 +57,23 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
             lessons=await api.Get<LessonDashboard>("teacher/lessons"); if(older.Count==0)older.AddRange(lessons.History);
             var result=await api.Get<ResultsOverview>("teacher/results"+Query());
             if(disposed||stamp!=generation)return;data=result;
+            if (linkedActivity is { } item)
+            {
+                linkedActivity = null;
+                if (data.Students.Any(student => student.Id == item.StudentId))
+                {
+                    studentId = item.StudentId;
+                    selectedWork = data.Works.SingleOrDefault(work => work.StudentId == item.StudentId &&
+                        work.Subject == item.Subject && work.TaskId == item.TaskId && work.WorkScope == item.WorkScope);
+                }
+            }
             if(studentId is not null&&data.Students.All(p=>p.Id!=studentId)){studentId=null;selectedWork=null;}
             if(selectedWork is { } previous){selectedWork=data.Works.SingleOrDefault(w=>w.StudentId==previous.StudentId&&w.Subject==previous.Subject&&w.TaskId==previous.TaskId&&w.LessonId==previous.LessonId&&w.WorkScope==previous.WorkScope);sqlDetail=null;submissions=null;electronicsDetail=null;}
             Render();if(selectedWork is not null)await LoadWork();
         }
         finally{loading=false;if(refreshPending&&!disposed){refreshPending=false;await Refresh(true);}}
     }
-    internal Task OpenLesson(LessonView lesson)
+    internal Task OpenLesson(LessonView lesson, LessonActivityItem? item = null)
     {
         initialized = true;
         linkedLesson = lesson;
@@ -70,6 +81,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         {
             mode = "lesson";
             lessonId = lesson.Id;
+            linkedActivity = item;
             group = subject = null;
             allStudents = false;
             data = null;
@@ -78,7 +90,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         });
     }
     void Navigate(Action change) { positions[Location]=scroll.Offset;generation++;change();Render(); }
-    async Task ChangeFilter(Action change) { positions[Location]=scroll.Offset;generation++;change();studentId=null;selectedWork=null;scroll.Offset=positions.GetValueOrDefault(Location);await Refresh(); }
+    async Task ChangeFilter(Action change) { positions[Location]=scroll.Offset;generation++;linkedActivity=null;change();studentId=null;selectedWork=null;scroll.Offset=positions.GetValueOrDefault(Location);await Refresh(); }
     static DataGrid Table(IEnumerable<Row> rows, params (string Caption,string Property)[] columns)
     {
         var table=new DataGrid{ItemsSource=rows.ToArray(),IsReadOnly=true,AutoGenerateColumns=false,MinHeight=150,MaxHeight=390,HorizontalAlignment=HorizontalAlignment.Stretch};

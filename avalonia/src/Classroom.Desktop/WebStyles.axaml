@@ -16,6 +16,10 @@
     <Setter Property="CornerRadius" Value="14"/>
     <Setter Property="Padding" Value="16"/>
   </Style>
+  <Style Selector="Button.lesson-activity-row">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
   <Style Selector="Button.classroom-nav">
     <Setter Property="Background" Value="Transparent"/>
     <Setter Property="BorderThickness" Value="0"/>

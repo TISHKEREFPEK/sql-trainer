@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Classroom.Client;
 using Classroom.Contracts;
 
@@ -27,6 +28,7 @@ public sealed class LessonControl : UserControl
     readonly TextBlock issuedWorks = Ui.Muted("Задания ещё не выданы.");
     readonly StackPanel facts;
     readonly ScrollViewer lessonDetails;
+    readonly LessonActivityPanel activity;
     readonly Expander settings;
     readonly Expander work;
     readonly StackPanel history = Ui.Stack();
@@ -36,7 +38,7 @@ public sealed class LessonControl : UserControl
     readonly Button results;
     readonly LessonTaskPicker taskPicker;
     readonly LessonElectronicsPicker electronicsPicker;
-    readonly Func<LessonView, Task> openHistoryResults;
+    readonly Func<LessonView, LessonActivityItem?, Task> openHistoryResults;
     string draftId = Guid.NewGuid().ToString("N");
     LessonView? current;
     LessonView? shownLesson;
@@ -47,7 +49,7 @@ public sealed class LessonControl : UserControl
     int refreshVersion;
     GroupDto[] knownGroups = [];
 
-    public LessonControl(MainWindow owner, ClassroomApi api, Func<Task> connection, Func<LessonView, Task> openResults)
+    public LessonControl(MainWindow owner, ClassroomApi api, Func<Task> connection, Func<LessonView, LessonActivityItem?, Task> openResults)
     {
         this.owner = owner; this.api = api;
         taskPicker = new(owner, api);
@@ -74,7 +76,7 @@ public sealed class LessonControl : UserControl
             if (current is not null) current = await api.Put<LessonView>($"teacher/lessons/{current.Id}/policy", Policy());
         }), () => !busy && current is not null);
         results = GraphiteUi.Action("Результаты занятия",
-            () => current is { } lesson ? owner.Safe(() => openResults(lesson)) : Task.CompletedTask,
+            () => current is { } lesson ? owner.Safe(() => openResults(lesson, null)) : Task.CompletedTask,
             () => current?.StartedAt is not null);
         var connectionButton = GraphiteUi.Action("Подключить учеников", connection, () => true);
 
@@ -98,7 +100,9 @@ public sealed class LessonControl : UserControl
         var previous = Section("История занятий", history);
         var overview = Ui.Stack(Ui.Text("Занятие", 26),
             GraphiteUi.Panel(Ui.Stack(Ui.Stack(status, context), facts, operations)));
-        lessonDetails = Ui.Scroll(Ui.Stack(work, settings, previous));
+        activity = new(item => current is { StartedAt: not null } lesson
+            ? owner.Safe(() => openResults(lesson, item)) : Task.CompletedTask);
+        lessonDetails = Ui.Scroll(Ui.Stack(activity, work, settings, previous));
         var layout = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 12 };
         layout.Children.Add(overview);
         Grid.SetRow(lessonDetails, 1);
@@ -192,6 +196,7 @@ public sealed class LessonControl : UserControl
         }
         if (lessonChanged || before?.StartedAt is null && current?.StartedAt is not null)
         {
+            activity.SwitchLesson(current?.StartedAt is not null);
             settings.IsExpanded = current?.StartedAt is null;
             work.IsExpanded = false;
             lessonDetails.Offset = default;
@@ -204,6 +209,21 @@ public sealed class LessonControl : UserControl
         UpdateSummary();
         await taskPicker.Refresh(current?.Id, availableTasks);
         if (request == refreshVersion) await electronicsPicker.Refresh(current?.Id);
+        if (request == refreshVersion && current is { StartedAt: not null } started && this.GetVisualRoot() is not null)
+            await RefreshActivity(started.Id, request);
+    }
+
+    async Task RefreshActivity(string id, int request)
+    {
+        try
+        {
+            var feed = await api.Get<LessonActivity>($"teacher/lessons/{id}/activity");
+            if (request == refreshVersion && feed.LessonId == current?.Id) activity.Show(feed);
+        }
+        catch (Exception e) when (e is ApiException or HttpRequestException or TaskCanceledException)
+        {
+            if (request == refreshVersion) activity.ShowError();
+        }
     }
 
     void BindPolicy(LessonPolicyRequest desired)
@@ -271,7 +291,7 @@ public sealed class LessonControl : UserControl
         foreach (var lesson in lessons)
         {
             var date = Ui.Time(lesson.StartedAt ?? lesson.CreatedAt);
-            var button = GraphiteUi.Action("Результаты", () => owner.Safe(() => openHistoryResults(lesson)), () => true);
+            var button = GraphiteUi.Action("Результаты", () => owner.Safe(() => openHistoryResults(lesson, null)), () => true);
             AutomationProperties.SetName(button, $"Результаты занятия {lesson.GroupName}, {date}");
             history.Children.Add(GraphiteUi.WorkRow(lesson.GroupName, $"{date} · вошли: {lesson.Participants}", button));
         }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using Classroom.Contracts;
 using Classroom.Domain;
 using Classroom.Storage;
@@ -7,6 +8,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Classroom.Server;
 public static class Routes
 {
+    static readonly string appVersion = typeof(Routes).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+', 2)[0];
     static bool Local(HttpContext context) => context.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip);
     static ProfileEntity Profile(ClassroomDb db, string id) => db.Profiles.Find(id) ?? throw new HttpFault(404, "Профиль не найден.");
     public static void Map(WebApplication app, ServerState state, string dataDir, WorkerRunner worker)
@@ -30,7 +33,7 @@ public static class Routes
         });
         LearningAnalytics.Map(api, state);
         ClassroomResults.Map(api, state);
-        api.MapGet("/status", () => state.Read(async db => new StatusDto(!await db.Profiles.AnyAsync(p => p.Role == "teacher"), "0.1.0")));
+        api.MapGet("/status", () => state.Read(async db => new StatusDto(!await db.Profiles.AnyAsync(p => p.Role == "teacher"), appVersion)));
         api.MapGet("/teacher/diagnostics/sql-worker", (HttpContext ctx) =>
         {
             state.Authorize(ctx, "teacher");

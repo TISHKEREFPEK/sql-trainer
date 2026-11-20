@@ -65,6 +65,61 @@ public sealed class Esp32S3CircuitUiTests
         HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
             .Dispatch(CheckDisplays, CancellationToken.None);
 
+    [Esp32S3GpioFact]
+    public Task LcdReadsAndWritesThroughTheTranslatorAndReachesTheTeacherJournal() =>
+        HeadlessUnitTestSession.GetOrStartForAssembly(typeof(Esp32S3CircuitUiTests).Assembly)
+            .Dispatch(CheckTranslatedLcd, CancellationToken.None);
+
+    static async Task<bool> CheckTranslatedLcd()
+    {
+        await using var classroom = await LiveClassroom.Start();
+        ThemeManager.Apply(new());
+        var project = I2cLevelShifterTests.Project(pico: false);
+        var folder = Directory.CreateTempSubdirectory("classroom-s3-lcd-");
+        var path = Path.Combine(folder.FullName, "project.json");
+        File.WriteAllText(path, project.Serialize());
+        var window = new MainWindow(false, false) { Width = 1320, Height = 940 };
+        using var editor = new ElectronicsScreen(window, path, classroom.Student);
+        window.Preview(editor);
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            string Output() => string.Concat(editor.LocalHistory!.Changes
+                .Where(c => c.Kind == "serial-output" && c.SerialIo?.Port == 0).Select(c => c.SerialIo!.Text));
+            editor.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Запустить")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitFor(() => Output().Contains("READY") ||
+                editor.LocalHistory!.Changes.Any(c => c.Kind == "run-error"), TimeSpan.FromMinutes(3));
+            Assert.Contains("EMPTY=2", Output());
+            Assert.Contains("READ=4F,8F", Output());
+            Assert.Contains("READY", Output());
+            var display = Assert.Single(editor.GetVisualDescendants().OfType<LcdDisplayFace>()).Frame;
+            Assert.NotNull(display);
+            Assert.True(display.Display && display.Backlight);
+            Assert.Equal((16, 2), (display.Columns, display.Rows));
+            Assert.Equal("Hello Sql", new string(display.Cells.Take(9).Select(value => (char)value).ToArray()));
+            Assert.Contains(editor.GetVisualDescendants().OfType<I2cLevelShifterFace>(), face => face.IsEffectivelyVisible);
+            if (Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT") is { } output)
+            {
+                Directory.CreateDirectory(output);
+                using var frame = window.CaptureRenderedFrame();
+                frame!.Save(Path.Combine(output, "esp32s3-lcd-level-shifter.png"));
+            }
+            editor.Suspend();
+            var history = editor.LocalHistory!;
+            Assert.Equal(project.Serialize(), history.Replay());
+            Assert.True(await editor.Synchronize());
+            var events = await classroom.Admin.Get<ElectronicsJournalEvents>(
+                $"teacher/electronics-journal/{classroom.StudentId}/{history.StreamId}/changes");
+            var transfers = events.Events.Where(e => e.Change.I2cIo is not null).SelectMany(e => e.Change.I2cIo!).ToArray();
+            Assert.Contains(transfers, t => t is { Ack: false, Address: 38, Controller: 0, Sda: 8, Scl: 9 });
+            Assert.Contains(transfers, t => t is { Ack: true, Address: 39, Read: true, Controller: 0, Sda: 8, Scl: 9 });
+            return true;
+        }
+        finally { window.Close(); }
+    }
+
     static async Task<bool> CheckDisplays()
     {
         await using var classroom = await LiveClassroom.Start();

@@ -17,6 +17,7 @@ public sealed class LcdDisplayFace : Control
     }
     readonly CircuitPart part;
     readonly LcdFrame? frame;
+    internal LcdFrame? Frame => frame;
     public LcdDisplayFace(CircuitPart part,LcdFrame? frame=null)
     {this.part=part;this.frame=frame;var size=PartArtwork.BaseBody(part);Width=size.Width;Height=size.Height;IsHitTestVisible=false;}
     public override void Render(DrawingContext context)

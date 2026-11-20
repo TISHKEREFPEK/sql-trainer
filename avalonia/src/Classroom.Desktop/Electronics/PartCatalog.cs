@@ -24,6 +24,7 @@ public static class PartCatalog
             new("lcd-i2c-16x2", "LCD 16×2 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"16x2 I2C LCD (PCF8574)"),
             new("lcd-i2c-20x4", "LCD 20×4 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"20x4 I2C LCD (PCF8574)"),
             new("oled-ssd1306-i2c", "OLED 128×64 · SSD1306", "Индикация", PartKind.OledI2c, 60, "oled", true, ReferenceName:"OLED 128x64 I2C (SSD1306)"),
+            new(I2cLevelShifter.ModelId, I2cLevelShifter.Name, "Полупроводники", PartKind.I2cLevelShifter, 0, I2cLevelShifter.ModelId, true),
             new(CircuitDs18b20.ModelId,"DS18B20 · температура · 1-Wire","Датчики",PartKind.Ds18b20,25,"ds18b20-native",true,ReferenceName:"DS18B20 TO-92 standard-speed 1-Wire profile"),
             new(CircuitHcsr04.ModelId,"HC-SR04 · расстояние","Датчики",PartKind.Hcsr04,100,"hcsr04-native",true,ReferenceName:"HC-SR04 5V digital ranging profile"),
             new(CircuitDht11.ModelId,"DHT11 · температура и влажность","Датчики",PartKind.Dht11,25,"dht11-native",true,ReferenceName:"DHT11 four-pin single-wire profile"),

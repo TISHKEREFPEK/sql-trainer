@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Classroom.Desktop.Electronics;
 
-public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3 }
+public enum PartKind { Uno, Resistor, Led, Switch, Battery, Ground, Potentiometer, AnalogSensor, Breadboard, Diode, Motor, Buzzer, Servo, Pot3, Visual, Mega, LcdI2c, OledI2c, Pico, TftSpi, Dht11, Hcsr04, Ds18b20, Esp32S3, I2cLevelShifter }
 public record Terminal(string Part, string Pin);
 public record WireLink(string Id, Terminal From, Terminal To, string Color = "#26966C");
 public sealed record CircuitPart(string Id, PartKind Kind, double X, double Y, double Value = 0, bool Active = false, int Rotation = 0, string? ModelId = null, double Setting = 0.5, string[]? CustomPins = null, double Scale = 1, int QuarterTurns = 0, double Angle = 0, double StretchX = 1, double StretchY = 1, [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] int[]? DeviceMemory = null);
@@ -90,6 +90,7 @@ public static class PartLibrary
         PartKind.Esp32S3 => Esp32S3Board.Name,
         PartKind.LcdI2c => "LCD · I2C",
         PartKind.OledI2c => "OLED 128×64 · I2C",
+        PartKind.I2cLevelShifter => I2cLevelShifter.Name,
         PartKind.Ds18b20 => "DS18B20 · температура · 1-Wire",
         PartKind.Hcsr04 => "HC-SR04 · расстояние",
         PartKind.Dht11 => "DHT11 · температура и влажность",
@@ -106,6 +107,7 @@ public static class PartLibrary
         PartKind.Esp32S3 => Esp32S3Board.Pins,
         PartKind.LcdI2c => ["GND","VCC","SDA","SCL"],
         PartKind.OledI2c => ["VDD","GND","SCL","SDA"],
+        PartKind.I2cLevelShifter => I2cLevelShifter.Pins,
         PartKind.Ds18b20 => ["GND","DQ","VDD"],
         PartKind.Hcsr04 => ["VCC","TRIG","ECHO","GND"],
         PartKind.Dht11 => ["VDD","DATA","NC","GND"],
@@ -136,25 +138,11 @@ public static class CircuitSolver
     {
         project.Validate();
         var pins = project.Parts.SelectMany(p => PartLibrary.Pins(p).Select(pin => new Terminal(p.Id, pin))).ToArray();
-        var parents = pins.ToDictionary(p => p, p => p);
-        Terminal Root(Terminal p) { while (parents[p] != p) p = parents[p]; return p; }
-        void Join(Terminal a, Terminal b) { parents[Root(a)] = Root(b); }
-        foreach (var wire in project.Wires) Join(wire.From, wire.To);
-        foreach (var breadboard in project.Parts.Where(p => p.Kind == PartKind.Breadboard))
-        {
-            for (var row = 1; row <= 30; row++)
-            {
-                foreach (var group in new[] { "abcde", "fghij" })
-                    foreach (var c in group.Skip(1)) Join(new(breadboard.Id, group[0] + row.ToString(System.Globalization.CultureInfo.InvariantCulture)), new(breadboard.Id, c + row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-            }
-            foreach (var rail in new[] {"L+","L−","R+","R−"})
-                for (var row = 2; row <= 25; row++) Join(new(breadboard.Id, rail + "1"), new(breadboard.Id, rail + row.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        }
-        foreach (var board in project.Parts.Where(CircuitBoards.IsBoard)) CircuitBoards.JoinHeaderAliases(board, Join);
+        var nets = new CircuitConnections(project);
+        Terminal Root(Terminal pin) => nets.Root(pin);
         var grounds = project.Parts.Where(p => p.Kind==PartKind.Ground||CircuitBoards.IsBoard(p)).Select(p => new Terminal(p.Id, CircuitBoards.IsBoard(p)?CircuitBoards.Ground(p):"GND")).ToArray();
         if (grounds.Length == 0 && project.Parts.FirstOrDefault(p => p.Kind is PartKind.Battery or PartKind.AnalogSensor) is { } battery)
             grounds = [new(battery.Id, "−")];
-        foreach (var ground in grounds.Skip(1)) Join(grounds[0], ground);
         var reference = grounds.Length > 0 ? Root(grounds[0]) : pins.FirstOrDefault();
         if (reference is not null) reference = Root(reference);
         var branches = new List<(CircuitPart Part, Terminal A, Terminal B, double G, double Source, bool Diode)>();
@@ -174,6 +162,13 @@ public static class CircuitSolver
                     branches.Add((part,T("SDA"),T("VCC"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VCC"),1.0/4700,0,false));break;
                 case PartKind.OledI2c:
                     branches.Add((part,T("VDD"),T("GND"),1.0/330,0,false));branches.Add((part,T("SDA"),T("VDD"),1.0/4700,0,false));branches.Add((part,T("SCL"),T("VDD"),1.0/4700,0,false));break;
+                case PartKind.I2cLevelShifter:
+                    foreach (var (low, high) in I2cLevelShifter.Channels)
+                    {
+                        branches.Add((part, T(low), T("LV"), 1.0 / 10_000, 0, false));
+                        branches.Add((part, T(high), T("HV"), 1.0 / 10_000, 0, false));
+                    }
+                    break;
                 case PartKind.Hcsr04:
                     branches.Add((part,T("VCC"),T("GND"),1.0/333,0,false));
                     branches.Add((part,T("ECHO"),T("GND"),1.0/25,signals?.GetValueOrDefault(T("ECHO"))??0,false));break;
@@ -214,26 +209,59 @@ public static class CircuitSolver
         var nodes = branches.SelectMany(b=>new[]{Root(b.A),Root(b.B)}).Distinct().Where(p=>p!=reference).Select((p,i)=>(p,i)).ToDictionary(v=>v.p,v=>v.i);
         int Index(Terminal p) => nodes.GetValueOrDefault(Root(p), -1);
         double V(Terminal p, double[] values) => Index(p)<0?0:values[Index(p)];
-        var volts = new double[nodes.Count];
         var nonlinear = branches.Any(b => b.Diode);
-        for (var iteration = 0; iteration < 80 && nodes.Count > 0; iteration++)
+        double[] SolveNetwork()
         {
-            var matrix = new double[nodes.Count, nodes.Count + 1];
-            for (var i = 0; i < nodes.Count; i++) matrix[i, i] = 1e-10;
-            foreach (var b in branches)
+            var values = new double[nodes.Count];
+            for (var iteration = 0; iteration < 80 && nodes.Count > 0; iteration++)
             {
-                var g = b.Diode ? (V(b.A, volts) - V(b.B, volts) > b.Source ? 0.1 : 1e-10) : b.G;
-                var source = b.Diode && g < 0.01 ? 0 : b.Source;
-                var a = Index(b.A); var z = Index(b.B);
-                if (a >= 0) { matrix[a, a] += g; matrix[a, nodes.Count] += source * g; }
-                if (z >= 0) { matrix[z, z] += g; matrix[z, nodes.Count] -= source * g; }
-                if (a >= 0 && z >= 0) { matrix[a, z] -= g; matrix[z, a] -= g; }
+                var matrix = new double[nodes.Count, nodes.Count + 1];
+                for (var i = 0; i < nodes.Count; i++) matrix[i, i] = 1e-10;
+                foreach (var b in branches)
+                {
+                    var g = b.Diode ? (V(b.A, values) - V(b.B, values) > b.Source ? 0.1 : 1e-10) : b.G;
+                    var source = b.Diode && g < 0.01 ? 0 : b.Source;
+                    var a = Index(b.A); var z = Index(b.B);
+                    if (a >= 0) { matrix[a, a] += g; matrix[a, nodes.Count] += source * g; }
+                    if (z >= 0) { matrix[z, z] += g; matrix[z, nodes.Count] -= source * g; }
+                    if (a >= 0 && z >= 0) { matrix[a, z] -= g; matrix[z, a] -= g; }
+                }
+                var next = Gaussian(matrix, nodes.Count);
+                if (!nonlinear) return next;
+                var delta = 0.0;
+                for (var i = 0; i < values.Length; i++) { delta = Math.Max(delta, Math.Abs(next[i] - values[i])); values[i] = (values[i] + next[i]) / 2; }
+                if (delta < 1e-6) break;
             }
-            var next = Gaussian(matrix, nodes.Count);
-            if (!nonlinear) { volts = next; break; }
-            var delta = 0.0;
-            for (var i = 0; i < volts.Length; i++) { delta = Math.Max(delta, Math.Abs(next[i] - volts[i])); volts[i] = (volts[i] + next[i]) / 2; }
-            if (delta < 1e-6) break;
+            return values;
+        }
+        var volts = SolveNetwork();
+        var shifters = project.Parts.Where(p => p.Kind == PartKind.I2cLevelShifter).ToArray();
+        if (reference is not null && shifters.Length > 0)
+        {
+            // Released channels have independent pull-ups. A pulled-low line
+            // closes its own pass element from either side. Only open-drain use
+            // is modelled here; protocol timing belongs to the I2C controller.
+            var closed = new HashSet<Terminal>();
+            var supplies = I2cLevelShifter.SupplyNets(project, nets);
+            double Voltage(Terminal pin) => V(pin, volts);
+            int previous;
+            do
+            {
+                previous = closed.Count;
+                foreach (var part in shifters)
+                {
+                    if (!I2cLevelShifter.IsPowered(part, nets, reference, supplies, Voltage)) continue;
+                    var threshold = Voltage(new(part.Id, "LV")) * 0.3;
+                    foreach (var (low, high) in I2cLevelShifter.Channels)
+                    {
+                        var a = new Terminal(part.Id, low);
+                        var b = new Terminal(part.Id, high);
+                        if (Math.Min(Voltage(a), Voltage(b)) <= threshold && closed.Add(a))
+                            branches.Add((part, a, b, 1.0 / 15, 0, false));
+                    }
+                }
+                if (closed.Count != previous) volts = SolveNetwork();
+            } while (closed.Count != previous);
         }
         var readings = new Dictionary<string, PartReading>();
         var warnings = new HashSet<string>();
@@ -241,7 +269,7 @@ public static class CircuitSolver
         {
             var voltage = V(b.A, volts) - V(b.B, volts);
             var current = b.Diode ? Math.Max(0, (voltage - b.Source) / 10) : (voltage - b.Source) * b.G;
-            if (!CircuitBoards.IsBoard(b.Part)&&(!CircuitI2c.IsDevice(b.Part)||b.A.Pin==CircuitI2c.PowerPin(b.Part))&&(!CircuitSpi.IsDevice(b.Part)||b.A.Pin=="VCC")&&(b.Part.Kind!=PartKind.Hcsr04||b.A.Pin=="VCC")) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
+            if (!CircuitBoards.IsBoard(b.Part)&&b.Part.Kind!=PartKind.I2cLevelShifter&&(!CircuitI2c.IsDevice(b.Part)||b.A.Pin==CircuitI2c.PowerPin(b.Part))&&(!CircuitSpi.IsDevice(b.Part)||b.A.Pin=="VCC")&&(b.Part.Kind!=PartKind.Hcsr04||b.A.Pin=="VCC")) readings[b.Part.Id] = new(voltage, current, b.Part.Kind == PartKind.Led && current > 0.0001,
                 b.Part.Kind == PartKind.Motor ? Math.Clamp(Math.Abs(voltage) / 5, 0, 1) * 100 : null);
             if (b.Part.Kind == PartKind.Led && current > 0.03) warnings.Add("Ток светодиода выше 30 мА. Добавьте или увеличьте резистор.");
             if (Math.Abs(current) > 0.1 && (CircuitBoards.IsBoard(b.Part)||b.Part.Kind==PartKind.Battery)) warnings.Add("Перегрузка источника или короткое замыкание. Проверьте проводку.");

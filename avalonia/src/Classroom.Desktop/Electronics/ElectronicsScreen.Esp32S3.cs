@@ -19,7 +19,7 @@ public sealed partial class ElectronicsScreen
         var circuit = CircuitSolver.Solve(project);
         var initial = Esp32S3Board.Inputs(board, circuit, wired, null);
         var initialAnalog = Esp32S3Board.AnalogInputs(board, circuit, wired);
-        if (project.Parts.Any(p => p.Kind == PartKind.OledI2c)) s3Displays = new Esp32S3I2cWorker();
+        if (project.Parts.Any(CircuitI2c.IsDevice)) s3Displays = new Esp32S3I2cWorker();
         var execution = Esp32S3GpioRunner.Run(image, runtimePath, async (session, lifetime) =>
         {
             await session.ExchangePads(initial, lifetime);

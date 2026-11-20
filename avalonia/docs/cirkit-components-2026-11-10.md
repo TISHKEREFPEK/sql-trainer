@@ -12,7 +12,7 @@
 | Seven Segment Display | Visual, segment driver открыт |
 | 4 Digit Seven Segment Display | Visual, multiplexing открыт |
 | 16x2 LCD Display | Parallel/16-pin модель не подключена |
-| 16x2 I2C LCD Display | Есть PCF8574/HD44780 и настоящие скетчи; оставшиеся режимы/точная графика открыты |
+| 16x2 I2C LCD Display | PCF8574/HD44780 запускается с Uno/Mega, а также с ESP32-S3 и Pico через [преобразователь уровней](esp32s3-gpio-2026-11-19.md#lcd-на-5-в). Остальные режимы и точная графика открыты. |
 | ILI9341 Display | [Hardware/software GPIO SPI и native TftSpi](ili9341-spi-2026-11-10.md): отдельная 9-pin модель/проводка/RGB/шаблон; полные режимы/две панели/точный ресурс Cirkit ещё открыты |
 | Bipolar Stepper Motor (NEMA 17) | Visual, отдельная модель открыта |
 | A4988 Stepper Motor Driver Carrier | Visual, step/current/driver модель открыта |

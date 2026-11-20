@@ -62,6 +62,8 @@ public static class PartArtwork
         ? new Viewbox { Child=new TftDisplayFace(),Width=width,Height=height,Stretch=Stretch.Uniform }
         : key == Esp32S3Face.Art
         ? new Viewbox { Child = new Esp32S3Face(), Width = width, Height = height, Stretch = Stretch.Uniform }
+        : key == I2cLevelShifter.ModelId
+        ? new Viewbox { Child = new I2cLevelShifterFace(), Width = width, Height = height, Stretch = Stretch.Uniform }
         : Image(key) is { } art
         ? new Image { Source = art, Width = width, Height = height, Stretch = Stretch.Uniform }
         : new TextBlock { Text = "⏚", FontSize = 36, Width = width, Height = height, TextAlignment = TextAlignment.Center };
@@ -72,6 +74,7 @@ public static class PartArtwork
         if (p.Kind == PartKind.Mega) return new(500,270);
         if (p.Kind == PartKind.LcdI2c) return p.ModelId=="lcd-i2c-20x4"?new(360,190):new(300,150);
         if (p.Kind == PartKind.OledI2c) return new(220,200);
+        if (p.Kind == PartKind.I2cLevelShifter) return I2cLevelShifterFace.Body;
         if (p.Kind == PartKind.Ds18b20) return new(100,140);
         if (p.Kind == PartKind.Hcsr04) return new(260,140);
         if (p.Kind == PartKind.Dht11) return new(120,160);
@@ -150,6 +153,7 @@ public static class PartArtwork
         }
         else if(p.Kind==PartKind.LcdI2c){x=7;y=40+i*20;}
         else if(p.Kind==PartKind.OledI2c){x=43+i*44;y=8;}
+        else if(p.Kind==PartKind.I2cLevelShifter){var header=I2cLevelShifterFace.Header(i);x=header.X;y=header.Y;}
         else if(p.Kind==PartKind.Ds18b20){x=25+i*25;y=132;}
         else if(p.Kind==PartKind.Hcsr04){x=102+i*20;y=134;}
         else if(p.Kind==PartKind.Dht11){x=32+i*20;y=155;}
@@ -212,6 +216,7 @@ public static class PartArtwork
         if (p.Kind == PartKind.Breadboard) return prefix + FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"8\" fill=\"#fafafa\" stroke=\"#b8c0c8\"/>") + "</g>";
         if(p.Kind==PartKind.LcdI2c)return prefix+FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"6\" fill=\"#17664d\"/><rect x=\"24\" y=\"24\" width=\"{size.Width-48}\" height=\"{size.Height-58}\" fill=\"#293d48\"/>")+"</g>";
         if(p.Kind==PartKind.OledI2c)return prefix+"<rect width=\"220\" height=\"200\" rx=\"5\" fill=\"#174965\"/><rect x=\"12\" y=\"48\" width=\"196\" height=\"108\" fill=\"#010306\"/></g>";
+        if(p.Kind==PartKind.I2cLevelShifter)return prefix+I2cLevelShifterFace.Svg()+"</g>";
         if(p.Kind==PartKind.Ds18b20)return prefix+Ds18b20Face.Svg()+"</g>";
         if(p.Kind==PartKind.Hcsr04)return prefix+Hcsr04Face.Svg()+"</g>";
         if(p.Kind==PartKind.Dht11)return prefix+Dht11Face.Svg()+"</g>";

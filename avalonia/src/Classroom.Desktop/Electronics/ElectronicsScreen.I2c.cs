@@ -17,11 +17,11 @@ public sealed partial class ElectronicsScreen
         })));
         if(project.Parts.Any(p=>p.Kind==PartKind.Pico)){
             var device=CircuitPico.Devices(project,result).FirstOrDefault(d=>d.Id==part.Id);
-            properties.Children.Add(Ui.Muted(oled?"Pico: питание OLED от 3V3 и общая GND. SDA/SCL подключите к GPIO и задайте те же номера в коде.":"LCD питается от 5 В; для GPIO Pico 3,3 В требуется согласование уровней. Прямое подключение к подтяжкам 5 В не допускается.",12));
+            properties.Children.Add(Ui.Muted(oled?"Pico: питание OLED от 3V3 и общая GND. SDA/SCL подключите к GPIO и задайте те же номера в коде.":I2cLevelShifter.Wiring,12));
             if(device is not null)properties.Children.Add(Ui.Muted(!device.Powered?"Проверьте питание и общую землю.":!device.Connected?"Проверьте соединения SDA/SCL.":$"SDA — GP{device.Sda}, SCL — GP{device.Scl}.",12));
         }else if(project.Parts.FirstOrDefault(p=>p.Kind==PartKind.Esp32S3) is {} s3){
             var device=Esp32S3Board.DisplayDevices(project,s3,result??CircuitSolver.Solve(project)).SingleOrDefault(d=>d.Id==part.Id);
-            properties.Children.Add(Ui.Muted(oled?"ESP32-S3: питание OLED от 3V3 и общая GND. Задайте подключённые GPIO в Wire.begin(SDA, SCL).":"LCD с питанием 5 В требует преобразователя уровней для GPIO ESP32-S3.",12));
+            properties.Children.Add(Ui.Muted(oled?"ESP32-S3: питание OLED от 3V3 и общая GND. Задайте подключённые GPIO в Wire.begin(SDA, SCL).":I2cLevelShifter.Wiring,12));
             if(device is not null)properties.Children.Add(Ui.Muted(!device.Powered?"Проверьте питание и общую землю.":!device.Connected?"Проверьте соединения SDA/SCL.":$"SDA — GPIO{device.Sda}, SCL — GPIO{device.Scl}.",12));
         }else{
             var device=CircuitI2c.Devices(project,result).FirstOrDefault(d=>d.Id==part.Id);

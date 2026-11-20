@@ -1,4 +1,6 @@
 using Avalonia.Controls;
+using Avalonia.Automation;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
@@ -11,7 +13,7 @@ using Xunit;
 namespace Classroom.UiTests;
 public sealed class LessonRoutingTests
 {
-    static void Click(MainWindow window,string text) => window.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()==text).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    static void Click(MainWindow window,string text) => window.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()==text||Avalonia.Automation.AutomationProperties.GetName(b)==text).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     static async Task WaitFor(Func<bool> ready) { for(var i=0;i<150&&!ready();i++) await Task.Delay(50); Assert.True(ready()); }
     static async Task ShowLogin(MainWindow window,ClassroomApi api)
     {
@@ -21,7 +23,7 @@ public sealed class LessonRoutingTests
         window.Show(); window.UpdateLayout();
     }
     [AvaloniaFact]
-    public async Task TeacherSelectionSurvivesCodePageAndStudentOpensElectronicsAfterLogin()
+    public async Task TeacherWorkspaceIsIndependentAndStudentSwitchesAllowedSubjectsWithPause()
     {
         await using var fixture=await LiveClassroom.Start();
         using var anonymous=new ClassroomApi(fixture.Admin.Connection);
@@ -39,21 +41,62 @@ public sealed class LessonRoutingTests
             await WaitFor(()=>teacher.GetVisualDescendants().OfType<Button>().Any(b=>b.Content?.ToString()=="Код подключения"));
             var selector=teacher.GetVisualDescendants().OfType<ComboBox>().Single(c=>Avalonia.Automation.AutomationProperties.GetName(c)=="Стенд"); selector.SelectedIndex=1;
             await WaitFor(()=>selector.IsEnabled&&teacher.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
+            var teacherEditor = teacher.GetVisualDescendants().OfType<ElectronicsScreen>().Single();
+            Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(),button =>
+                button.IsEffectivelyVisible && AutomationProperties.GetName(button) == "Проверка схем. Ожидают: 0");
+            Click(teacher,"Оформление");
+            await WaitFor(()=>teacher.GetVisualDescendants().OfType<AppearancePage>().Any());
+            Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(),button =>
+                button.IsEffectivelyVisible && AutomationProperties.GetName(button) == "Проверка схем. Ожидают: 0");
+            Click(teacher,"Назад");
+            await WaitFor(()=>teacher.GetVisualDescendants().Any(control=>ReferenceEquals(control,teacherEditor)));
+            Click(teacher,"Занятие");
+            Assert.DoesNotContain(teacher.GetVisualDescendants(),control=>ReferenceEquals(control,teacherEditor));
+            Assert.Contains(teacher.GetVisualDescendants().OfType<Button>(),button=>button.Content?.ToString()=="Пауза для всех");
+            Click(teacher,"Редактор схем");
+            await WaitFor(()=>selector.IsEnabled && teacher.GetVisualDescendants().Any(control=>ReferenceEquals(control,teacherEditor)));
             Click(teacher,"Код подключения"); teacher.UpdateLayout();
             Assert.Equal(1,selector.SelectedIndex);
             Assert.Contains(teacher.GetVisualDescendants().OfType<TextBlock>(),t=>t.Text=="Стенд: Электроника");
             Click(teacher,"Назад к стенду"); Assert.Contains(teacher.GetVisualDescendants(),v=>v is ElectronicsScreen);
             await ShowLogin(student,fixture.Student);
-            student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.PasswordChar=='●').Text="synthetic-student-password";
-            student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.PasswordChar!='●').Text="ui-test";
-            Click(student,"Войти"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
+            student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.PasswordChar=='●'&&t.IsEffectivelyVisible).Text="synthetic-student-password";
+            student.GetVisualDescendants().OfType<ComboBox>().Single(c=>c.Items.OfType<StudentChoice>().Any()).SelectedIndex=0;
+            Click(student,"Войти"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentHomeControl>().Any());
+            await WaitFor(()=>student.GetVisualDescendants().OfType<StudentHomeControl>().Single().GetVisualDescendants().OfType<TextBlock>().Any(t=>t.Text=="Моё занятие"));
+            student.UpdateLayout();
+            var homeOutput=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??AppContext.BaseDirectory; Directory.CreateDirectory(homeOutput);
+            using(var frame=student.CaptureRenderedFrame()) frame!.Save(Path.Combine(homeOutput,"student-home-1320.png"));
+            Click(student,"SQL"); await WaitFor(()=>student.GetVisualDescendants().OfType<StudentScreen>().Any());
+            await WaitFor(()=>student.GetVisualDescendants().OfType<StudentNavigation>().Single().Entry("electronics").IsEnabled);
+            Click(student,"Электроника"); await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsProjectPicker>().Any());student.UpdateLayout();
+            student.GetVisualDescendants().OfType<TextBox>().Single(t=>t.Name=="FreeProjectName").Text="Схема маршрутизации";
+            await WaitFor(()=>student.GetVisualDescendants().OfType<Button>().Any(b=>b.Content?.ToString()=="Создать схему"&&b.IsEffectivelyEnabled));
+            Click(student,"Создать схему");await WaitFor(()=>student.GetVisualDescendants().OfType<ElectronicsScreen>().Any());
             Assert.DoesNotContain(student.GetVisualDescendants(),v=>v is StudentScreen);
-            var login=await fixture.Student.Login(new("student","ui-test","synthetic-student-password")); Assert.Equal("electronics",login.Destination!.StandId);
+            var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+            var poll=(Avalonia.Threading.DispatcherTimer)typeof(MainWindow).GetField("lessonPoll",flags)!.GetValue(student)!;
+            await WaitFor(()=>poll.IsEnabled);
+            var lesson=(await fixture.Admin.Get<LessonDashboard>("teacher/lessons")).Current!;
+            await fixture.Admin.Post<LessonView>($"teacher/lessons/{lesson.Id}/pause");
+            Assert.False((await fixture.Student.Get<StudentLessonDto>("student/lesson")).CanWork);
+            var body=(ContentControl)typeof(MainWindow).GetField("body",flags)!.GetValue(student)!;
+            await WaitFor(()=>!body.IsEnabled);
+            Assert.Contains(student.GetVisualDescendants().OfType<TextBlock>(),t=>t.Text?.Contains("Занятие на паузе") == true);
+            await fixture.Admin.Post<LessonView>($"teacher/lessons/{lesson.Id}/resume");
+            await WaitFor(()=>body.IsEnabled);
+            selector.SelectedIndex=0; await WaitFor(()=>selector.IsEnabled&&teacher.GetVisualDescendants().OfType<LessonControl>().Any());
+            teacher.UpdateLayout();
+            var output=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??AppContext.BaseDirectory; Directory.CreateDirectory(output);
+            using(var frame=teacher.CaptureRenderedFrame()) frame!.Save(Path.Combine(output,"teacher-lesson-1320.png"));
+            teacher.Width=900;teacher.UpdateLayout();
+            using(var frame=teacher.CaptureRenderedFrame()) frame!.Save(Path.Combine(output,"teacher-lesson-900.png"));
+            var login=await fixture.Student.Login(new("student","ui-test","synthetic-student-password")); Assert.Equal("sql",login.Destination!.StandId);
             await fixture.Admin.Put<LessonDestination>("teacher/lesson",new LessonDestination("sql"));
             Assert.Equal("sql",(await fixture.Student.Login(new("student","ui-test","synthetic-student-password"))).Destination!.StandId);
             student.GetVisualDescendants().OfType<ElectronicsScreen>().Single().Suspend(); Assert.Equal(2,Directory.GetFiles(Path.Combine(dir,"electronics"),"*.json").Count(path=>!path.EndsWith(".sync.json",StringComparison.Ordinal)));
         }
-        finally { teacher.Close(); student.Close(); Environment.SetEnvironmentVariable("CLASSROOM_DATA",previousData); Environment.SetEnvironmentVariable("CLASSROOM_STUDENT_DATA",previousStudent); }
+        finally { teacher.Close(); student.Close(); await WaitFor(()=>!teacher.IsVisible&&!student.IsVisible); Environment.SetEnvironmentVariable("CLASSROOM_DATA",previousData); Environment.SetEnvironmentVariable("CLASSROOM_STUDENT_DATA",previousStudent); }
     }
 }
 

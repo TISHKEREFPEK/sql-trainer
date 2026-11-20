@@ -132,7 +132,8 @@ public sealed class UiTests
         editor.Text = "SELECT 7;";
         var rejected = await Assert.ThrowsAsync<ApiException>(staleView.CheckShortcut);
         Assert.Equal(423, rejected.Status);
-        Assert.Null(staleWindow.PendingFor("database"));
+        Assert.Null(staleWindow.SqlStore(fixture.Student).Pending(fixture.Student.LessonId!, task.WorkScope, "database"));
+        Assert.Single(staleWindow.SqlStore(fixture.Student).Find(fixture.Student.LessonId!, task.WorkScope, "database")!.RejectedExecutions!);
         await fixture.Admin.Post<System.Text.Json.JsonElement>($"teacher/students/{fixture.StudentId}/unlock");
         editor.Text = definition.Solution;
         await staleView.CheckShortcut();
@@ -209,7 +210,8 @@ public sealed class UiTests
         window.UpdateLayout();
         var editor = view.GetVisualDescendants().OfType<TextEditor>().Single();
         var labels = view.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").ToArray();
-        Assert.Contains(labels, t => restricted ? t.Contains("Запрещено: Ctrl+C") && t.Contains("снимки этого окна") : t.Contains("Копирование и вставка разрешены"));
+        if(restricted)Assert.Contains(labels,t=>t.Contains("Запрещено: Ctrl+C")&&t.Contains("снимки этого окна"));
+        else{Assert.False(view.Restricted);Assert.DoesNotContain(labels,t=>t.Contains("Запрещено: Ctrl+C"));}
         editor.TextArea.Selection = Selection.Create(editor.TextArea, 0, editor.Text.Length);
         ApplicationCommands.Cut.Execute(null, editor.TextArea);
         Assert.Equal(restricted ? source.Solution : "", editor.Text);

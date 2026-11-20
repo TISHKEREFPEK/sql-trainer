@@ -272,7 +272,7 @@ public sealed class ElectronImport
 
 public static class Themes
 {
-    public static readonly string[] Names = ["light", "mist", "paper", "dark", "onyx", "midnight"];
+    public static readonly string[] Names = ["graphite", "light", "mist", "paper", "dark", "onyx", "midnight"];
     public static void Validate(ThemePreference theme)
     {
         if (!Names.Contains(theme.Preset) || theme.Colors?.Any(p => !new[] { "background", "surface", "accent", "editor" }.Contains(p.Key) || !System.Text.RegularExpressions.Regex.IsMatch(p.Value, "^#[0-9a-fA-F]{6}$")) == true)

@@ -20,18 +20,26 @@ public sealed class NotificationState : ObservableObject
     public string Status { get => status; set => SetProperty(ref status, value); }
 }
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     readonly bool teacher;
+    readonly string? studentDataRoot;
     readonly HostManager? host;
     ClassroomApi? api;
     LoginDto? login;
     IDisposable? screen;
     StudentScreen? student;
     ElectronicsScreen? electronics;
+    ElectronicsScreen? practiceElectronics;
+    readonly Dictionary<string, ElectronicsScreen> assignedElectronics = new();
+    readonly Dictionary<string, ElectronicsScreen> freeElectronics = new();
+    StudentHomeControl? studentHome;
     object? pageReturnContent;
+    ContentControl? pageTarget;
     Action? pageCleanup;
     bool pageOpen;
+    StudentReviewPage? teacherReview;
+    bool electronicsRecoveryOpen;
     readonly ContentControl body = new();
     readonly WrapPanel actions = new()
     {
@@ -40,32 +48,62 @@ public sealed class MainWindow : Window
         ItemSpacing = 10,
         LineSpacing = 8
     };
+    TeacherScreen? teacherToolbarOwner;
     readonly NotificationState state = new();
     readonly NotificationToast notification = new();
     bool quitting;
+    bool stopping;
     string? protectionWarning;
     bool reconnecting;
-    readonly Dictionary<string, string> unsavedDrafts = new();
     internal string? LastTaskId { get; set; }
     internal bool IsLessonVisible => !pageOpen && body.Content is StudentScreen;
+    readonly Dictionary<string, SqlLocalStore> sqlStores = new();
+    readonly DispatcherTimer sqlDeliveryPoll = new() { Interval = TimeSpan.FromSeconds(2) };
+    bool deliveringSql;
+    readonly DispatcherTimer electronicsDeliveryPoll = new() { Interval = TimeSpan.FromSeconds(2) };
+    ElectronicsBackgroundDelivery? electronicsDelivery;
+    readonly HashSet<string> electronicsDeliveryErrors = new();
+    string StudentDataDirectory => studentDataRoot ?? Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+    void StartElectronicsDelivery()
+    {
+        if (teacher || electronicsRecoveryOpen || api?.ProfileId is null || login?.Role != "student") return;
+        electronicsDelivery ??= new ElectronicsBackgroundDelivery(StudentDataDirectory, api, path =>
+            assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Any(editor => editor is not null && string.Equals(editor.SavePath, path, StringComparison.OrdinalIgnoreCase)));
+        electronicsDeliveryPoll.Start();
+    }
+    async Task StopElectronicsDelivery()
+    {
+        electronicsDeliveryPoll.Stop(); var previous = electronicsDelivery; electronicsDelivery = null;
+        if (previous is not null) await previous.DisposeAsync(); electronicsDeliveryErrors.Clear();
+    }
+    internal SqlLocalStore SqlStore(ClassroomApi client)
+    {
+        var id = client.ProfileId ?? throw new InvalidDataException("Сначала войдите в ученический профиль.");
+        var key = client.Connection.Fingerprint + ":" + id;
+        if (!sqlStores.TryGetValue(key, out var store))
+        {
+            var root = StudentDataDirectory;
+            store = new SqlLocalStore(root, client.Connection.Fingerprint, id); sqlStores.Add(key, store);
+        }
+        return store;
+    }
 
-    string DraftKey(string id) => $"{login?.Id}:{id}";
-    readonly Dictionary<string, PendingExecution> pendingRequests = new();
-    internal PendingExecution? PendingFor(string id) => pendingRequests.GetValueOrDefault(DraftKey(id));
-    internal void RememberPending(PendingExecution request) => pendingRequests[DraftKey(request.TaskId)] = request;
-    internal void ForgetPending(string id) => pendingRequests.Remove(DraftKey(id));
-    internal void RememberDraft(string id, string code) => unsavedDrafts[DraftKey(id)] = code;
-    internal string? UnsavedDraft(string id) => unsavedDrafts.GetValueOrDefault(DraftKey(id));
-    internal void ForgetDraft(string id) => unsavedDrafts.Remove(DraftKey(id));
     bool discardDraft;
+    DispatcherTimer? admissionPoll;
+    readonly DispatcherTimer lessonPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    bool pollingLesson;
+    Button? sqlSubjectButton, electronicsSubjectButton;
+    readonly TextBlock lessonMessage = Ui.Text("", 20);
+    readonly Border lessonBlock = new() { IsVisible = false, Padding = new Thickness(32), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     TrayIcon? tray;
     public MainWindow(bool teacher) : this(teacher, true)
     {
     }
 
-    internal MainWindow(bool teacher, bool initializeOnOpen)
+    internal MainWindow(bool teacher, bool initializeOnOpen, string? studentDataRoot = null)
     {
         this.teacher = teacher;
+        this.studentDataRoot = studentDataRoot;
         host = teacher ? new() : null;
         Title = teacher ? "SQL · Преподаватель" : "SQL · Ученик";
         if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
@@ -92,11 +130,15 @@ public sealed class MainWindow : Window
         message.Bind(TextBlock.TextProperty, new Binding(nameof(NotificationState.Status)) { Source = state });
         var root = new Grid
         {
-            RowDefinitions = new("Auto,*,Auto")
+            RowDefinitions = new("Auto,*,Auto"),ColumnDefinitions=new("0,*")
         };
         var headerBorder=new Border{Child=header,BorderThickness=new Thickness(0,0,0,1)};Ui.BindBrush(headerBorder,Border.BackgroundProperty,"Surface");Ui.BindBrush(headerBorder,Border.BorderBrushProperty,"Line");root.Children.Add(headerBorder);
+        shellRoot=root;shellHeader=headerBorder;
         Grid.SetRow(body, 1);
         root.Children.Add(body);
+        lessonBlock.Child = lessonMessage;
+        Ui.BindBrush(lessonBlock, Border.BackgroundProperty, "Surface");
+        Grid.SetRow(lessonBlock, 1); root.Children.Add(lessonBlock);
         var messageBorder = new Border
         {
             Child = message,
@@ -106,11 +148,38 @@ public sealed class MainWindow : Window
         root.Children.Add(messageBorder);
         Grid.SetRow(notification,1);
         root.Children.Add(notification);
+        foreach(var child in root.Children)Grid.SetColumn(child,1);
         Content = root;
-        Closed += (_,_) => notification.Dismiss();
+        body.PropertyChanged+=(_,change)=>{if(change.Property==ContentControl.ContentProperty)UpdateStudentNavigation();};
+        SizeChanged+=(_,_)=>UpdateStudentNavigation();
+        Closed += (_,_) => { notification.Dismiss(); admissionPoll?.Stop(); lessonPoll.Stop(); };
+        lessonPoll.Tick += async (_, _) =>
+        {
+            if (pollingLesson || teacher || api is null || login is null) return;
+            pollingLesson = true;
+            try { await Safe(RefreshLessonPermission); }
+            finally { pollingLesson = false; }
+        };
         if (initializeOnOpen)
             Opened += async (_, _) => await Safe(Initialize);
         Closing += OnClosing;
+        Closed += async (_, _) => { sqlDeliveryPoll.Stop(); await StopElectronicsDelivery(); foreach (var store in sqlStores.Values) store.Dispose(); };
+        electronicsDeliveryPoll.Tick += async (_, _) =>
+        {
+            var current = electronicsDelivery; if (current is null) return;
+            var result = await current.DrainOnce(); if (!ReferenceEquals(current, electronicsDelivery)) return;
+            if (result.Error is { } message && electronicsDeliveryErrors.Add(message)) Error(message);
+        };
+        sqlDeliveryPoll.Tick += async (_, _) =>
+        {
+            if (deliveringSql || api?.ProfileId is null || login?.Role != "student") return;
+            deliveringSql = true;
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await SqlStore(api).Drain(api, limit.Token); }
+            catch (Exception e) when (e is HttpRequestException or OperationCanceledException or ApiException) { /* Keep the durable queue; lesson polling handles connectivity/login. */ }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { Error(e.Message); }
+            finally { deliveringSql = false; }
+        };
         AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
         AddHandler(DragDrop.DropEvent, OnDrop, RoutingStrategies.Tunnel);
         AddHandler(TextBox.CopyingToClipboardEvent, OnClipboard);
@@ -139,7 +208,43 @@ public sealed class MainWindow : Window
         {
             await action();
         }
-        catch (ApiException e)when (e.Status == 401 && screen is not null)
+        catch (SqlLocalRecoveryException e)
+        {
+            sqlDeliveryPoll.Stop(); lessonPoll.Stop();
+            actions.Children.Clear();
+            body.Content = new SqlRecoveryView(this, e.Candidate, async () => { login = null; await ShowLogin(); });
+        }
+        catch (ElectronicsOutboxRecoveryException e)
+        {
+            ClosePage(); await StopElectronicsDelivery();
+            var client = api; var token = api?.Token; var candidate = e.Candidate;
+            if (client is null || token is null || login?.Role != "student" || client.ProfileId != candidate.Context.ProfileId || client.Connection.Fingerprint != candidate.Context.Fingerprint)
+            { Error("Для восстановления войдите в исходный ученический профиль."); StartElectronicsDelivery(); return; }
+            void Bound()
+            {
+                if (!ReferenceEquals(client, api) || client.Token != token || client.ProfileId != candidate.Context.ProfileId || client.Connection.Fingerprint != candidate.Context.Fingerprint)
+                    throw new InvalidDataException("Сеанс изменился. Откройте восстановление из исходного профиля.");
+            }
+            var view = new ElectronicsOutboxRecoveryView(candidate, () => Safe(async () =>
+            {
+                Bound(); ElectronicsOutboxRecovery.Restore(candidate);
+                Message("Очередь восстановлена с прежними номерами результатов. Исходный файл сохранён отдельно, если он существовал.");
+                ClosePage();
+                if(candidate.Context.FreeProjectId is { } project)
+                {if(client.LessonId!=candidate.Context.LessonId)await EnterLesson(new("electronics"));else await OpenFreeProject(project,restoreLocal:true);}
+                else await EnterLesson(new("electronics"), e.TaskId,legacyElectronics:e.TaskId is null);
+            }), () => Safe(() =>
+            {
+                Bound(); return Task.FromException(new ElectronicsOutboxRecoveryException(ElectronicsOutboxRecovery.Inspect(candidate.ProjectFile, candidate.Context, "Повторная проверка файлов."), e.TaskId));
+            }));
+            ShowPage("Восстановление электронной работы", view, () =>
+            {
+                electronicsRecoveryOpen = false; StartElectronicsDelivery();
+                body.IsEnabled = false; lessonBlock.IsVisible = true; lessonMessage.Text = "Проверяем доступ к занятию…";
+            });
+            electronicsRecoveryOpen = true; body.IsEnabled = true; lessonBlock.IsVisible = false;
+        }
+        catch (ApiException e)when (e.Status == 401 && (screen is not null || login is not null))
         {
             await Reauthenticate();
         }
@@ -156,9 +261,12 @@ public sealed class MainWindow : Window
         reconnecting = true;
         try
         {
+            try { student?.SaveLocalDraft(); }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+            { Error("Повторный вход отложен: последние изменения не сохранены на ПК. " + e.Message); return; }
             login = null;
             await ShowLogin();
-            Error("Сессия завершилась. Войдите снова; несохранённый черновик остаётся в этом окне.");
+            Error("Сессия завершилась. Войдите снова; локально сохранённые работы останутся на ПК.");
         }
         catch (Exception e)when (e is HttpRequestException or TaskCanceledException)
         {
@@ -175,22 +283,26 @@ public sealed class MainWindow : Window
     public void ShowPage(string title, Control content, Action? cleanup = null)
     {
         ClosePage();
-        pageReturnContent = body.Content;
+        var target = body.Content is TeacherScreen teacherWorkspace ? teacherWorkspace.Presentation : body;
+        pageTarget = target;
+        pageReturnContent = target.Content;
         pageCleanup = cleanup;
         pageOpen = true;
         var page = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 12, Margin = new Thickness(18) };
         page.Children.Add(Ui.Card(Ui.Row(Ui.Button("Назад", () => { ClosePage(); return Task.CompletedTask; }), Ui.Text(title,24))));
         Grid.SetRow(content,1); page.Children.Add(content);
-        body.Content = page;
+        target.Content = page;
     }
     internal void ClosePage(bool restore = true)
     {
         if (!pageOpen) return;
-        var previous = pageReturnContent; var cleanup = pageCleanup;
-        pageOpen = false; pageReturnContent = null; pageCleanup = null;
+        var previous = pageReturnContent; var cleanup = pageCleanup; var target = pageTarget ?? body;
+        pageOpen = false; pageTarget = null; pageReturnContent = null; pageCleanup = null;
         cleanup?.Invoke();
-        if (restore) body.Content = previous;
+        if (restore) target.Content = previous;
+        else if (!ReferenceEquals(target, body)) target.Content = null;
         RefreshSurface();
+        Protect(student?.Restricted == true);
     }
     internal async Task ShowAppearance()
     {
@@ -216,7 +328,8 @@ public sealed class MainWindow : Window
     internal void Preview(Control view) => body.Content = view;
     void ShowConnect()
     {
-        var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
+        admissionPoll?.Stop(); lessonPoll.Stop(); sqlDeliveryPoll.Stop();
+        var directory = StudentDataDirectory;
         var path = Path.Combine(directory, "connection.json");
         state.Status = "";
         var code = Ui.Input();
@@ -248,28 +361,91 @@ public sealed class MainWindow : Window
 
     async Task ShowLogin()
     {
+        await StopElectronicsDelivery();
+        admissionPoll?.Stop(); lessonPoll.Stop();
         ClosePage(false);
+        StopStudentNavigation();
+        SetTeacherToolbar(null);
+        body.IsEnabled = true; lessonBlock.IsVisible = false;
         screen?.Dispose();
-        electronics?.Dispose();
+        if (!ReferenceEquals(screen, student)) student?.Dispose();
+        foreach (var editor in assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
+        assignedElectronics.Clear(); freeElectronics.Clear(); practiceElectronics = null;
         electronics = null;
         screen = null;
         student = null;
+        studentHome = null;
         Protect(false);
         actions.Children.Clear();
         var status = await api!.Get<StatusDto>("status");
         var setup = teacher && status.NeedsSetup;
-        var name = Ui.Input();
+        var group = new ComboBox { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var names = new ComboBox { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
+        group.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<GroupDto>((item, _) => Ui.Text(item?.Name ?? ""));
+        names.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<StudentChoice>((item, _) => Ui.Text(item?.Name ?? ""));
+        var admissionMessage = Ui.Text("");
+        var registerName = Ui.Input(); var registerPassword = Ui.Input(); registerPassword.PasswordChar = '●';
+        AdmissionDto? admission = null;
+        var registrationId = Guid.NewGuid().ToString("N");
+        var registrationFields = Ui.Stack(Ui.Text("Регистрация в группе", 18), Ui.Field("ФИО", registerName), Ui.Field("Новый пароль", registerPassword), Ui.Button("Зарегистрироваться", () => Safe(async () =>
+        {
+            var created = await api!.Post<StudentChoice>("student-registration", new StudentRegistrationRequest(registrationId, registerName.Text ?? "", registerPassword.Text ?? ""));
+            registrationId = Guid.NewGuid().ToString("N"); registerPassword.Text = "";
+            group.SelectedItem = group.Items.OfType<GroupDto>().FirstOrDefault(g => g.Id == admission?.RegistrationGroup?.Id);
+            await UpdateNames(created.Id);
+            Message("Учётная запись создана. Выберите своё ФИО и войдите с вашим паролем.");
+        }))) ;
+        registrationFields.IsVisible = false;
+        bool directoryBusy = false;
+        async Task UpdateNames(string? select = null)
+        {
+            if (group.SelectedItem is not GroupDto selected || admission?.AdmissionOpen != true) { names.ItemsSource = Array.Empty<StudentChoice>(); return; }
+            var before = select ?? (names.SelectedItem as StudentChoice)?.Id;
+            var items = await api!.Get<StudentChoice[]>("admission/students?groupId=" + Uri.EscapeDataString(selected.Id));
+            if ((group.SelectedItem as GroupDto)?.Id != selected.Id) return;
+            names.ItemsSource = items;
+            names.SelectedItem = items.FirstOrDefault(n => n.Id == before);
+        }
+        async Task UpdateAdmission()
+        {
+            if (directoryBusy) return;
+            directoryBusy = true;
+            try
+            {
+                admission = await api!.Get<AdmissionDto>("admission"); admissionMessage.Text = admission.Message;
+                var selected = (group.SelectedItem as GroupDto)?.Id;
+                group.ItemsSource = admission.Groups;
+                group.SelectedItem = admission.Groups.FirstOrDefault(g => g.Id == selected) ?? admission.Groups.FirstOrDefault();
+                group.IsEnabled = names.IsEnabled = admission.AdmissionOpen;
+                registrationFields.IsVisible = admission.RegistrationOpen;
+                if (registrationFields.Children[0] is TextBlock label) label.Text = "Регистрация · " + admission.RegistrationGroup?.Name;
+                await UpdateNames();
+            }
+            finally { directoryBusy = false; }
+        }
+        group.SelectionChanged += async (_, _) => { if (!directoryBusy) await Safe(() => UpdateNames()); };
         var password = Ui.Input();
         password.PasswordChar = '●';
         var fields = Ui.Stack(Ui.Text(setup ? "Настройка преподавателя" : teacher ? "Вход преподавателя" : "Вход ученика", 24));
         if (!teacher)
-            fields.Children.Add(Ui.Field("Логин", name));
+        {
+            fields.Children.Add(admissionMessage);
+            fields.Children.Add(Ui.Field("Группа", group));
+            fields.Children.Add(Ui.Field("ФИО", names));
+        }
         fields.Children.Add(Ui.Field("Пароль", password));
         fields.Children.Add(Ui.Primary(Ui.Button(setup ? "Создать пароль" : "Войти", () => Safe(async () =>
         {
             if (setup)
                 await api.Post<JsonElement>("setup", new PasswordRequest(password.Text ?? ""));
-            login = await api.Login(new(teacher ? "teacher" : "student", name.Text ?? "", password.Text ?? ""));
+            if (teacher) login = await api.Login(new("teacher", "", password.Text ?? ""));
+            else
+            {
+                if (group.SelectedItem is not GroupDto selectedGroup || names.SelectedItem is not StudentChoice selectedStudent)
+                { Error("Выберите группу и своё ФИО."); return; }
+                login = await api.LoginStudent(new(selectedGroup.Id, selectedStudent.Id, password.Text ?? ""));
+            }
+            admissionPoll?.Stop();
             password.Text = "";
             notification.Dismiss();
             ThemeManager.Apply(login.Theme);
@@ -279,6 +455,7 @@ public sealed class MainWindow : Window
                 if (student is not null)
                     await student.SaveDraft();
                 if (electronics is not null) await electronics.Synchronize();
+                await StopElectronicsDelivery();
                 await api.Logout();
                 login = null;
                 await ShowLogin();
@@ -292,62 +469,82 @@ public sealed class MainWindow : Window
                 body.Content = view;
                 await view.Load();
                 if (login?.Token != enteringToken) return;
+                SetTeacherToolbar(view);
                 var selectedStand = login.Destination?.StandId == "electronics" ? 1 : 0;
                 var stands = new ComboBox { ItemsSource = new[] { "SQL", "Электроника" }, SelectedIndex = selectedStand, MinWidth = 160, MinHeight = 36 };
                 Avalonia.Automation.AutomationProperties.SetName(stands, "Стенд");
+                ToolTip.SetTip(stands, "Рабочий стенд преподавателя");
                 actions.Children.Insert(0, stands);
                 async Task ShowStand()
                 {
                     ClosePage(false);
                     if (selectedStand == 0)
                     {
-                        electronics?.Suspend(); body.Content = view; await view.ShowWorkspace();
+                        await view.ShowWorkspace();
                     }
                     else
                     {
                         var path = Path.Combine(host!.DataDirectory, "electronics", "teacher-project.json");
                         electronics ??= new ElectronicsScreen(this, path,api,teacher:true);
-                        body.Content = electronics;
+                        view.ShowStand(electronics);
                     }
                 }
                 var selecting = false;
-                stands.SelectionChanged += async (_, _) =>
+                async Task SelectStand(int next)
                 {
-                    if (selecting) return;
+                    if (selecting || !stands.IsEnabled || login?.Token != enteringToken || next < 0) return;
                     stands.IsEnabled = false;
                     try { await Safe(async () =>
                     {
-                        var next = stands.SelectedIndex;
-                        await api.Put<LessonDestination>("teacher/lesson", new LessonDestination(next == 1 ? "electronics" : "sql"));
+                        if (next != selectedStand)
+                            await api.Put<LessonDestination>("teacher/lesson", new LessonDestination(next == 1 ? "electronics" : "sql"));
+                        if (login?.Token != enteringToken) return;
                         selectedStand = next;
                         await ShowStand();
                     }); }
                     finally { selecting = true; stands.SelectedIndex = selectedStand; selecting = false; stands.IsEnabled = true; }
-                };
+                }
+                stands.SelectionChanged += async (_, _) => await SelectStand(stands.SelectedIndex);
+                view.SetStandShortcut(() => SelectStand(1));
                 actions.Children.Add(Ui.Button("Код подключения", () => Safe(async () =>
                 {
                     if (!stands.IsEnabled) return;
                     ClosePage(false);
-                    electronics?.Suspend();
-                    body.Content = Ui.Card(Ui.Stack(Ui.Button("Назад к стенду", ShowStand),
-                        new ConnectionCodeView(host!.ConnectionCode, host.Settings.Address == "127.0.0.1", selectedStand == 1 ? "Электроника" : "SQL")));
+                    view.ShowConnectionCode(GraphiteUi.Panel(Ui.Scroll(Ui.Stack(Ui.Button("Назад к стенду", ShowStand),
+                        new ConnectionCodeView(host!.ConnectionCode, host.Settings.Address == "127.0.0.1", selectedStand == 1 ? "Электроника" : "SQL")))));
                     await Task.CompletedTask;
                 })));
                 await ShowStand();
             }
             else
             {
-                await EnterLesson(login.Destination);
+                StartStudentNavigation();
+                SqlStore(api);
+                sqlDeliveryPoll.Start();
+                StartElectronicsDelivery();
+                await ShowStudentHome();
+                await RefreshLessonPermission(); lessonPoll.Start();
             }
 
             state.Status = "";
         }))));
         if (!teacher)
+        {
+            fields.Children.Add(registrationFields);
             fields.Children.Add(Ui.Button("Другой преподаватель", () =>
             {
                 ShowConnect();
                 return Task.CompletedTask;
             }));
+            await UpdateAdmission();
+            admissionPoll = new() { Interval = TimeSpan.FromSeconds(2) };
+            admissionPoll.Tick += async (_, _) =>
+            {
+                try { await UpdateAdmission(); }
+                catch (Exception e) when (e is ApiException or HttpRequestException or TaskCanceledException) { admissionMessage.Text = "Нет связи с преподавателем."; }
+            };
+            admissionPoll.Start();
+        }
         if (teacher)
             fields.Children.Add(Ui.Button("Завершить работу", () => Safe(Quit)));
         body.Content = new Border
@@ -359,22 +556,244 @@ public sealed class MainWindow : Window
         };
     }
 
-    internal async Task EnterLesson(LessonDestination? destination)
+    internal async Task EnterLesson(LessonDestination? destination, string? taskId = null,bool legacyElectronics=false)
     {
+        if(screen is ElectronicsProjectPicker previousPicker)previousPicker.Dispose();
         if (destination?.StandId == "electronics")
         {
-            var directory = Environment.GetEnvironmentVariable("CLASSROOM_STUDENT_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQL-Classroom", "student");
-            var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(api!.Connection.Fingerprint + ":" + login!.Id)));
-            electronics = new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"),api);
-            screen = electronics;
-            body.Content = electronics;
-            return;
+            await StopElectronicsDelivery();
+            try
+            {
+                Protect(false);
+                var directory = StudentDataDirectory;
+                var identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(api!.Connection.Fingerprint + ":" + login!.Id)));
+                if (taskId is not null)
+                {
+                    var work = await api.Get<ElectronicsAssignmentDto>("electronics/tasks/" + Uri.EscapeDataString(taskId));
+                    if (!assignedElectronics.TryGetValue(work.Id, out var editor))
+                    {
+                        editor = new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + "-" + work.Id + ".json"), api, assignment: work);
+                        assignedElectronics.Add(work.Id, editor);
+                    }
+                    else editor.UpdateAssignment(work);
+                    electronics = editor;
+                }
+                else if(legacyElectronics)
+                {
+                    practiceElectronics ??= new ElectronicsScreen(this, Path.Combine(directory, "electronics", identity + ".json"), api);
+                    electronics = practiceElectronics;
+                }
+                else
+                {
+                    electronics?.Suspend();
+                    var picker=new ElectronicsProjectPicker(this,api,OpenFreeProject,()=>EnterLesson(new("electronics"),legacyElectronics:true));
+                    screen=picker;body.Content=picker;await picker.Refresh();return;
+                }
+                screen = electronics;
+                body.Content = electronics;
+                return;
+            }
+            finally { StartElectronicsDelivery(); }
         }
         if (destination?.StandId is not (null or "sql")) throw new InvalidDataException("Этот стенд не поддерживается. Обновите приложение ученика.");
-        student = new(this, api!);
+        var first = student?.HasLoaded != true;
+        student ??= new(this, api!);
         screen = student;
         body.Content = student;
-        await student!.Load();
+        if (first) await student!.Load(taskId);
+        else await student.OpenTask(taskId ?? LastTaskId);
+        Protect(student.Restricted);
+    }
+
+    internal Task OpenFreeProject(string id)=>OpenFreeProject(id,restoreLocal:false);
+    async Task OpenFreeProject(string id,bool restoreLocal)
+    {
+        if(api?.ProfileId is null||api.LessonId is null)throw new InvalidDataException("Сначала войдите в занятие.");
+        var client=api;var token=client.Token;var lesson=client.LessonId;var origin=body.Content;
+        await StopElectronicsDelivery();
+        try
+        {
+            if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||!ReferenceEquals(body.Content,origin))return;
+            var work=restoreLocal?await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}"):
+                await client.Post<ElectronicsProjectDto>($"electronics/projects/{id}/open",new ElectronicsProjectOpen(lesson));
+            if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||!ReferenceEquals(body.Content,origin))return;
+            var context=new ElectronicsHistoryContext(client.ProfileId!,client.Connection.Fingerprint,lesson,null,id);
+            ElectronicsCopyLocation selected;
+            try{selected=ElectronicsCopySelection.Resolve(Path.Combine(StudentDataDirectory,"electronics"),context);}
+            catch(Exception e)when(e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+            {await ShowFreeLocalCopies(id,context,e.Message);return;}
+            var key=id+":"+lesson;
+            electronics?.Suspend();
+            if(screen is ElectronicsProjectPicker picker)picker.Dispose();
+            if(freeElectronics.TryGetValue(key,out var previous)&&!string.Equals(previous.SavePath,selected.Path,StringComparison.OrdinalIgnoreCase))
+            {previous.Dispose();freeElectronics.Remove(key);}
+            if(!freeElectronics.TryGetValue(key,out var editor))
+            {
+                editor=new ElectronicsScreen(this,selected.Path,client,freeProject:work,localCopyId:selected.Context.LocalCopyId);
+                freeElectronics.Add(key,editor);
+            }
+            else editor.UpdateFreeProject(work);
+            ClosePage(false);electronics=editor;screen=editor;body.Content=editor;Protect(false);
+        }
+        finally{StartElectronicsDelivery();}
+        await RefreshLessonPermission();
+    }
+    internal async Task CopyFreeProject(string json,Func<bool>? stillCurrent=null)
+    {
+        if(api is null)throw new InvalidDataException("Сначала войдите в занятие.");
+        if(stillCurrent?.Invoke()==false)return;
+        var client=api;var token=client.Token;var lesson=client.LessonId;
+        var project=CircuitProject.Parse(json);var name=project.Name+" (копия)";project.Name=name[..Math.Min(name.Length,120)];
+        var id=Guid.NewGuid().ToString("N");
+        await client.Put<ElectronicsProjectDto>("electronics/projects/"+id,new ElectronicsProjectCreate(project.Serialize()));
+        if(!ReferenceEquals(api,client)||client.Token!=token||client.LessonId!=lesson||stillCurrent?.Invoke()==false)return;
+        await OpenFreeProject(id);
+    }
+    internal async Task CompareFreeProject(ElectronicsScreen source)
+    {
+        if(api?.ProfileId is null||source.FreeProjectId is not { }id||source.HistoryContext is not { }context||source.IsDisposed)return;
+        var client=api;var token=client.Token;var lesson=client.LessonId;
+        bool Current()=>ReferenceEquals(api,client)&&client.Token==token&&client.LessonId==lesson&&ReferenceEquals(screen,source)&&!source.IsDisposed;
+        ElectronicsVersionChoiceView? view=null;
+        await StopElectronicsDelivery();
+        try
+        {
+            if(!Current())return;
+            await source.PauseDelivery();
+            var server=await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}");
+            if(!Current()||!ReferenceEquals(body.Content,source)){source.ResumeDelivery();return;}
+            var directory=Path.GetDirectoryName(source.SavePath)!;
+            var archives=ElectronicsCopySelection.ReadArchives(directory,context,source.SavePath);
+            view=new ElectronicsVersionChoiceView(this,source.CurrentProjectJson,server,async shown=>
+            {
+                if(!Current()||view!.IsDisposed)return;
+                var fresh=await client.Get<ElectronicsProjectDto>($"electronics/projects/{id}");
+                if(!Current()||view.IsDisposed)return;
+                if(fresh.ProjectJson!=shown.ProjectJson)
+                {view.UpdateServer(fresh);Message("Серверная версия изменилась. Просмотрите её перед выбором.");return;}
+                await StopElectronicsDelivery();
+                if(!Current()||view.IsDisposed){StartElectronicsDelivery();return;}
+                // Pause completed before showing this view. Release the old
+                // history lease only after the explicit choice and fresh read.
+                source.Dispose();freeElectronics.Remove(id+":"+lesson);electronics=null;ClosePage(false);
+                body.Content=Ui.Text("Открываем выбранную версию…");
+                try{ElectronicsCopySelection.SelectServer(directory,context,source.SavePath,fresh,client);}
+                catch
+                {
+                    // Resolve the durable pointer, including a commit whose
+                    // final journal write failed. Never restore a disposed view.
+                    try{await OpenFreeProject(id,restoreLocal:true);}finally{StartElectronicsDelivery();}throw;
+                }
+                await OpenFreeProject(id,restoreLocal:true);
+            },async json=>
+            {
+                if(!Current()||view!.IsDisposed)return;
+                await CopyFreeProject(json,()=>Current()&&!view.IsDisposed);
+            },()=>ClosePage(),archives,()=>ShowFreeLocalCopies(id));
+            ShowPage("Версии и копии схемы",view,()=>{view.Dispose();source.ResumeDelivery();});
+            await RefreshLessonPermission();
+        }
+        catch{view?.Dispose();source.ResumeDelivery();throw;}
+        finally{StartElectronicsDelivery();}
+    }
+
+    async Task SwitchStudentSubject(string subject, string? taskId = null)
+    {
+        if (api is null||stopping||quitting) return;
+        var state = await api.Get<StudentLessonDto>("student/lesson");
+        if (!state.CanWork || (subject == "sql" ? state.Lesson?.AllowSql != true : state.Lesson?.AllowElectronics != true))
+        { Error(state.Message.Length > 0 ? state.Message : "Преподаватель не разрешил это направление."); return; }
+        if (student is not null) await student.SaveDraft();
+        electronics?.Suspend(); ClosePage(false);
+        await EnterLesson(new LessonDestination(subject), taskId);
+        await RefreshLessonPermission();
+    }
+
+    internal async Task ShowStudentHome()
+    {
+        if (api is null||stopping||quitting) return;
+        if(screen is ElectronicsProjectPicker picker)picker.Dispose();
+        if (student is not null) await student.SaveDraft();
+        electronics?.Suspend(); ClosePage(false); Protect(false);
+        if(studentHome is null)
+        {
+            studentHome=new(this,api,(subject,id)=>SwitchStudentSubject(subject,id)){ProfileInNavigation=studentNavigation is not null};
+            studentHome.ProfileChanged+=(name,group)=>studentNavigation?.Profile(name,group);
+            studentHome.OpeningChanged+=busy=>studentNavigation?.SetBusy(busy);
+        }
+        body.Content = studentHome;
+        await studentHome.Refresh();
+    }
+
+    async Task ShowTeacherReview()
+    {
+        if (api is null || teacher || login is null) return;
+        if (student is not null) await student.SaveDraft();
+        electronics?.Suspend();
+        ClosePage();
+        var view = new StudentReviewPage(this, api);
+        ShowPage("Проверка преподавателя", view, () =>
+        {
+            teacherReview = null; view.Dispose();
+            body.IsEnabled = false; lessonBlock.IsVisible = true; lessonMessage.Text = "Проверяем доступ к занятию…";
+        });
+        teacherReview = view;
+        UpdateStudentNavigation();
+        body.IsEnabled = true; lessonBlock.IsVisible = false; Protect(false);
+    }
+
+    async Task RefreshLessonPermission()
+    {
+        if (api is null || login is null || teacher||quitting||stopping) return;
+        var client=api;var session=login.Token;
+        StudentLessonDto lesson;
+        try { lesson = await client.Get<StudentLessonDto>("student/lesson"); }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            if (!quitting && !stopping && ReferenceEquals(api, client) && login?.Token == session)
+                student?.ShowLessonConnection(null, connected: false);
+            throw;
+        }
+        if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
+        if (!lesson.CanWork || lesson.Lesson?.AllowSql != true) CloseGlossary();
+        student?.ShowLessonConnection(lesson.Lesson?.GroupName, connected: true);
+        if (sqlSubjectButton is not null) sqlSubjectButton.IsVisible = lesson.Lesson?.AllowSql == true;
+        if (electronicsSubjectButton is not null) electronicsSubjectButton.IsVisible = lesson.Lesson?.AllowElectronics == true;
+        if(studentNavigation is { } nav)
+        {
+            nav.Entry("glossary").IsVisible=lesson.Lesson?.AllowSql==true;nav.SetPermission(lesson.CanWork,lesson.Lesson?.AllowSql==true,lesson.Lesson?.AllowElectronics==true);
+        }
+        if (teacherReview is not null) { body.IsEnabled = studentNavigation?.IsBusy!=true; lessonBlock.IsVisible = false; return; }
+        if (electronicsRecoveryOpen) { body.IsEnabled = true; lessonBlock.IsVisible = false; return; }
+        var currentAllowed = body.Content is ElectronicsScreen or ElectronicsProjectPicker || pageOpen&&pageReturnContent is ElectronicsScreen
+            ? lesson.Lesson?.AllowElectronics == true : lesson.Lesson?.AllowSql == true;
+        if (body.Content is ElectronicsScreen circuit && circuit.AssignmentId is { } workId)
+        {
+            var status=await client.Get<ElectronicsAssignmentStatus>("electronics/assignments/" + workId + "/status");
+            if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
+            circuit.UpdateAssignmentStatus(status);
+            currentAllowed &= circuit.AssignmentAvailable;
+        }
+        if(body.Content is ElectronicsScreen free&&free.FreeProjectId is { } projectId)
+        {
+            var status=await client.Get<ElectronicsProjectStatus>($"electronics/projects/{projectId}/status");
+            if(quitting||stopping||!ReferenceEquals(api,client)||login?.Token!=session)return;
+            free.UpdateFreeProjectStatus(status);
+        }
+        var canWork = lesson.CanWork && currentAllowed;
+        if (body.Content is StudentHomeControl home)
+        {
+            body.IsEnabled = studentNavigation?.IsBusy!=true; lessonBlock.IsVisible = false; await home.Refresh(); return;
+        }
+        var wasEnabled = body.IsEnabled;
+        body.IsEnabled = canWork&&studentNavigation?.IsBusy!=true;
+        lessonBlock.IsVisible = !canWork;
+        lessonMessage.Text = lesson.Message.Length > 0 ? lesson.Message : "Преподаватель отключил это направление. Выберите другое в меню.";
+        if (!canWork && wasEnabled)
+        {
+            electronics?.Suspend();
+            if (student is not null) await student.SaveDraft();
+        }
     }
 
     void RefreshSurface()
@@ -388,6 +807,7 @@ public sealed class MainWindow : Window
 
     public void Protect(bool restricted)
     {
+        restricted = restricted && IsLessonVisible;
         if (OperatingSystem.IsWindows() && TryGetPlatformHandle()?.Handle is { } handle)
         {
             if (!NativeWindowProtection.TrySet(handle, restricted, out var error) && restricted)
@@ -405,8 +825,9 @@ public sealed class MainWindow : Window
 
     async void OnKey(object? sender, KeyEventArgs e)
     {
-        if (pageOpen) return;
-        if (student is not null && e.Key == Key.Enter && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
+        if (HandleGlossaryKey(e)) return;
+        if (!IsLessonVisible || (!body.IsEnabled && !IsGlossaryOpen)) return;
+        if (!IsGlossaryOpen && student is not null && e.Key == Key.Enter && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
         {
             e.Handled = true;
             await Safe(student.CheckShortcut);
@@ -431,7 +852,7 @@ public sealed class MainWindow : Window
 
     async void OnDrop(object? sender, DragEventArgs e)
     {
-        if (pageOpen) return;
+        if (!IsLessonVisible || (!body.IsEnabled && !IsGlossaryOpen)) return;
         if (student?.Restricted == true)
         {
             e.Handled = true;
@@ -443,7 +864,7 @@ public sealed class MainWindow : Window
 
     async void OnClipboard(object? sender, RoutedEventArgs e)
     {
-        if (pageOpen) return;
+        if (!IsLessonVisible || (!body.IsEnabled && !IsGlossaryOpen)) return;
         if (student?.Restricted != true)
             return;
         e.Handled = true;
@@ -500,11 +921,11 @@ public sealed class MainWindow : Window
         {
             try
             {
-                await student.SaveDraft();
+                student.SaveLocalDraft();
             }
-            catch (Exception ex)when (ex is HttpRequestException or ApiException or TaskCanceledException)
+            catch (Exception ex)when (ex is HttpRequestException or ApiException or TaskCanceledException or IOException or InvalidDataException or UnauthorizedAccessException)
             {
-                if (!await Confirm("Связь потеряна. Последние изменения черновика не сохранены. Закрыть приложение?"))
+                if (!await Confirm("Последние изменения не удалось сохранить: " + ex.Message + " Закрыть приложение?"))
                     return;
                 discardDraft = true;
             }
@@ -515,20 +936,34 @@ public sealed class MainWindow : Window
 
     async Task Quit()
     {
-        if (quitting)
+        if (quitting||stopping)
             return;
-        if (student is not null && !discardDraft)
-            await student.SaveDraft();
-        if (electronics is not null) await electronics.Synchronize();
-        ClosePage(false);
-        screen?.Dispose();
-        electronics?.Dispose();
-        if (host is not null)
-            await host.Stop(api);
-        quitting = true;
-        tray?.Dispose();
-        api?.Dispose();
-        Close();
+        stopping=true;var lessonWasPolling=lessonPoll.IsEnabled;var sqlWasPolling=sqlDeliveryPoll.IsEnabled;
+        CloseGlossary();
+        studentNavigation?.SetBusy(true);
+        lessonPoll.Stop();sqlDeliveryPoll.Stop();
+        try
+        {
+            if (student is not null && !discardDraft)
+                await student.SaveDraft();
+            if (electronics is not null) await electronics.Synchronize();
+            await StopElectronicsDelivery();
+            ClosePage(false);
+            screen?.Dispose();
+            foreach (var editor in assignedElectronics.Values.Concat(freeElectronics.Values).Append(practiceElectronics).Append(electronics).Where(e => e is not null).Distinct()) editor!.Dispose();
+            if (!ReferenceEquals(screen, student)) student?.Dispose();
+            while(pollingLesson||deliveringSql)await Task.Delay(25);
+            if (host is not null)
+                await host.Stop(api);
+            quitting = true;
+            tray?.Dispose();
+            api?.Dispose();
+            Close();
+        }
+        catch
+        {
+            stopping=false;if(lessonWasPolling)lessonPoll.Start();if(sqlWasPolling)sqlDeliveryPoll.Start();studentNavigation?.SetBusy(false);throw;
+        }
     }
 
     public async Task<bool> Confirm(string text)
@@ -564,15 +999,20 @@ static class NativeWindowProtection
     static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     static extern bool GetWindowDisplayAffinity(nint window, out uint affinity);
+
+    internal static uint PreferredAffinity(bool enabled, bool supportsExclusion) =>
+        !enabled ? 0u : supportsExclusion ? 0x11u : 1u;
+
     public static bool TrySet(nint handle, bool enabled, out int error)
     {
-        var desired = enabled ? 0x11u : 0u;
+        var desired = PreferredAffinity(enabled, OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041));
         if (!SetWindowDisplayAffinity(handle, desired) || !GetWindowDisplayAffinity(handle, out var actual))
         {
             error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
             return false;
         }
-        error = 0;
+        // ERROR_INVALID_DATA: Windows returned an affinity other than the one requested.
+        error = actual == desired ? 0 : 13;
         return actual == desired;
     }
 }

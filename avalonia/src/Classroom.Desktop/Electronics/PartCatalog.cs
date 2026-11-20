@@ -18,6 +18,20 @@ public static class PartCatalog
         var list = new List<PartDefinition>
         {
             new("uno", "Arduino Uno", "Платы", PartKind.Uno, 0, "uno", true, ReferenceName:"Arduino UNO"),
+            new("mega2560", "Arduino Mega 2560", "Платы", PartKind.Mega, 0, "mega", true, ReferenceName:"Arduino Mega 2560 (AVR)"),
+            new(PicoBoard.ModelId,"Raspberry Pi Pico · RP2040","Платы",PartKind.Pico,0,"pico",true,ReferenceName:"Raspberry Pi Pico (RP2040)"),
+            new(Esp32S3Board.ModelId, Esp32S3Board.Name + " · GPIO", "Платы", PartKind.Esp32S3, 0, Esp32S3Face.Art, true),
+            new("lcd-i2c-16x2", "LCD 16×2 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"16x2 I2C LCD (PCF8574)"),
+            new("lcd-i2c-20x4", "LCD 20×4 · I2C", "Индикация", PartKind.LcdI2c, 39, "lcd", true, ReferenceName:"20x4 I2C LCD (PCF8574)"),
+            new("oled-ssd1306-i2c", "OLED 128×64 · SSD1306", "Индикация", PartKind.OledI2c, 60, "oled", true, ReferenceName:"OLED 128x64 I2C (SSD1306)"),
+            new(I2cLevelShifter.ModelId, I2cLevelShifter.Name, "Полупроводники", PartKind.I2cLevelShifter, 0, I2cLevelShifter.ModelId, true),
+            new(CircuitMpu6050.ModelId, CircuitMpu6050.Name, "Датчики", PartKind.Mpu6050, 0, CircuitMpu6050.ModelId, true),
+            new("ds1307-rtc", PartLibrary.Name(PartKind.Ds1307), "Модули", PartKind.Ds1307, 0, "ds1307-rtc", true),
+            new("analog-joystick", PartLibrary.Name(PartKind.Joystick), "Управление", PartKind.Joystick, 0, "analog-joystick", true),
+            new(CircuitDs18b20.ModelId,"DS18B20 · температура · 1-Wire","Датчики",PartKind.Ds18b20,25,"ds18b20-native",true,ReferenceName:"DS18B20 TO-92 standard-speed 1-Wire profile"),
+            new(CircuitHcsr04.ModelId,"HC-SR04 · расстояние","Датчики",PartKind.Hcsr04,100,"hcsr04-native",true,ReferenceName:"HC-SR04 5V digital ranging profile"),
+            new(CircuitDht11.ModelId,"DHT11 · температура и влажность","Датчики",PartKind.Dht11,25,"dht11-native",true,ReferenceName:"DHT11 four-pin single-wire profile"),
+            new(CircuitSpi.ModelId,"TFT 240×320 · ILI9341 · SPI","Индикация",PartKind.TftSpi,0,"tft-ili9341",true,ReferenceName:"ILI9341 SPI module 240x320"),
             new("breadboard", "Макетная плата · 400 точек", "Монтаж", PartKind.Breadboard, 0, "breadboard", true, ReferenceName:"Breadboard (Half Size)"),
             new("resistor-330", "Резистор · 330 Ом", "Пассивные", PartKind.Resistor, 330, "resistor", true, ReferenceName:"Resistor"),
             new("led-red", "Светодиод · красный", "Индикация", PartKind.Led, 2, "led-red", true, ReferenceName:"LED Two Pin (Red)"),
@@ -49,7 +63,7 @@ public static class PartCatalog
             if (list.Any(d => d.ReferenceName == name)) continue;
             var art = Artwork(name);
             var id = "catalog-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(name)))[..16].ToLowerInvariant();
-            list.Add(new(id, name, Category(name), PartKind.Visual, 0, art, false, KnownPins(name), name));
+            list.Add(new(id, name=="Arduino Mega 2560"?name+" · схема":name, Category(name), PartKind.Visual, 0, art, false, KnownPins(name), name));
         }
         return list.ToArray();
     }

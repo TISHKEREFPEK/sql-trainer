@@ -15,6 +15,7 @@ public sealed partial class ElectronicsScreen
     Point manipulationStart;
     int manipulationCorner;
     bool manipulationChanged;
+    string? manipulationGesture;
 
     void InitializeManipulation()
     {
@@ -26,7 +27,7 @@ public sealed partial class ElectronicsScreen
             if(manipulation is not {} original)return;
             var at=e.GetPosition(canvas)/zoom;
             if(!manipulationChanged && Math.Sqrt(Math.Pow(at.X-manipulationStart.X,2)+Math.Pow(at.Y-manipulationStart.Y,2))*zoom<3)return;
-            if(!manipulationChanged){Checkpoint();manipulationChanged=true;}
+            if(!manipulationChanged){_=Perform(()=>RecordHistory(manipulationCorner<0?"rotate-start":"resize-start",true,manipulationGesture));Checkpoint();manipulationChanged=true;}
             CircuitPart next;
             if(manipulationCorner<0)
             {
@@ -38,7 +39,7 @@ public sealed partial class ElectronicsScreen
             }
             else next=PartArtwork.ResizeCorner(original,manipulationCorner,at,e.KeyModifiers.HasFlag(KeyModifiers.Shift));
             var index=project.Parts.FindIndex(p=>p.Id==original.Id);if(index<0){EndManipulation(true);return;}
-            project.Parts[index]=next;Draw();e.Handled=true;
+            project.Parts[index]=next;_=Perform(()=>RecordHistory(manipulationCorner<0?"rotate":"resize",gestureId:manipulationGesture));Draw();e.Handled=true;
         };
         canvas.PointerReleased+=(_,e)=>{if(manipulation is null)return;EndManipulation(false);e.Handled=true;};
         canvas.PointerCaptureLost+=(_,_)=>{if(manipulation is not null)EndManipulation(false);};
@@ -49,7 +50,7 @@ public sealed partial class ElectronicsScreen
         if(manipulation is not {} original)return;
         var pointer=manipulationPointer;manipulation=null;manipulationPointer=null;
         if(cancel&&manipulationChanged){var index=project.Parts.FindIndex(p=>p.Id==original.Id);if(index>=0)project.Parts[index]=original;if(undo.Count>0)undo.RemoveAt(undo.Count-1);}
-        pointer?.Capture(null);Draw();Inspect();if(manipulationChanged)_=Perform(Save);manipulationChanged=false;
+        pointer?.Capture(null);Draw();Inspect();if(manipulationChanged)_=Perform(()=>Save(cancel?"gesture-cancel":manipulationCorner<0?"rotate-end":"resize-end",true,manipulationGesture));manipulationChanged=false;manipulationGesture=null;
     }
     static bool ValidSelectionColor(string color)=>System.Text.RegularExpressions.Regex.IsMatch(color,"^#[0-9a-fA-F]{6}$");
     void SelectionColorControls()
@@ -98,7 +99,7 @@ public sealed partial class ElectronicsScreen
             marker.PointerPressed+=(_,e)=>
             {
                 if(!e.GetCurrentPoint(marker).Properties.IsLeftButtonPressed)return;
-                manipulation=project.Parts.Single(p=>p.Id==part.Id);manipulationCorner=corner;manipulationStart=e.GetPosition(canvas)/zoom;manipulationChanged=false;
+                manipulation=project.Parts.Single(p=>p.Id==part.Id);manipulationCorner=corner;manipulationStart=e.GetPosition(canvas)/zoom;manipulationChanged=false;manipulationGesture=Guid.NewGuid().ToString("N");
                 canvas.Focus();manipulationPointer=e.Pointer;e.Pointer.Capture(canvas);e.Handled=true;
             };
         }

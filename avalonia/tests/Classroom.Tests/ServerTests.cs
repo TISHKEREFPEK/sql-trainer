@@ -34,9 +34,9 @@ public sealed class ServerTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            info.ArgumentList.Add(Path.Combine(root, $"src/Classroom.Server/bin/{config}/net10.0/Classroom.Server.dll"));
+            info.ArgumentList.Add(Environment.GetEnvironmentVariable("CLASSROOM_TEST_SERVER") ?? Path.Combine(root, $"src/Classroom.Server/bin/{config}/net10.0/Classroom.Server.dll"));
             info.Environment["CLASSROOM_DATA"] = dir;
-            info.Environment["CLASSROOM_WORKER"] = Path.Combine(root, $"src/Classroom.Worker/bin/{config}/net10.0/Classroom.Worker.dll");
+            info.Environment["CLASSROOM_WORKER"] = Environment.GetEnvironmentVariable("CLASSROOM_TEST_WORKER") ?? Path.Combine(root, $"src/Classroom.Worker/bin/{config}/net10.0/Classroom.Worker.dll");
             info.Environment["CLASSROOM_DOTNET"] = dotnet;
             process = Process.Start(info)!;
             process.OutputDataReceived += (_, _) =>
@@ -87,11 +87,18 @@ public sealed class ServerTests
             process = null;
         }
 
+        static async Task OpenLesson(ClassroomApi admin)
+        {
+            var current = (await admin.Get<LessonDashboard>("teacher/lessons")).Current;
+            current ??= await admin.Post<LessonView>("teacher/lessons", new CreateLessonRequest(Guid.NewGuid().ToString("N"), new(null, OpenToAllGroups: true, FreePractice: true)));
+            await admin.Post<LessonView>($"teacher/lessons/{current.Id}/{(current.State == "preparing" ? "start" : "restore")}");
+        }
+
         try
         {
             var admin = await Start();
             var duplicateInfo = new ProcessStartInfo(process!.StartInfo.FileName) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
-            duplicateInfo.ArgumentList.Add(Path.Combine(root, $"src/Classroom.Server/bin/{config}/net10.0/Classroom.Server.dll"));
+            duplicateInfo.ArgumentList.Add(Environment.GetEnvironmentVariable("CLASSROOM_TEST_SERVER") ?? Path.Combine(root, $"src/Classroom.Server/bin/{config}/net10.0/Classroom.Server.dll"));
             duplicateInfo.Environment["CLASSROOM_DATA"] = dir;
             using (var duplicate = Process.Start(duplicateInfo)!)
             {
@@ -105,6 +112,7 @@ public sealed class ServerTests
             }
             await admin.Post<JsonElement>("setup", new PasswordRequest("teacher-test-password"));
             await admin.Login(new("teacher", "", "teacher-test-password"));
+            await OpenLesson(admin);
             using (var wrong = new ClassroomApi(admin.Connection with { Fingerprint = new string ('0', 64) }))
                 await Assert.ThrowsAsync<HttpRequestException>(() => wrong.Get<StatusDto>("status"));
             var students = new List<ClassroomApi>();
@@ -286,6 +294,7 @@ public sealed class ServerTests
             await admin.Login(new("teacher", "", "teacher-test-password"));
             await admin.Post<JsonElement>("teacher/backups/" + Uri.EscapeDataString(backupName) + "/restore");
             await admin.Login(new("teacher", "", "teacher-test-password"));
+            await OpenLesson(admin);
             Assert.NotEmpty(await admin.Get<TaskRevisionDto[]>("teacher/tasks/database/revisions"));
             Assert.Equal(electronicsJson,(await admin.Get<ElectronicsSnapshot>($"teacher/electronics/{electronicsStudent}/report/{electronicsReport}")).ProjectJson);
             await first.Login(new("student", "test-00", "student-test-password"));
@@ -297,6 +306,7 @@ public sealed class ServerTests
             admin = await Start();
             await admin.Login(new("teacher", "", "teacher-test-password"));
             var restored = new ClassroomApi(admin.Connection);
+            await OpenLesson(admin);
             Assert.Equal(electronicsJson,(await admin.Get<ElectronicsSnapshot>($"teacher/electronics/{electronicsStudent}/work/{electronicsClient}")).ProjectJson);
             clients.Add(restored);
             var login = await restored.Login(new("student", "test-00", "student-test-password"));
@@ -324,7 +334,7 @@ public sealed class ServerTests
 
     static string FindRoot()
     {
-        var path = new DirectoryInfo(AppContext.BaseDirectory);
+        var path = new DirectoryInfo(Environment.GetEnvironmentVariable("CLASSROOM_TEST_ROOT") ?? AppContext.BaseDirectory);
         while (path is not null)
         {
             if (File.Exists(Path.Combine(path.FullName, "Classroom.sln")))

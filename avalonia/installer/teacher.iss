@@ -1,8 +1,15 @@
-#define AppVersion "0.1.0"
+#ifndef AppVersion
+  #error Use build-installers.ps1 to supply the published application version.
+#endif
+#ifndef PublishRoot
+#define PublishRoot "..\artifacts\publish"
+#endif
 [Setup]
 AppId={{A183AAE8-DC11-4058-B80C-78A77E09A019}
 AppName=SQL · Преподаватель
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppFileVersion}
+VersionInfoProductTextVersion={#AppVersion}
 AppPublisher=SQL Classroom
 DefaultDirName={localappdata}\Programs\SQL-Classroom-Teacher
 DefaultGroupName=SQL Classroom
@@ -22,7 +29,7 @@ RestartApplications=no
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [Files]
-Source: "..\artifacts\publish\Teacher\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishRoot}\Teacher\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{group}\SQL · Преподаватель"; Filename: "{app}\Classroom.Teacher.exe"
 Name: "{autodesktop}\SQL · Преподаватель"; Filename: "{app}\Classroom.Teacher.exe"; Tasks: desktopicon

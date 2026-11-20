@@ -30,7 +30,9 @@ public sealed class ElectronicsApiTests
         Assert.Equal(403,(await Assert.ThrowsAsync<ApiException>(()=>second.Get<ElectronicsSnapshot>($"teacher/electronics/{f.StudentId}/report/{id}"))).Status);
         Assert.Equal(400,(await Assert.ThrowsAsync<ApiException>(()=>second.Put<ElectronicsSyncReceipt>("electronics/work",request with { ProjectJson="{}" }))).Status);
         var tooBig=CircuitProject.Blink(); tooBig.Code=new string('x',100001);
-        Assert.Equal(400,(await Assert.ThrowsAsync<ApiException>(()=>second.Put<ElectronicsSyncReceipt>("electronics/work",request with { ProjectJson=tooBig.Serialize() }))).Status);
+        Assert.Throws<InvalidDataException>(()=>tooBig.Serialize());
+        var oversized=System.Text.Json.Nodes.JsonNode.Parse(CircuitProject.Blink().Serialize())!; oversized["code"]=tooBig.Code;
+        Assert.Equal(400,(await Assert.ThrowsAsync<ApiException>(()=>second.Put<ElectronicsSyncReceipt>("electronics/work",request with { ProjectJson=oversized.ToJsonString() }))).Status);
     }
     [Fact]
     public async Task ReportHistoryPaginatesWithoutRepeatingEntries()

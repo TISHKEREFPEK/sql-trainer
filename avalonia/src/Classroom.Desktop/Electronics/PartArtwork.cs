@@ -36,6 +36,8 @@ public static class PartArtwork
         Add(1,"buck",32,972,316,213); Add(1,"jack",382,944,251,275); Add(1,"battery",708,913,210,320); Add(1,"slide",997,947,228,280);
         var keys = new[] { "rgb-led","toggle","dip-switch","four-digit","stepper","l298n","a4988","joystick","dht11","pir","flame","ldr-module","mpu","rtc","breadboard-power","matrix" };
         for (var i = 0; i < keys.Length; i++) Add(2, keys[i], i % 4 * 320 + 4, i / 4 * 320 + 4, 312, 312);
+        Add(2, "ds1307-rtc", 310, 979, 304, 190);
+        Add(2, "analog-joystick", 969, 339, 261, 294);
         Add(3,"led-red",115,10,145,292); Add(3,"led-green",415,10,140,292); Add(3,"led-blue",715,10,140,292); Add(3,"led-yellow",1010,8,150,292);
         Add(3,"lm35",115,302,130,298); Add(3,"ir-receiver",407,303,155,295); Add(3,"phototransistor",714,300,154,290); Add(3,"regulator",1013,298,167,302);
         Add(3,"mq2",58,602,247,303); Add(3,"soil",403,588,173,322); Add(3,"water",699,587,179,325); Add(3,"bmp",984,638,210,271);
@@ -52,12 +54,38 @@ public static class PartArtwork
         var h = Math.Min(source.PixelSize.Height - y, (int)(r.Height / 1280 * source.PixelSize.Height));
         return Cache[key] = new CroppedBitmap { Source = source, SourceRect = new PixelRect(x, y, w, h) };
     }
-    public static Control Thumbnail(string key, double width = 90, double height = 70) => Image(key) is { } art
+    public static Control Thumbnail(string key, double width = 90, double height = 70) => key=="ds18b20-native"
+        ? new Viewbox { Child=new Ds18b20Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
+        : key=="hcsr04-native"
+        ? new Viewbox { Child=new Hcsr04Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
+        : key=="dht11-native"
+        ? new Viewbox { Child=new Dht11Face(),Width=width,Height=height,Stretch=Stretch.Uniform }
+        : key=="tft-ili9341"
+        ? new Viewbox { Child=new TftDisplayFace(),Width=width,Height=height,Stretch=Stretch.Uniform }
+        : key == Esp32S3Face.Art
+        ? new Viewbox { Child = new Esp32S3Face(), Width = width, Height = height, Stretch = Stretch.Uniform }
+        : key == I2cLevelShifter.ModelId
+        ? new Viewbox { Child = new I2cLevelShifterFace(), Width = width, Height = height, Stretch = Stretch.Uniform }
+        : key == CircuitMpu6050.ModelId
+        ? new Viewbox { Child = new Mpu6050Face(), Width = width, Height = height, Stretch = Stretch.Uniform }
+        : Image(key) is { } art
         ? new Image { Source = art, Width = width, Height = height, Stretch = Stretch.Uniform }
         : new TextBlock { Text = "⏚", FontSize = 36, Width = width, Height = height, TextAlignment = TextAlignment.Center };
     public static Size BaseBody(CircuitPart p)
     {
         if (p.Kind == PartKind.Uno) return new(260, 195);
+        if (p.Kind == PartKind.Esp32S3) return Esp32S3Face.Body;
+        if (p.Kind == PartKind.Mega) return new(500,270);
+        if (p.Kind == PartKind.LcdI2c) return p.ModelId=="lcd-i2c-20x4"?new(360,190):new(300,150);
+        if (p.Kind == PartKind.OledI2c) return new(220,200);
+        if (p.Kind == PartKind.I2cLevelShifter) return I2cLevelShifterFace.Body;
+        if (p.Kind == PartKind.Mpu6050) return Mpu6050Face.Body;
+        if (p.Kind == PartKind.Ds1307) return new(224, 140);
+        if (p.Kind == PartKind.Joystick) return new(204, 230);
+        if (p.Kind == PartKind.Ds18b20) return new(100,140);
+        if (p.Kind == PartKind.Hcsr04) return new(260,140);
+        if (p.Kind == PartKind.Dht11) return new(120,160);
+        if (p.Kind == PartKind.TftSpi) return TftDisplayFace.ModuleSize;
         if (p.Kind == PartKind.Breadboard) return new(290, 430);
         return PartCatalog.For(p).Art switch
         {
@@ -130,7 +158,34 @@ public static class PartArtwork
             else if (i < 20) { x = 161 + (i - 14) * 14.4; y = 185; }
             else { x = i == 20 ? 109 : 124; y = 185; }
         }
-        else if (PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico" && pins.Length == 40)
+        else if(p.Kind==PartKind.LcdI2c){x=7;y=40+i*20;}
+        else if(p.Kind==PartKind.OledI2c){x=43+i*44;y=8;}
+        else if(p.Kind==PartKind.I2cLevelShifter){var header=I2cLevelShifterFace.Header(i);x=header.X;y=header.Y;}
+        else if(p.Kind==PartKind.Mpu6050){var header=Mpu6050Face.Header(i);x=header.X;y=header.Y;}
+        else if(p.Kind==PartKind.Ds1307){x=5;y=39+i*14.6;}
+        else if(p.Kind==PartKind.Joystick){x=65+i*18;y=222;}
+        else if(p.Kind==PartKind.Ds18b20){x=25+i*25;y=132;}
+        else if(p.Kind==PartKind.Hcsr04){x=102+i*20;y=134;}
+        else if(p.Kind==PartKind.Dht11){x=32+i*20;y=155;}
+        else if(p.Kind==PartKind.TftSpi){var header=TftDisplayFace.Header(i);x=header.X;y=header.Y;}
+        else if (p.Kind == PartKind.Esp32S3)
+        {
+            var header = Esp32S3Face.Header(i);
+            x = header.X;
+            y = header.Y;
+        }
+        else if(p.Kind==PartKind.Mega)
+        {
+            if(pin.StartsWith('D')&&int.TryParse(pin[1..],out var number))
+            {
+                if(number<14){x=283-number*15;y=14;}
+                else if(number<22){x=313+(number-14)*15;y=14;}
+                else{x=number%2==0?474:490;y=30+(number-22)/2*14;}
+            }
+            else if(pin.StartsWith('A')&&int.TryParse(pin[1..],out var analog)){x=200+analog*15;y=259;}
+            else{x=pin switch{"IOREF"=>66,"3V3"=>92,"5V"=>105,"GND"=>118,"VIN"=>144,_=>20};y=259;}
+        }
+        else if ((p.Kind==PartKind.Pico||PartCatalog.For(p).ReferenceName == "Raspberry Pi Pico") && pins.Length == 40)
         {
             x = i < 20 ? 20 : size.Width - 20;
             y = 70 + (i < 20 ? i : 39 - i) * 15;
@@ -169,6 +224,15 @@ public static class PartArtwork
         var size = BaseBody(p); var m = TransformMatrix(p);
         var prefix = FormattableString.Invariant($"<g transform=\"translate({p.X} {p.Y}) matrix({m.M11} {m.M12} {m.M21} {m.M22} {m.M31} {m.M32})\">");
         if (p.Kind == PartKind.Breadboard) return prefix + FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"8\" fill=\"#fafafa\" stroke=\"#b8c0c8\"/>") + "</g>";
+        if(p.Kind==PartKind.LcdI2c)return prefix+FormattableString.Invariant($"<rect width=\"{size.Width}\" height=\"{size.Height}\" rx=\"6\" fill=\"#17664d\"/><rect x=\"24\" y=\"24\" width=\"{size.Width-48}\" height=\"{size.Height-58}\" fill=\"#293d48\"/>")+"</g>";
+        if(p.Kind==PartKind.OledI2c)return prefix+"<rect width=\"220\" height=\"200\" rx=\"5\" fill=\"#174965\"/><rect x=\"12\" y=\"48\" width=\"196\" height=\"108\" fill=\"#010306\"/></g>";
+        if(p.Kind==PartKind.I2cLevelShifter)return prefix+I2cLevelShifterFace.Svg()+"</g>";
+        if(p.Kind==PartKind.Mpu6050)return prefix+Mpu6050Face.Svg()+"</g>";
+        if(p.Kind==PartKind.Ds18b20)return prefix+Ds18b20Face.Svg()+"</g>";
+        if(p.Kind==PartKind.Hcsr04)return prefix+Hcsr04Face.Svg()+"</g>";
+        if(p.Kind==PartKind.Dht11)return prefix+Dht11Face.Svg()+"</g>";
+        if (p.Kind == PartKind.Esp32S3) return prefix + Esp32S3Face.Svg() + "</g>";
+        if(p.Kind==PartKind.TftSpi)return prefix+"<rect width=\"240\" height=\"400.5\" rx=\"5\" fill=\"#17639a\"/><rect x=\"10\" y=\"85\" width=\"220\" height=\"290\" fill=\"#b8bfc4\"/><rect x=\"15\" y=\"90\" width=\"210\" height=\"280\" fill=\"#03070a\"/></g>";
         if (!Regions.TryGetValue(PartCatalog.For(p).Art, out var sprite)) return prefix + "<text x=\"15\" y=\"35\" font-size=\"36\">&#x23DA;</text></g>";
         var r = sprite.Region;
         return prefix + FormattableString.Invariant($"<svg width=\"{size.Width}\" height=\"{size.Height}\" viewBox=\"{r.X} {r.Y} {r.Width} {r.Height}\"><use href=\"#atlas-{sprite.Sheet}\"/></svg></g>");

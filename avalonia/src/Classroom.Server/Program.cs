@@ -70,7 +70,7 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("login", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new() { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
 var workerPath = Environment.GetEnvironmentVariable("CLASSROOM_WORKER") ?? Path.Combine(AppContext.BaseDirectory, "worker", OperatingSystem.IsWindows() ? "Classroom.Worker.exe" : "Classroom.Worker");
-var worker = new WorkerRunner(Path.GetFullPath(workerPath));
+using var worker = new WorkerRunner(Path.GetFullPath(workerPath));
 var state = new ServerState(Path.Combine(dataDir, "classroom.sqlite"), worker);
 await state.Initialize();
 if (args.Contains("--check-database"))

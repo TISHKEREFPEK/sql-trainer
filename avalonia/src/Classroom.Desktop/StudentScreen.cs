@@ -14,10 +14,16 @@ using Classroom.Contracts;
 
 namespace Classroom.Desktop;
 
-public sealed class StudentScreen : UserControl, IDisposable
+public sealed partial class StudentScreen : UserControl, IDisposable
 {
     readonly MainWindow owner;
     readonly ClassroomApi api;
+    SqlLocalStore local = null!;
+    bool previewOnly;
+    string? lessonId;
+    string workScope = "course";
+    bool retiredWork;
+    internal string CurrentWorkScope => workScope;
     readonly ComboBox category = new()
     {
         ItemsSource = new[]
@@ -37,13 +43,13 @@ public sealed class StudentScreen : UserControl, IDisposable
     readonly StackPanel hints = Ui.Stack();
     readonly StackPanel explanation = Ui.Stack();
     readonly StackPanel tables = Ui.Stack();
-    readonly StackPanel result = Ui.Stack();
+    readonly ContentControl result = new(){HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch};
     readonly TextEditor editor = new()
     {
         ShowLineNumbers = true,
-        FontFamily = new FontFamily("Cascadia Code, Consolas, Menlo"),
+        FontFamily = new FontFamily("Consolas, Cascadia Code, Menlo"),
         FontSize = 14,
-        MinHeight = 230,
+        MinHeight = 0,
         HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
         VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
     };
@@ -64,20 +70,16 @@ public sealed class StudentScreen : UserControl, IDisposable
         Interval = TimeSpan.FromSeconds(2)
     };
     readonly SemaphoreSlim draftGate = new(1, 1);
-    readonly SemaphoreSlim eventGate = new(1, 1);
-    readonly Queue<(string TaskId, TaskEventRequest Event)> events = new();
     long lastInput = Environment.TickCount64;
-    readonly string activitySession = Guid.NewGuid().ToString("N");
-    long activitySequence;
-    (string TaskId, ActivityRequest Request)? pendingActivity;
     CatalogueDto? catalogue;
     StudentTask? current;
     PendingExecution? pending;
     int page;
     long generation;
-    long editVersion;
     bool loading, syncing, disposed, executing;
-    string? savedCode;
+    bool openingHint;
+    readonly Button resolveConflict;
+    readonly Button retrySave;
     CancellationTokenSource? debounce;
     public bool Restricted => current?.Restricted == true;
 
@@ -85,6 +87,8 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         this.owner = owner;
         this.api = api;
+        if (api.ProfileId is not null) local = owner.SqlStore(api);
+        lessonId = api.LessonId;
         AddHandler(InputElement.KeyDownEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
         AddHandler(InputElement.PointerPressedEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
         AddHandler(InputElement.PointerWheelChangedEvent, (_, _) => lastInput = Environment.TickCount64, RoutingStrategies.Tunnel, true);
@@ -128,33 +132,61 @@ public sealed class StudentScreen : UserControl, IDisposable
         }).ToArray();
         var sections=new UniformGrid{Columns=3};foreach(var tab in categoryTabs)sections.Children.Add(tab);
         var segment=new Border{Child=sections,CornerRadius=new CornerRadius(8),Padding=new Thickness(3)};Ui.BindBrush(segment,Border.BackgroundProperty,"Subtle");
-        var progressHeading=new Grid{ColumnDefinitions=new("*,Auto")};progressHeading.Children.Add(Ui.Text("Задания",14));progress.FontSize=12;progress.Classes.Add("muted");Grid.SetColumn(progress,1);progressHeading.Children.Add(progress);
-        Ui.BindBrush(progressBar,ProgressBar.ForegroundProperty,"Accent");Ui.BindBrush(progressBar,ProgressBar.BackgroundProperty,"Hover");
-        var nav = Ui.Stack(progressHeading,progressBar,segment,search,topicSections, Ui.Button("Справочник", () => owner.Safe(Glossary)));
+        var categoryHost=new ContentControl{Content=segment,HorizontalContentAlignment=HorizontalAlignment.Stretch};
+        var categoryDisclosure=new Expander{Header=category.SelectedItem as string??"Курс",HorizontalContentAlignment=HorizontalAlignment.Stretch,HorizontalAlignment=HorizontalAlignment.Stretch};
+        Avalonia.Automation.AutomationProperties.SetName(categoryDisclosure,"Раздел SQL");
+        category.SelectionChanged+=(_,_)=>{categoryDisclosure.Header=category.SelectedItem as string??"Курс";categoryDisclosure.IsExpanded=false;};
+        var progressHeading=new Grid{ColumnDefinitions=new("*,Auto"),ColumnSpacing=6};
+        progressHeading.Children.Add(Ui.Muted("Выполнено",12));progress.FontSize=12;progress.Classes.Add("muted");Grid.SetColumn(progress,1);progressHeading.Children.Add(progress);
+        progressBar.Height=4;
+        Ui.BindBrush(progressBar,ProgressBar.ForegroundProperty,"ProgressFill");Ui.BindBrush(progressBar,ProgressBar.BackgroundProperty,"ProgressTrack");
+        Button? dictionaryButton=null;
+        dictionaryButton=Ui.Button("Справочник",()=>owner.Safe(()=>OpenGlossary(dictionaryButton)));
+        navigationBody=Ui.Scroll(Ui.Stack(categoryHost,search,topicSections,dictionaryButton));
+        // These controls can leave StudentScreen's visual subtree for the
+        // shared rail/overlay. Retain the previous activity-input semantics.
+        navigationBody.AddHandler(InputElement.KeyDownEvent,(_,_)=>lastInput=Environment.TickCount64,RoutingStrategies.Tunnel,true);
+        navigationBody.AddHandler(InputElement.PointerPressedEvent,(_,_)=>lastInput=Environment.TickCount64,RoutingStrategies.Tunnel,true);
+        navigationBody.AddHandler(InputElement.PointerWheelChangedEvent,(_,_)=>lastInput=Environment.TickCount64,RoutingStrategies.Tunnel,true);
+        navigationSummary=Ui.Stack(progressHeading,progressBar);
+        navigationContainer=new Grid{RowDefinitions=new("*,Auto"),RowSpacing=10};
+        navigationContainer.Children.Add(navigationBody);Grid.SetRow(navigationSummary,1);navigationContainer.Children.Add(navigationSummary);
         nextHint = Ui.Button("Открыть подсказку", () => owner.Safe(async () =>
         {
-            if (current is null)
-                return;
-            var id = current.Id;
-            var update = await api.Post<StudentTask>($"tasks/{id}/hint", new HintRequest(current.OpenedHints.Length));
-            if (current?.Id == id)
+            if (!CanOpenHint()) return;
+            openingHint = true;
+            try
             {
-                current = update;
-                RenderHints();
+                var id = current!.Id;
+                var lesson = lessonId!;
+                var scope = workScope;
+                var stamp = generation;
+                var index = current.OpenedHints.Length;
+                local.Mark(lesson, scope, id, "hint-request", new(HintIndex: index));
+                var update = await api.Post<StudentTask>($"tasks/{id}/hint", new HintRequest(index, lesson, scope));
+                if (disposed) return;
+                if (update.OpenedHints.Length > index)
+                    local.Mark(lesson, scope, id, "hint-opened", new(HintIndex: index));
+                if (stamp == generation && current?.Id == id && workScope == scope)
+                {
+                    current = update;
+                    RenderHints();
+                }
             }
-        }));
-        prompt.FontSize=17;prompt.LineHeight=27;
-        var learning = Ui.Stack(Ui.Text("Задание",15), prompt, hints, nextHint, new Border{Height=1,Margin=new Thickness(0,12),Background=Application.Current!.Resources["LineBrush"] as IBrush}, Ui.Text("Обучение",15), explanation, new Expander { Header = "Таблицы базы", Content = tables });
+            finally { openingHint = false; }
+        }),CanOpenHint);
         run = Ui.Button("Запустить", () => owner.Safe(() => Execute(false)), () => CanExecute(false));
         check = Ui.Button("Проверить", () => owner.Safe(() => Execute(true)), () => CanExecute(true));
         Ui.Primary(check);
+        resolveConflict=Ui.Button("Разрешить конфликт черновика",ShowDraftConflict);resolveConflict.IsVisible=false;
+        retrySave=Ui.Button("Повторить сохранение",()=>owner.Safe(SaveDraft));retrySave.IsVisible=false;
         editor.TextChanged += (_, _) =>
         {
+            RefreshEditingCommands();UpdateResultStale();
             if (loading || current is null)
                 return;
-            editVersion++;
-            owner.RememberDraft(current.Id, editor.Text);
-            saved.Text = "Изменения не сохранены";
+            try { local.Edit(lessonId!, workScope, current.Id, editor.Text, editor.CaretOffset, editKind); RefreshSaveStatus(); }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { retrySave.IsVisible=true;saved.Text = "Не удалось сохранить на ПК: " + e.Message; }
             debounce?.Cancel();
             debounce = new();
             _ = SaveLater(debounce.Token);
@@ -168,67 +200,34 @@ public sealed class StudentScreen : UserControl, IDisposable
                 e.Handled = true;
                 _ = owner.Safe(() => Violation(command == ApplicationCommands.Copy ? "copy" : command == ApplicationCommands.Cut ? "cut" : "paste"));
             }, (_, e) => e.CanExecute = Restricted));
-        var work = new Grid
-        {
-            RowDefinitions = new("48,Auto,*,Auto,Auto,*")
-        };
-        restrictionFeedback.FontWeight = FontWeight.SemiBold;
-        var restrictionPanel = Ui.Stack(restrictionNotice, restrictionFeedback);
-        var restrictionBorder = new Border
-        {
-            Child = restrictionPanel,
-            Padding = new Thickness(10),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6)
-        };
-        restrictionBorder.Bind(Border.BorderBrushProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("LineBrush"));restrictionNotice.FontSize=12;restrictionNotice.Classes.Add("muted");
-        var editorTitle=Ui.Text("SQL-запрос",13);Ui.BindBrush(editorTitle,TextBlock.ForegroundProperty,"EditorInk");
-        var editorHeader=new Border{Child=editorTitle,Padding=new Thickness(20,12)};Ui.BindBrush(editorHeader,Border.BackgroundProperty,"Editor");work.Children.Add(editorHeader);
-        Grid.SetRow(restrictionBorder,1);work.Children.Add(restrictionBorder);
-        Grid.SetRow(editor, 2);editor.Padding=new Thickness(14,18);
-        work.Children.Add(editor);
-        var buttons = Ui.Row(run, check);
-        run.Background=Brushes.Transparent;Ui.BindBrush(run,Button.ForegroundProperty,"EditorInk");
-        var editorActions=new Border{Child=buttons,Padding=new Thickness(20,16)};Ui.BindBrush(editorActions,Border.BackgroundProperty,"Editor");
-        Grid.SetRow(editorActions, 3);
-        work.Children.Add(editorActions);
-        var reset = Ui.Button("Сбросить запрос", () =>
-        {
-            if (current is not null)
-                editor.Text = current.Starter;
-            return Task.CompletedTask;
-        });
-        var statePanel = Ui.Stack(saved, pause, reset);
-        statePanel.Margin=new Thickness(20,12);
-        Grid.SetRow(statePanel, 4);
-        work.Children.Add(statePanel);
-        var output = Ui.Scroll(Ui.Stack(Ui.Muted("Результат",13),result));
-        output.Margin=new Thickness(20,0,20,20);Grid.SetRow(output, 5);
-        work.Children.Add(output);
         var grid = new Grid
         {
             ColumnDefinitions = new("240,*")
         };
-        var sidebar=new Border{Child=Ui.Scroll(nav),Padding=new Thickness(12,24,12,16),BorderThickness=new Thickness(0,0,1,0)};Ui.BindBrush(sidebar,Border.BackgroundProperty,"Surface");Ui.BindBrush(sidebar,Border.BorderBrushProperty,"Line");grid.Children.Add(sidebar);
-        var workspace=new Grid{ColumnDefinitions=new("*,1.25*"),ColumnSpacing=24};
-        var card = Ui.Card(Ui.Scroll(learning));
-        workspace.Children.Add(card);
-        var workstation = Ui.Card(work);
-        workstation.Padding=new Thickness(0);workstation.ClipToBounds=true;
-        Grid.SetColumn(workstation, 1);
-        workspace.Children.Add(workstation);
-        heading.FontSize=28;heading.LineHeight=36;heading.FontWeight=FontWeight.SemiBold;
-        var content=new Grid{RowDefinitions=new("Auto,*"),RowSpacing=24,Margin=new Thickness(32)};content.Children.Add(heading);var workspaceScroll=Ui.Scroll(workspace);Grid.SetRow(workspaceScroll,1);content.Children.Add(workspaceScroll);Grid.SetColumn(content,1);grid.Children.Add(content);
+        var sidebar=new Border{Child=navigationContainer,Padding=new Thickness(12,24,12,16),BorderThickness=new Thickness(0,0,1,0)};Ui.BindBrush(sidebar,Border.BackgroundProperty,"Surface");Ui.BindBrush(sidebar,Border.BorderBrushProperty,"Line");grid.Children.Add(sidebar);
+        var workspace=CreateSqlWorkspace();
+        heading.FontSize=26;heading.LineHeight=31.2;heading.FontWeight=FontWeight.SemiBold;heading.MaxLines=2;heading.TextTrimming=TextTrimming.CharacterEllipsis;
+        var content=new Grid{RowDefinitions=new("Auto,*"),RowSpacing=16,Margin=new Thickness(16)};
+        content.Children.Add(CreateSqlHeading());Grid.SetRow(workspace,1);content.Children.Add(workspace);Grid.SetColumn(content,1);grid.Children.Add(content);
         Content = grid;
-        SizeChanged += (_, _) =>
+        refreshNavigationLayout=()=>
         {
-            var narrow=Bounds.Width<1000;grid.ColumnDefinitions=new(Bounds.Width<1200?"220,*":"240,*");content.Margin=new Thickness(Bounds.Width<1200?24:32);
-            workspace.ColumnSpacing=narrow?0:Bounds.Width<1200?16:24;
-            workspace.ColumnDefinitions=new(narrow?"*":"*,1.25*");workspace.RowDefinitions=new(narrow?"Auto,Auto":"*");Grid.SetRow(workstation,narrow?1:0);Grid.SetColumn(workstation,narrow?0:1);workspace.RowSpacing=narrow?16:0;
-            workstation.MinHeight=narrow?580:0;card.MaxHeight=double.PositiveInfinity;
+            sidebar.IsVisible=!navigationHosted;dictionaryButton.IsVisible=!navigationHosted;
+            if(navigationHosted&&!ReferenceEquals(categoryHost.Content,categoryDisclosure))
+            {
+                categoryHost.Content=null;categoryDisclosure.Content=segment;categoryHost.Content=categoryDisclosure;sections.Columns=1;
+            }
+            else if(!navigationHosted&&!ReferenceEquals(categoryHost.Content,segment))
+            {
+                categoryHost.Content=null;categoryDisclosure.Content=null;categoryHost.Content=segment;sections.Columns=3;
+            }
+            grid.ColumnDefinitions[0].Width=new GridLength(navigationHosted?0:Bounds.Width<1200?220:240);
+            content.Margin=new Thickness(navigationHosted?0:16);
         };
+        SizeChanged += (_, _) =>refreshNavigationLayout();
         poll.Tick += async (_, _) => await Synchronize();
         ThemeManager.Changed += ApplyTheme;
+        ConfigureHistory();
         ApplyTheme();
     }
 
@@ -236,16 +235,32 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         editor.Background = Application.Current!.Resources["EditorBrush"] as IBrush;
         editor.Foreground = Application.Current.Resources["EditorInkBrush"] as IBrush;
+        editor.LineNumbersForeground = Application.Current.Resources["LineNumbersBrush"] as IBrush;
         editor.SyntaxHighlighting = SqlHighlighting.Create(ThemeManager.Ink(((SolidColorBrush)editor.Background!).Color.ToString()));
     }
 
-    public async Task Load()
+    public async Task Load(string? taskId = null)
     {
         catalogue = await api.Get<CatalogueDto>("catalog");
         UpdateModules();
         poll.Start();
         if (catalogue.Tasks.Length > 0)
-            await Select(catalogue.Tasks.Any(t => t.Id == owner.LastTaskId) ? owner.LastTaskId! : catalogue.Tasks[0].Id);
+            await Select(taskId is not null && catalogue.Tasks.Any(t => t.Id == taskId) ? taskId : catalogue.Tasks.Any(t => t.Id == owner.LastTaskId) ? owner.LastTaskId! : catalogue.Tasks[0].Id);
+    }
+
+    internal async Task OpenTask(string? id)
+    {
+        catalogue = await api.Get<CatalogueDto>("catalog"); UpdateModules();
+        var target = catalogue.Tasks.FirstOrDefault(t => t.Id == id) ?? catalogue.Tasks.FirstOrDefault();
+        if (target is null) { retiredWork = true; await owner.ShowStudentHome(); return; }
+        if (current?.Id == target.Id)
+        {
+            var updated = await api.Get<StudentTask>($"tasks/{target.Id}");
+            if (!retiredWork && updated.WorkScope == workScope) return;
+            await SaveDraft(); current = null;
+        }
+        category.SelectedItem = Category(target); module.SelectedItem = target.Module;
+        await Select(target.Id);
     }
 
     // Same grouping as main's components/task-navigation.tsx.
@@ -267,8 +282,7 @@ public sealed class StudentScreen : UserControl, IDisposable
     {
         if (catalogue is null)
             return;
-        progress.Text = $"{catalogue.Completed.Length} из {catalogue.Tasks.Length}";
-        progressBar.Value=catalogue.Tasks.Length==0?0:catalogue.Completed.Length*100d/catalogue.Tasks.Length;
+        RefreshProgress();
         var text = search.Text?.Trim() ?? "";
         var filtered = catalogue.Tasks.Where(t => t.Module == (module.SelectedItem as string) && (text.Length == 0 || t.Title.Contains(text, StringComparison.OrdinalIgnoreCase))).ToArray();
         var pages = Math.Max(1, (filtered.Length + 7) / 8);
@@ -305,13 +319,14 @@ public sealed class StudentScreen : UserControl, IDisposable
         var task = await api.Get<StudentTask>($"tasks/{id}");
         if (disposed || stamp != generation)
             return;
+        if (current is not null && historyVisible) RecordHistory("work-leave");
         DisplayTask(task);
         lastInput = Environment.TickCount64;
-        events.Enqueue((id, new(Guid.NewGuid().ToString("N"), "opened")));
+        local.Action(lessonId!, workScope, id, "opened");
         await FlushEvents();
         if (executing || task.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             return;
-        var preview = await new PendingExecution(id, "", false).Send(api);
+        var preview = await new PendingExecution(id, "", false, lessonId, task.WorkScope).Send(api);
         if (stamp != generation || disposed)
             return;
         RenderTables(preview.Tables);
@@ -319,16 +334,19 @@ public sealed class StudentScreen : UserControl, IDisposable
 
     void DisplayTask(StudentTask task)
     {
+        workScope = task.WorkScope;
+        retiredWork = false;
         current = task;
         tasks.SelectedItem=tasks.Items.OfType<TaskChoice>().FirstOrDefault(t=>t.Id==task.Id);
         restrictionFeedback.Text = "";
         restrictionFeedback.IsVisible = false;
         owner.LastTaskId = task.Id;
-        pending = owner.PendingFor(task.Id);
-        heading.Text = task.Title + $" · Вариант {task.VariantIndex}";
+        var stored = local.Observe(lessonId!, task);
+        pending = local.Pending(lessonId!, workScope, task.Id);
+        heading.Text = task.Title;ToolTip.SetTip(heading,task.Title+$" · Вариант {task.VariantIndex}");
         prompt.Text = task.Prompt;
         explanation.Children.Clear();
-        explanation.Children.Add(Ui.Muted(task.Concept,16));
+        explanation.Children.Add(Ui.Text(task.Concept,14));
         explanation.Children.Add(Ui.Muted("Пример",13));
         var example=Ui.Text(task.Example,14);example.FontFamily=new FontFamily("Consolas, monospace");var exampleBox=new Border{Child=example,CornerRadius=new CornerRadius(8),Padding=new Thickness(14)};Ui.BindBrush(exampleBox,Border.BackgroundProperty,"Subtle");explanation.Children.Add(exampleBox);
         var terms = new ComboBox
@@ -339,24 +357,29 @@ public sealed class StudentScreen : UserControl, IDisposable
         terms.SelectionChanged += (_, _) => definition.Text = task.Definitions.GetValueOrDefault(terms.SelectedItem as string ?? "", "");
         explanation.Children.Add(new Expander { Header = "Термины", Content = Ui.Stack(terms, definition) });
         loading = true;
-        editor.Text = owner.UnsavedDraft(task.Id) ?? (task.Draft.Length > 0 ? task.Draft : task.Starter);
+        editor.Text = stored.Code;
+        editor.CaretOffset = Math.Clamp(stored.Caret, 0, editor.Text.Length);
         loading = false;
-        savedCode = task.Draft;
-        saved.Text = owner.UnsavedDraft(task.Id) is not null ? "Изменения не сохранены" : task.Draft.Length > 0 ? "Черновик сохранён" : "";
+        RefreshSaveStatus();
         RenderHints();
         Policy();
-        result.Children.Clear();
+        ResetSqlResult();resetMaterials();
         tables.Children.Clear();
     }
 
     internal void Preview(CatalogueDto catalog, StudentTask task, ExecutionDto preview)
     {
+        if (local is null)
+        {
+            previewOnly = true; lessonId = Guid.NewGuid().ToString("N");
+            local = new SqlLocalStore(Path.Combine(Path.GetTempPath(), "classroom-sql-preview-" + Guid.NewGuid().ToString("N")), api.Connection.Fingerprint, "preview");
+        }
         catalogue = catalog;
         UpdateModules();
         module.SelectedItem = task.Module;
         DisplayTask(task);
         RenderTables(preview.Tables);
-        result.Children.Add(Ui.Table(preview.Output));
+        if(preview.Error is not null||preview.Output.Columns.Length>0||preview.Output.Values.Length>0)ShowSqlResult(preview,editor.Text,false);
     }
 
     void RenderHints()
@@ -367,6 +390,8 @@ public sealed class StudentScreen : UserControl, IDisposable
         foreach (var hint in current.OpenedHints)
             hints.Children.Add(Ui.Text(hint));
         nextHint.IsVisible = current.OpenedHints.Length < current.HintTotal;
+        hintEnd.Text=!nextHint.IsVisible&&current.HintTotal>0?"Все подсказки открыты":"";
+        hintEnd.IsVisible=hintEnd.Text.Length>0;
     }
 
     void RenderTables(TablePreview[] previews)
@@ -396,12 +421,22 @@ public sealed class StudentScreen : UserControl, IDisposable
         editor.IsEnabled = !locked;
         run.IsEnabled = CanExecute(false);
         check.IsEnabled = CanExecute(true);
-        nextHint.IsEnabled = !locked;
+        nextHint.IsEnabled = CanOpenHint();
         pause.Text = locked ? "Работа приостановлена на 30 секунд за запрещённое действие. Дождитесь снятия ограничения." : "";
         owner.Protect(current.Restricted);
+        refreshWorkspacePolicy();UpdateResultCount();
     }
 
     bool CanExecute(bool checking) => !disposed && !executing && current is not null && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() && !(checking && current.Completed && current.Project is not null);
+    bool CanOpenHint()=>!disposed&&!openingHint&&current is { } task&&
+        task.LockedUntil<=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()&&task.OpenedHints.Length<task.HintTotal;
+
+    void RefreshProgress()
+    {
+        if(catalogue is null)return;
+        progress.Text=$"{catalogue.Completed.Length} из {catalogue.Tasks.Length}";
+        progressBar.Value=catalogue.Tasks.Length==0?0:catalogue.Completed.Length*100d/catalogue.Tasks.Length;
+    }
 
     async Task Execute(bool checking)
     {
@@ -410,57 +445,38 @@ public sealed class StudentScreen : UserControl, IDisposable
         executing = true;
         var stamp = generation;
         var id = current!.Id;
+        var code = editor.Text;
         PendingExecution? submitted = null;
         try
         {
             Policy();
+            var remembered = local.Pending(lessonId!, workScope, id);
             await SaveDraft();
             if (stamp != generation || disposed)
                 return;
             // A failed transport keeps pending; the next attempt retries exactly that operation.
-            var retry = owner.PendingFor(id) is not null;
-            pending ??= owner.PendingFor(id) ?? new PendingExecution(id, editor.Text, checking);
+            if (local.Find(lessonId!, workScope, id)?.Conflict is not null) throw new InvalidDataException("Сначала разрешите конфликт черновика.");
+            var retry = remembered is not null || local.Pending(lessonId!, workScope, id) is not null;
+            pending = remembered ?? local.Pending(lessonId!, workScope, id) ?? new PendingExecution(id, code, checking, lessonId, workScope);
             if (pending.TaskId != id)
-                pending = owner.PendingFor(id) ?? new(id, editor.Text, checking);
+                pending = local.Pending(lessonId!, workScope, id) ?? new(id, code, checking, lessonId, workScope);
             submitted = pending;
-            owner.RememberPending(pending);
+            local.Remember(pending);
+            RefreshSaveStatus();
             var submittedCheck = pending.Request.Check;
             if (retry)
                 owner.Message("Повторяется незавершённая операция с прежним SQL.");
             var response = await submitted.Send(api);
-            owner.ForgetPending(id);
+            local.Acknowledge(submitted, response);
             if (ReferenceEquals(pending, submitted))
                 pending = null;
             if (stamp != generation || disposed)
                 return;
-            result.Children.Clear();
-            RenderTables(response.Tables);
-            if (response.Error is not null)
-            {
-                result.Children.Add(Ui.Text(response.Error));
-                result.Children.Add(Ui.Text(response.Explanation ?? ""));
-                owner.Error("Запрос не выполнен.");
-            }
-            else
-            {
-                result.Children.Add(Ui.Text(submittedCheck ? response.Correct ? "Верно" : "Результат отличается от ожидаемого" : "Результат запроса", 18));
-                result.Children.Add(Ui.Table(response.Output));
-                if (submittedCheck && response.Correct)
-                {
-                    var next = catalogue?.Tasks.SkipWhile(t => t.Id != id).Skip(1).FirstOrDefault();
-                    if (next is not null)
-                        result.Children.Add(Ui.Button("Следующее задание", () => owner.Safe(async () =>
-                        {
-                            category.SelectedItem = Category(next);
-                            module.SelectedItem = next.Module;
-                            search.Text = "";
-                            await Select(next.Id);
-                        })));
-                }
-            }
+            if (response.Error is null) RenderTables(response.Tables);
+            ShowSqlResult(response,submitted.Request.Code,submittedCheck,id);
 
             catalogue = await api.Get<CatalogueDto>("catalog");
-            progress.Text = $"Выполнено {catalogue.Completed.Length} / {catalogue.Tasks.Length}";
+            RefreshProgress();
             var updated = await api.Get<StudentTask>($"tasks/{id}");
             if (stamp == generation)
             {
@@ -472,9 +488,9 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             if (submitted is not null)
             {
-                owner.ForgetPending(id);
-                if (ReferenceEquals(pending, submitted))
-                    pending = null;
+                local.Reject(submitted, e.Message);
+                if (ReferenceEquals(pending, submitted)) pending = null;
+                RefreshSaveStatus();
             }
             throw;
         }
@@ -482,7 +498,9 @@ public sealed class StudentScreen : UserControl, IDisposable
         {
             executing = false;
             if (!disposed)
-                Policy();
+            {
+                RefreshSaveStatus();Policy();
+            }
         }
     }
 
@@ -497,10 +515,16 @@ public sealed class StudentScreen : UserControl, IDisposable
         catch (OperationCanceledException)
         {
         }
-        catch (Exception e) when (e is HttpRequestException or ApiException)
+        catch (Exception e) when (e is HttpRequestException or ApiException or IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            saved.Text = "Нет связи: черновик остаётся в открытом окне";
+            RefreshSaveStatus();
         }
+    }
+
+    public void SaveLocalDraft()
+    {
+        if (current is not null && local.Find(lessonId!, workScope, current.Id)?.Code != editor.Text)
+            local.Edit(lessonId!, workScope, current.Id, editor.Text, editor.CaretOffset);
     }
 
     public async Task SaveDraft()
@@ -508,18 +532,12 @@ public sealed class StudentScreen : UserControl, IDisposable
         await draftGate.WaitAsync();
         try
         {
-            if (current is null || editor.Text == savedCode)
-                return;
-            var id = current.Id;
-            var code = editor.Text;
-            var version = editVersion;
-            await api.Put<JsonElement>($"tasks/{id}/draft", new DraftRequest(code));
-            if (current?.Id == id && editVersion == version)
-            {
-                savedCode = code;
-                owner.ForgetDraft(id);
-                saved.Text = "Черновик сохранён";
-            }
+            if (current is null) return;
+            SaveLocalDraft();
+            using var transfer = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            try { await local.Drain(api, transfer.Token); }
+            catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { }
+            RefreshSaveStatus();
         }
         finally
         {
@@ -529,15 +547,25 @@ public sealed class StudentScreen : UserControl, IDisposable
 
     async Task Synchronize()
     {
-        if (syncing || disposed || current is null)
+        if (syncing || disposed)
             return;
         syncing = true;
         try
         {
+            await local.Drain(api);
+            if (disposed || current is null || retiredWork) return;
             var id = current.Id;
-            var update = await api.Get<StudentTask>($"tasks/{id}");
+            var update = await api.Get<StudentTask>($"tasks/{id}?workScope={Uri.EscapeDataString(workScope)}");
             if (current?.Id != id || disposed)
                 return;
+            if (update.WorkScope != workScope)
+            {
+                await SaveDraft(); retiredWork = true; await owner.ShowStudentHome();
+                owner.Message("Преподаватель изменил выдачу. Прежний черновик сохранён; откройте работу в «Моё занятие».");
+                return;
+            }
+            for (var hint = current.OpenedHints.Length; hint < update.OpenedHints.Length; hint++)
+                RecordHistory("hint-opened", new(HintIndex: hint));
             current = update;
             Policy();
             RenderHints();
@@ -545,29 +573,41 @@ public sealed class StudentScreen : UserControl, IDisposable
             await SaveDraft();
             if (current?.Id != id || disposed)
                 return;
-            if (pendingActivity is { } retry)
-            {
-                await api.Post<JsonElement>($"tasks/{retry.TaskId}/activity", retry.Request);
-                pendingActivity = null;
-            }
             if (owner.IsActive && owner.IsLessonVisible && Environment.TickCount64 - lastInput < 120000 && !current.Completed && current.LockedUntil <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             {
-                pendingActivity = (id, new(2, activitySession, ++activitySequence));
-                await api.Post<JsonElement>($"tasks/{id}/activity", pendingActivity.Value.Request);
-                pendingActivity = null;
+                local.Action(lessonId!, workScope, id, "activity", 2);
+                await local.Drain(api);
             }
         }
         catch (ApiException e) when (e.Status == 401)
         {
             await owner.Reauthenticate();
         }
+        catch (ApiException e) when (e.Status is 403 or 409)
+        {
+            await owner.Safe(async () => { await SaveDraft(); retiredWork = true; await owner.ShowStudentHome(); owner.Message("Преподаватель изменил выдачу. Прежняя работа сохранена."); });
+        }
+        catch (ApiException e) when (e.Status == 423)
+        {
+            // The main window explains the class pause/end. Retain pending saves without a false network error.
+            try { await SaveDraft(); }
+            catch (Exception savingError) when (savingError is HttpRequestException or ApiException or TaskCanceledException)
+            { RefreshSaveStatus(); }
+        }
         catch (Exception e) when (e is HttpRequestException or ApiException or TaskCanceledException)
         {
-            owner.Error("Связь с преподавателем потеряна. Запуск SQL недоступен; черновик остаётся в открытом окне.");
+            RefreshSaveStatus();
+            owner.Error("Связь с преподавателем потеряна. Запуск SQL недоступен; локально сохранённый черновик будет передан после подключения.");
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            RefreshSaveStatus();
+            owner.Error("Не удалось записать локальное подтверждение. Очередь сохранена для повторной передачи. " + e.Message);
         }
         finally
         {
             syncing = false;
+            RefreshSaveStatus();
         }
     }
 
@@ -579,8 +619,9 @@ public sealed class StudentScreen : UserControl, IDisposable
             return;
         ShowRestrictionFeedback("Копирование, вырезание и вставка запрещены преподавателем.");
         var id = current.Id;
-        events.Enqueue((id, new(Guid.NewGuid().ToString("N"), action)));
+        local.Action(lessonId!, workScope, id, action);
         await FlushEvents();
+        if (previewOnly) return;
         var update = await api.Get<StudentTask>($"tasks/{id}");
         if (current?.Id == id)
         {
@@ -594,24 +635,13 @@ public sealed class StudentScreen : UserControl, IDisposable
         if (Restricted)
         {
             ShowRestrictionFeedback("Снимки этого окна запрещены преподавателем.");
-            events.Enqueue((current!.Id, new(Guid.NewGuid().ToString("N"), "capture")));
+            try { local.Action(lessonId!, workScope, current!.Id, "capture"); }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { saved.Text = "Не удалось сохранить событие на ПК: " + e.Message; return; }
             _ = owner.Safe(FlushEvents);
         }
     }
 
-    async Task FlushEvents()
-    {
-        await eventGate.WaitAsync();
-        try
-        {
-            while (events.TryPeek(out var item))
-            {
-                await api.Post<JsonElement>($"tasks/{item.TaskId}/events", item.Event);
-                events.Dequeue();
-            }
-        }
-        finally { eventGate.Release(); }
-    }
+    Task FlushEvents() => previewOnly ? Task.CompletedTask : local.Drain(api);
 
     void ShowRestrictionFeedback(string text)
     {
@@ -620,42 +650,45 @@ public sealed class StudentScreen : UserControl, IDisposable
         owner.Error(text);
     }
 
-    async Task Glossary()
+    async Task Glossary(Control? trigger)
     {
+        if (owner.IsGlossaryOpen) return;
         await SaveDraft();
         var glossary = await api.Get<Dictionary<string, string>>("glossary");
-        var filter = Ui.Input();
-        filter.Watermark = "Поиск термина";
-        var list = Ui.Stack();
-        void Update()
+        if (disposed || trigger?.IsEffectivelyVisible == false) return;
+        var resumeHistory = historyVisible;
+        RecordHistory("dictionary-open");
+        if (resumeHistory)
         {
-            list.Children.Clear();
-            foreach (var entry in glossary.Where(g => g.Key.Contains(filter.Text ?? "", StringComparison.OrdinalIgnoreCase)))
-                list.Children.Add(new Expander { Header = entry.Key, Content = Ui.Text(entry.Value) });
+            RecordHistory("work-leave");
+            historyVisible = false;
         }
-
-        filter.TextChanged += (_, _) => Update();
-        Update();
-        var layout = new Grid
+        try { await owner.ShowGlossaryDialog(glossary, trigger); }
+        finally
         {
-            RowDefinitions = new("Auto,*"),
-            RowSpacing = 12
-        };
-        layout.Children.Add(filter);
-        var scroll = Ui.Scroll(list);
-        Grid.SetRow(scroll, 1);
-        layout.Children.Add(scroll);
-        owner.ShowPage("Справочник SQL", layout);
+            RecordHistory("dictionary-close");
+            if (resumeHistory && !disposed && owner.IsLessonVisible)
+            {
+                historyVisible = true;
+                historyFocused = owner.IsActive;
+                RecordHistory("work-open");
+            }
+        }
     }
+
 
     public void Dispose()
     {
+        if (disposed) return;
+        if (historyVisible) RecordHistory("work-close");
+        ReleaseHistory();
         disposed = true;
         generation++;
         poll.Stop();
         debounce?.Cancel();
         debounce?.Dispose();
         ThemeManager.Changed -= ApplyTheme;
+        if (previewOnly) local.Dispose();
     }
 
     sealed record TaskChoice(string Id, string Title)

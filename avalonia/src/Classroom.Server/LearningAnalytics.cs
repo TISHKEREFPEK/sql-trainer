@@ -7,10 +7,16 @@ namespace Classroom.Server;
 
 public static class LearningAnalytics
 {
+    public static string[] AvailableTaskIds(CatalogueItem[] catalog, AssignmentEntity[] own)
+    {
+        var projects = own.Select(a => Catalog.Read(a.Json).Project).Where(p => p is not null).ToHashSet();
+        var ids = own.Select(a => a.TaskId).ToHashSet();
+        return catalog.Where(t => t.Project is null || !projects.Contains(t.Project) || ids.Contains(t.Id)).Select(t => t.Id).Concat(ids).Distinct().ToArray();
+    }
     static bool Check(AttemptEntity e) => e.Action == "check" || e.Action is null && e.Kind is not ("clipboard" or "capture");
     static bool Violation(AttemptEntity e) => e.Kind is "clipboard" or "capture";
 
-    public static LearningRecord Record(AssignmentEntity a, AttemptEntity[] events)
+    public static LearningRecord Record(ISqlWork a, AttemptEntity[] events)
     {
         var task = Catalog.Read(a.Json);
         var first = events.Where(Check).OrderBy(e => e.At).ThenBy(e => e.Id).FirstOrDefault();
@@ -36,9 +42,7 @@ public static class LearningAnalytics
                 var students = (await db.Profiles.Where(p => p.Role == "student").ToArrayAsync()).Select(p =>
                 {
                     var own = assignments.Where(a => a.StudentId == p.Id).ToArray();
-                    var projects = own.Select(a => Catalog.Read(a.Json).Project).Where(x => x is not null).ToHashSet();
-                    var ids = own.Select(a => a.TaskId).ToHashSet();
-                    var available = catalog.Where(t => t.Project is null || !projects.Contains(t.Project) || ids.Contains(t.Id)).Select(t => t.Id).Concat(ids).Distinct().ToArray();
+                    var available = AvailableTaskIds(catalog, own);
                     return new LearningStudent(p.Id, p.Login, p.GroupId, own.Count(a => a.CompletedAt is not null), available.Length,
                         own.Select(a => a.LastActivityAt).Max(), available);
                 }).ToArray();
@@ -72,15 +76,17 @@ public static class LearningAnalytics
         api.MapPost("/tasks/{id}/events", (HttpContext ctx, string id, TaskEventRequest input) =>
         {
             var session = state.Authorize(ctx, "student");
+            LessonRoutes.CheckContext(session, input.LessonId);
             if (!Guid.TryParseExact(input.EventId, "N", out _) || input.Action is not ("opened" or "copy" or "cut" or "paste" or "clipboard" or "drop" or "capture"))
                 throw new HttpFault(400, "Некорректное событие.");
             return state.Write(async db =>
             {
                 var student = await db.Profiles.FindAsync(session.ProfileId) ?? throw new HttpFault(404, "Профиль не найден.");
-                var a = await state.Assignment(db, student, id);
+                await LessonRoutes.RequireMember(state, db, session, saving: true);
+                var a = await state.Assignment(db, student, id, session.LessonId, retainedSave: true, workScope: input.WorkScope);
                 var eventId = student.Id + ":" + input.EventId;
                 var receipt = await db.Operations.FindAsync(student.Id, "event:" + input.EventId);
-                var hash = id + ":" + input.Action;
+                var hash = session.LessonId + ":" + ServerState.Scope(a) + ":" + id + ":" + input.Action;
                 if (receipt is not null && receipt.RequestHash != hash)
                     throw new HttpFault(409, "Событие уже использовано.");
                 if (receipt is not null)
@@ -95,7 +101,7 @@ public static class LearningAnalytics
                 }
                 else if ((await db.Tasks.FindAsync(id))?.Restricted == true)
                 {
-                    db.Attempts.Add(new() { Id = eventId, StudentId = student.Id, TaskId = id, Action = input.Action, Kind = input.Action == "capture" ? "capture" : "clipboard", At = ServerState.Now });
+                    db.Attempts.Add(new() { Id = eventId, LessonId = session.LessonId, WorkScope = ServerState.Scope(a), StudentId = student.Id, TaskId = id, Action = input.Action, Kind = input.Action == "capture" ? "capture" : "clipboard", At = ServerState.Now });
                     a.LastActivityAt = ServerState.Now;
                     if (input.Action != "capture" && student.LockedUntil <= ServerState.Now)
                         student.LockedUntil = ServerState.Now + 30000;

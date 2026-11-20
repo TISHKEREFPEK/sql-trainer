@@ -44,10 +44,11 @@ public sealed class CodeGuideTests
         var project=CircuitExamples.Servo(); project.Code="// мой код\nvoid setup(){} void loop(){}";
         var dir=Path.Combine(Path.GetTempPath(),"classroom-code-guide-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(dir); var file=Path.Combine(dir,"project.json"); File.WriteAllText(file,project.Serialize());
         var window=new MainWindow(true,false){Width=width,Height=900}; using var view=new ElectronicsScreen(window,file); window.Preview(view); window.Show(); window.UpdateLayout();
-        view.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex=1; window.UpdateLayout();
+        view.GetVisualDescendants().OfType<Expander>().Single().IsExpanded=true; window.UpdateLayout();
         Assert.Contains(view.GetVisualDescendants().OfType<TextBlock>(),t=>t.Text?.Contains("Servo.h")==true);
         Assert.True(view.GetVisualDescendants().OfType<Button>().Single(b=>b.Content?.ToString()=="Создать шаблон по схеме").IsEnabled);
         view.Suspend(); Assert.Equal(project.Code,CircuitProject.Parse(File.ReadAllText(file)).Code);
+        view.GetVisualDescendants().OfType<Expander>().Single().IsExpanded=false; window.UpdateLayout();
         using var frame=window.CaptureRenderedFrame(); var output=Environment.GetEnvironmentVariable("CLASSROOM_UI_OUTPUT")??Path.Combine(AppContext.BaseDirectory,"screenshots"); Directory.CreateDirectory(output); frame!.Save(Path.Combine(output,$"code-guide-{width}.png")); window.Close();
     }
 }

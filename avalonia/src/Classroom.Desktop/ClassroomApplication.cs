@@ -16,7 +16,7 @@ public sealed class ClassroomApplication : Application
         Styles.Add(new StyleInclude(new Uri("avares://Classroom.Desktop/")) { Source = new Uri("avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml") });
         Styles.Add(new StyleInclude(new Uri("avares://Classroom.Desktop/")) { Source = new Uri("avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml") });
         var style = new Style(x => x.OfType<Window>());
-        style.Setters.Add(new Setter(Window.FontFamilyProperty, new Avalonia.Media.FontFamily("Segoe UI, Arial")));
+        style.Setters.Add(new Setter(Window.FontFamilyProperty, new Avalonia.Media.FontFamily("Segoe UI Variable, Segoe UI, Arial")));
         style.Setters.Add(new Setter(Window.FontSizeProperty, 14d));
         style.Setters.Add(new Setter(Window.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BackgroundBrush")));
         style.Setters.Add(new Setter(Window.ForegroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("InkBrush")));
@@ -34,6 +34,7 @@ public sealed class ClassroomApplication : Application
 
     public static int Run(string[] args, bool teacher)
     {
+        if(args.FirstOrDefault()=="--verify-electronics")return args.Length==2?Electronics.ElectronicsPackageCheck.Run(args[1]).GetAwaiter().GetResult():2;
         Teacher = teacher;
         return AppBuilder.Configure<ClassroomApplication>().UsePlatformDetect().LogToTrace().StartWithClassicDesktopLifetime(args);
     }

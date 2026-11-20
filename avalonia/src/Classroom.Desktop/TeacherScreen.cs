@@ -9,7 +9,7 @@ using Classroom.Client;
 using Classroom.Contracts;
 
 namespace Classroom.Desktop;
-public sealed class TeacherScreen : UserControl, IDisposable
+public sealed partial class TeacherScreen : UserControl, IDisposable
 {
     readonly MainWindow owner;
     readonly ClassroomApi api;
@@ -54,18 +54,31 @@ public sealed class TeacherScreen : UserControl, IDisposable
     string? selectedId;
     bool loading, refreshing, disposed;
     long generation;
-    readonly TabControl tabs;
     readonly Control connectionPage;
     readonly TabControl reportTabs = new();
-    readonly StackPanel analytics = Ui.Stack();
-    readonly ComboBox reportGroup = new();
-    readonly LearningStatisticsView learning;
+    readonly ClassroomResultsView learning;
+    readonly LessonControl lessonControl;
+    readonly TabControl resultPages;
+    readonly Electronics.ElectronicsResultsView electronicsResults;
+    readonly ElectronicsTaskAuthoring electronicsAuthoring;
+    readonly Electronics.ElectronicsReviewQueueView reviewQueue;
+    long? latestSubmission;
+    int previousPendingCount;
     public TeacherScreen(MainWindow owner, ClassroomApi api, HostManager host)
     {
         this.owner = owner;
         this.api = api;
         this.host = host;
         learning = new(owner, api);
+        lessonControl = new(owner, api, ShowConnectionCode, OpenLessonResults);
+        electronicsResults = new(owner, api);
+        electronicsAuthoring = new(owner, api);
+        reviewQueue = new(owner, api);
+        reviewButton = CreateReviewShortcut();
+        standButton = GraphiteUi.NavigationButton("Редактор схем",
+            "M5,5 H13 V13 H5 Z M2,6 H5 M2,10 H5 M13,6 H16 M13,10 H16 M6,2 V5 M10,2 V5 M6,13 V16 M10,13 V16",
+            () => openStand?.Invoke() ?? Task.CompletedTask, out _);
+        standButton.IsVisible = false;
         students.SelectionChanged += (_, _) =>
         {
         };
@@ -81,49 +94,37 @@ public sealed class TeacherScreen : UserControl, IDisposable
             if (!loading)
                 RenderDocument();
         };
-        tabs = new TabControl
+        var results = new TabControl { ItemsSource = new[] {
+            new TabItem { Header = "Результаты", Content = Ui.Card(learning) },
+            new TabItem { Header = "Журнал курса SQL", Content = Reports() },
+            new TabItem { Header = "Архив схем", Content = electronicsResults }
+        }};
+        resultPages = results;
+        var authoringPages = new TabControl { ItemsSource = new[] {
+            new TabItem { Header = "SQL", Content = Authoring() },
+            new TabItem { Header = "Электроника", Content = electronicsAuthoring }
+        }};
+        authoringPages.SelectionChanged += async (_, e) =>
         {
-            ItemsSource = new[]
-            {
-                new TabItem
-                {
-                    Header = "Ученики и группы",
-                    Content = Accounts()
-                },
-                new TabItem
-                {
-                    Header = "Задания",
-                    Content = Authoring()
-                },
-                new TabItem
-                {
-                    Header = "Результаты",
-                    Content = Reports()
-                },
-                new TabItem
-                {
-                    Header = "Статистика",
-                    Content = Ui.Card(learning)
-                },
-                new TabItem
-                {
-                    Header = "Настройки",
-                    Content = Settings()
-                }
-            },
-            Margin = new Thickness(12)
+            if (e.Source == authoringPages && authoringPages.SelectedIndex == 1) await owner.Safe(electronicsAuthoring.Refresh);
         };
-        connectionPage = Ui.Card(Ui.Scroll(Ui.Stack(Ui.Button("Назад к SQL", ShowWorkspace), new ConnectionCodeView(host.ConnectionCode, host.Settings.Address == "127.0.0.1"))));
-        connectionPage.Margin = new Thickness(12);
-        connectionPage.IsVisible = false;
-        var pages = new Grid();
-        pages.Children.Add(tabs);
-        pages.Children.Add(connectionPage);
-        Content = pages;
-        tabs.SelectionChanged += async (_, e) =>
+        AddSection(Section.Lesson, "Занятие",
+            "M2,2 H7 V7 H2 Z M11,2 H16 V7 H11 Z M2,11 H7 V16 H2 Z M11,11 H16 V16 H11 Z", lessonControl);
+        AddSection(Section.Accounts, "Группы и ученики",
+            "M8,6 A3,3 0 1 1 2,6 A3,3 0 0 1 8,6 M1,16 V14 Q1,10 5,10 Q9,10 9,14 V16 M11,3 Q15,3 15,6 Q15,9 11,9 M11,11 Q17,11 17,16", Accounts());
+        AddSection(Section.Assignments, "Задания",
+            "M4,2 H14 V16 H4 Z M7,6 H11 M7,9 H11 M7,12 H11", authoringPages);
+        AddSection(Section.Results, "Работы и результаты",
+            "M2,16 H16 M4,13 V9 M9,13 V6 M14,13 V3", results);
+        AddSection(Section.Settings, "Настройки",
+            "M2,5 H6 M10,5 H16 M6,3 H10 V7 H6 Z M2,13 H10 M14,13 H16 M10,11 H14 V15 H10 Z", Settings());
+        connectionPage = GraphiteUi.Panel(Ui.Scroll(Ui.Stack(Ui.Button("К занятию", ShowWorkspace), new ConnectionCodeView(host.ConnectionCode, host.Settings.Address == "127.0.0.1"))));
+        Content = CreateTeacherLayout();
+        ShowSurface(lessonControl);
+        results.SelectionChanged += async (_, e) =>
         {
-            if (e.Source == tabs && tabs.SelectedIndex == 3)
-                await owner.Safe(learning.Refresh);
+            if (e.Source != results || changingResultPage) return;
+            await owner.Safe(() => RefreshResultPage(results.SelectedIndex));
         };
         poll.Tick += async (_, _) =>
         {
@@ -145,24 +146,33 @@ public sealed class TeacherScreen : UserControl, IDisposable
         };
     }
 
+    async Task OpenReviewQueue()
+    {
+        owner.ClosePage(false);
+        ShowSurface(reviewQueue);
+        await reviewQueue.Load();
+    }
+
     public async Task Load()
     {
         await Refresh(true);
         poll.Start();
-        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1") tabs.SelectedIndex = 3;
+        if (Environment.GetEnvironmentVariable("CLASSROOM_DEMO") == "1")
+        {
+            ShowSection(Section.Results);
+            await SelectResultPage(0);
+        }
     }
 
     public Task ShowConnectionCode()
     {
-        tabs.IsVisible = false;
-        connectionPage.IsVisible = true;
+        ShowSurface(connectionPage);
         return Task.CompletedTask;
     }
 
     public Task ShowWorkspace()
     {
-        connectionPage.IsVisible = false;
-        tabs.IsVisible = true;
+        ShowSection(selectedSection);
         return Task.CompletedTask;
     }
 
@@ -176,6 +186,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var password = Ui.Input();
         password.PasswordChar = '●';
         var groupName = Ui.Input();
+        groupName.Name = "NewGroupName";
         var controls = Ui.Stack(Ui.Text("Новый ученик", 20), Ui.Field("Логин", login), Ui.Field("Пароль", password), Ui.Field("Группа", groups), Ui.Button("Добавить ученика", () => owner.Safe(async () =>
         {
             await api.Post<JsonElement>("teacher/students", new CreateStudentRequest(login.Text ?? "", password.Text ?? "", (groups.SelectedItem as Choice)?.Id is { Length: > 0 } id ? id : null));
@@ -329,7 +340,6 @@ public sealed class TeacherScreen : UserControl, IDisposable
 
     Control Reports()
     {
-        reportGroup.SelectionChanged += (_, _) => RenderAnalytics();
         reportTabs.ItemsSource = new[]
         {
             new TabItem
@@ -346,64 +356,9 @@ public sealed class TeacherScreen : UserControl, IDisposable
             {
                 Header = "Прогресс и активность",
                 Content = Ui.Scroll(stats)
-            },
-            new TabItem
-            {
-                Header = "Аналитика",
-                Content = AnalyticsLayout()
             }
         };
         return Ui.Card(reportTabs);
-    }
-
-    Control AnalyticsLayout()
-    {
-        var layout = new Grid
-        {
-            RowDefinitions = new("Auto,*"),
-            RowSpacing = 12
-        };
-        layout.Children.Add(Ui.Field("Группа", reportGroup));
-        var scroll = Ui.Scroll(analytics);
-        Grid.SetRow(scroll, 1);
-        layout.Children.Add(scroll);
-        return layout;
-    }
-
-    void RenderAnalytics()
-    {
-        if (overview is not { } data)
-            return;
-        analytics.Children.Clear();
-        var groupId = (reportGroup.SelectedItem as Choice)?.Id ?? "";
-        var students = data.Students.Where(s => groupId.Length == 0 || s.GroupId == groupId).ToArray();
-        var logins = students.Select(s => s.Login).ToHashSet();
-        var records = data.Statistics.Where(s => logins.Contains(s.Student)).ToArray();
-        var titles = data.Tasks.ToDictionary(t => t.Id);
-        string Title(string id) => titles.GetValueOrDefault(id)?.Title ?? id;
-        analytics.Children.Add(Ui.Text($"Начато заданий: {records.Length} · Выполнено: {records.Count(r => r.CompletedAt is not null)} · Ошибок: {records.Sum(r => r.Errors)} · Среднее время: {(records.Length == 0 ? 0 : records.Sum(r => r.ActiveSeconds) / records.Length)} с", 18));
-        analytics.Children.Add(Ui.Text("Прогресс группы", 20));
-        var denominator = Math.Max(1, data.Tasks.Length);
-        analytics.Children.Add(Ui.Text($"Учеников: {students.Length} · Средний прогресс: {(students.Length == 0 ? 0 : students.Average(s => s.Completed) * 100 / denominator):F1}% · Начали: {students.Count(s => s.Completed > 0)} · Завершили курс: {students.Count(s => s.Completed >= denominator)}"));
-        analytics.Children.Add(Ui.Text("Задания с наибольшим числом ошибок", 20));
-        var hard = records.GroupBy(r => r.TaskId).Select(g => new { Id = g.Key, Errors = g.Sum(r => r.Errors), Checks = g.Sum(r => r.Checks), Seconds = g.Sum(r => r.ActiveSeconds) / g.Count(), Starts = g.Count() }).OrderByDescending(g => g.Errors).ThenByDescending(g => g.Checks).Take(15);
-        var hardPanel = Ui.Stack();
-        RenderReport(hardPanel, ["Задание", "Начали", "Ошибки", "Проверки", "Среднее время, с"], hard.Select(g => new[] { Title(g.Id), g.Starts.ToString(), g.Errors.ToString(), g.Checks.ToString(), g.Seconds.ToString() }));
-        analytics.Children.Add(hardPanel);
-        var stops = students.Select(s => data.Tasks.FirstOrDefault(t => !data.Statistics.Any(r => r.Student == s.Login && r.TaskId == t.Id && r.CompletedAt is not null))).Where(t => t is not null).Cast<CatalogueItem>().ToArray();
-        analytics.Children.Add(Ui.Text("Места остановки", 20));
-        analytics.Children.Add(Ui.Text("Первое незавершённое задание по порядку каталога."));
-        var stopPanel = Ui.Stack();
-        RenderReport(stopPanel, ["Задание", "Ученики"], stops.GroupBy(t => t.Id).OrderByDescending(g => g.Count()).Select(g => new[] { Title(g.Key), g.Count().ToString() }));
-        analytics.Children.Add(stopPanel);
-        analytics.Children.Add(Ui.Text("Темы", 20));
-        var topicPanel = Ui.Stack();
-        RenderReport(topicPanel, ["Тема", "Ошибки", "Остановки"], data.Tasks.GroupBy(t => t.Module).Select(g => new[] { g.Key, records.Where(r => g.Any(t => t.Id == r.TaskId)).Sum(r => r.Errors).ToString(), stops.Count(t => t.Module == g.Key).ToString() }));
-        analytics.Children.Add(topicPanel);
-        analytics.Children.Add(Ui.Text("История завершений", 20));
-        var historyPanel = Ui.Stack();
-        RenderReport(historyPanel, ["Ученик", "Задание", "Завершено", "Активное время, с"], records.Where(r => r.CompletedAt is not null).OrderByDescending(r => r.CompletedAt).Take(50).Select(r => new[] { r.Student, Title(r.TaskId), Ui.Time(r.CompletedAt!.Value), r.ActiveSeconds.ToString() }));
-        analytics.Children.Add(historyPanel);
     }
 
     Control Settings()
@@ -437,7 +392,7 @@ public sealed class TeacherScreen : UserControl, IDisposable
                 await api.Post<JsonElement>($"teacher/backups/{Uri.EscapeDataString(backup.Id)}/restore");
                 owner.Message("База восстановлена. Выйдите и войдите снова.");
             }
-        })), Ui.Text("Экспорт статистики", 20), Ui.Button("Сохранить CSV", () => owner.Safe(Export)), Ui.Text("Данные преподавателя: " + host.DataDirectory));
+        })), Ui.Text("Экспорт статистики", 20), Ui.Button("Открыть результаты и экспорт", () => owner.Safe(async () => { ShowSection(Section.Results); await SelectResultPage(0); })), Ui.Text("Данные преподавателя: " + host.DataDirectory));
         return Ui.Card(Ui.Scroll(panel));
     }
 
@@ -446,21 +401,24 @@ public sealed class TeacherScreen : UserControl, IDisposable
         var data = await api.Get<TeacherOverview>("teacher/overview");
         if (disposed)
             return;
+        await lessonControl.Refresh(availableGroups: data.Groups, availableTasks: data.Tasks);
+        var queue = await api.Get<ElectronicsReviewQueue>("teacher/reviews/electronics");
+        if (disposed) return;
+        SetReviewCount(queue.PendingCount);
+        var newest = queue.Items.Select(i => i.SubmittedAt).DefaultIfEmpty(0).Max();
+        if (latestSubmission is { } previous && (newest > previous || queue.PendingCount > previousPendingCount)) owner.Message("Поступила схема на проверку.");
+        latestSubmission = Math.Max(latestSubmission ?? 0, newest);
+        previousPendingCount = queue.PendingCount;
         RenderOverview(data, updateEditorList);
+        if (ReferenceEquals(Presentation.Content, sections[Section.Results].Page) && resultPages.SelectedIndex == 0)
+            await learning.Refresh();
     }
 
     void RenderOverview(TeacherOverview data, bool updateEditorList)
     {
         overview = data;
-        var reportSelection = (reportGroup.SelectedItem as Choice)?.Id;
-        reportGroup.ItemsSource = new[]
-        {
-            new Choice("", "Все группы")
-        }.Concat(data.Groups.Select(g => new Choice(g.Id, g.Name))).ToArray();
-        reportGroup.SelectedItem = (reportGroup.ItemsSource as Choice[])!.FirstOrDefault(g => g.Id == reportSelection) ?? (reportGroup.ItemsSource as Choice[])![0];
-        RenderAnalytics();
         var selected = (students.SelectedItem as Choice)?.Id;
-        students.ItemsSource = data.Students.Select(s => new Choice(s.Id, $"{s.Login} · {s.Completed} / {data.Tasks.Length}" + (s.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() ? " · Пауза" : ""))).ToArray();
+        students.ItemsSource = data.Students.Select(s => new Choice(s.Id, s.Login + (s.LockedUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() ? " · Пауза" : ""))).ToArray();
         students.SelectedItem = (students.ItemsSource as Choice[])?.FirstOrDefault(s => s.Id == selected);
         var groupChoices = new[] { new Choice("", "Без группы") }.Concat(data.Groups.Select(g => new Choice(g.Id, g.Name))).ToArray();
         if (!groups.Items.OfType<Choice>().SequenceEqual(groupChoices))
@@ -559,30 +517,6 @@ public sealed class TeacherScreen : UserControl, IDisposable
         owner.Message("Импорт завершён. Исходная база сохранена.");
     }
 
-    async Task Export()
-    {
-        if (overview is null)
-            return;
-        var file = await owner.StorageProvider.SaveFilePickerAsync(new() { Title = "Экспорт статистики", SuggestedFileName = "sql-results.csv", DefaultExtension = "csv" });
-        if (file is null)
-            return;
-        static string Cell(string value)
-        {
-            if (value.TrimStart().FirstOrDefault()is '=' or '+' or '-' or '@')
-                value = "'" + value;
-            return "\"" + value.Replace("\"", "\"\"") + "\"";
-        }
-
-        var rows = overview.Statistics.Select(s => string.Join(";", new[] { s.Student, s.TaskId, s.ActiveSeconds.ToString(), s.Checks.ToString(), s.Errors.ToString(), s.CompletedAt is { } at ? Ui.Time(at) : "" }.Select(Cell)));
-        await using var stream = await file.OpenWriteAsync();
-        if (stream.CanSeek) stream.SetLength(0);
-        using var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(true));
-        await writer.WriteLineAsync("Ученик;Задание;Активные секунды;Проверки;Ошибки;Завершение");
-        foreach (var row in rows)
-            await writer.WriteLineAsync(row);
-        owner.Message("Статистика экспортирована.");
-    }
-
     internal void Preview(TeacherOverview data, TeacherTaskDto task, bool reports = false)
     {
         RenderOverview(data, true);
@@ -596,9 +530,12 @@ public sealed class TeacherScreen : UserControl, IDisposable
         version.SelectedIndex = 0;
         loading = false;
         RenderDocument();
-        tabs.SelectedIndex = reports ? 2 : 1;
+        ShowSection(reports ? Section.Results : Section.Assignments);
         if (reports)
-            reportTabs.SelectedIndex = 3;
+        {
+            resultPages.SelectedIndex = 1;
+            reportTabs.SelectedIndex = 2;
+        }
     }
 
     public void Dispose()
@@ -606,6 +543,9 @@ public sealed class TeacherScreen : UserControl, IDisposable
         disposed = true;
         generation++;
         poll.Stop();
+        electronicsResults.Dispose();
+        reviewQueue.Dispose();
+        learning.Dispose();
     }
 
     sealed record Choice(string Id, string Label)

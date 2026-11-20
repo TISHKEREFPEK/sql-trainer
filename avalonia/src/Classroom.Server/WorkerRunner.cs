@@ -1,28 +1,70 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading.RateLimiting;
 using Classroom.Contracts;
 using Classroom.Domain;
 
 namespace Classroom.Server;
-public record WorkerRequest(TaskDefinition Task, string? Snapshot, string Code, bool Check);
-public record WorkerReply(ExecutionDto Result, string? Snapshot);
-public sealed class WorkerRunner(string executable)
+public record WorkerRequest(TaskDefinition Task, string? Snapshot, string Code, bool Check, bool CaptureState = false);
+public record WorkerReply(ExecutionDto Result, string? Snapshot, string? BeforeSnapshot = null, int EvidenceVersion = 0);
+public sealed class WorkerRunner(string executable) : IDisposable
 {
-    readonly SemaphoreSlim slots = new(4, 4);
-    int pending;
+    const int workerSlots = 4;
+    const int sampleLimit = 256;
+    readonly ConcurrencyLimiter queue = new(new ConcurrencyLimiterOptions
+    {
+        PermitLimit = workerSlots,
+        QueueLimit = 35,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+    });
+    readonly object queueGate = new();
+    readonly Queue<double> recentWaits = new(sampleLimit);
+    int peakWaiting;
+    // ConcurrencyLimiter always supplies statistics. The base RateLimiter contract permits null.
+    RateLimiterStatistics Statistics => queue.GetStatistics()!;
+
+    internal SqlWorkerDiagnostics Diagnostics()
+    {
+        lock (queueGate)
+        {
+            var stats = Statistics;
+            var waits = recentWaits.Order().ToArray();
+            return new(workerSlots - (int)stats.CurrentAvailablePermits, (int)stats.CurrentQueuedCount,
+                peakWaiting, stats.TotalSuccessfulLeases, stats.TotalFailedLeases, waits.Length,
+                waits.Length == 0 ? null : waits[(int)Math.Ceiling(waits.Length * 0.95) - 1],
+                waits.Length == 0 ? null : waits[^1]);
+        }
+    }
+
     public async Task<WorkerReply> Run(WorkerRequest request, CancellationToken cancellation = default)
     {
-        if (Interlocked.Increment(ref pending) > 39)
+        ValueTask<RateLimitLease> admission;
+        long? queuedAt = null;
+        lock (queueGate)
         {
-            Interlocked.Decrement(ref pending);
-            throw new HttpFault(429, "Очередь проверок заполнена.");
+            var arrival = Stopwatch.GetTimestamp();
+            admission = queue.AcquireAsync(1, cancellation);
+            if (!admission.IsCompleted)
+            {
+                queuedAt = arrival;
+                peakWaiting = Math.Max(peakWaiting, (int)Statistics.CurrentQueuedCount);
+            }
         }
 
-        var acquired = false;
+        var permit = await admission;
         try
         {
-            await slots.WaitAsync(cancellation);
-            acquired = true;
+            if (!permit.IsAcquired)
+                throw new HttpFault(429, "Очередь проверок заполнена.");
+
+            var waited = queuedAt is { } arrival ? Stopwatch.GetElapsedTime(arrival).TotalMilliseconds : 0;
+            lock (queueGate)
+            {
+                if (recentWaits.Count == sampleLimit)
+                    recentWaits.Dequeue();
+                recentWaits.Enqueue(waited);
+            }
+
             var info = new ProcessStartInfo
             {
                 UseShellExecute = false,
@@ -57,7 +99,10 @@ public sealed class WorkerRunner(string executable)
                 await error;
                 if (process.ExitCode != 0)
                     throw new IOException("Рабочий процесс проверки остановлен.");
-                return Wire.Read<WorkerReply>(text);
+                var reply = Wire.Read<WorkerReply>(text);
+                if (request.CaptureState && reply.EvidenceVersion != 1)
+                    throw new HttpFault(409, "Обновите SQL worker вместе с сервером: эта версия не сохраняет исходные состояния попыток.");
+                return reply;
             }
             catch (OperationCanceledException)
             {
@@ -77,11 +122,12 @@ public sealed class WorkerRunner(string executable)
         }
         finally
         {
-            if (acquired)
-                slots.Release();
-            Interlocked.Decrement(ref pending);
+            lock (queueGate)
+                permit.Dispose();
         }
     }
+
+    public void Dispose() => queue.Dispose();
 }
 
 // A job limits native SQLite allocations too; the managed GC limit alone is insufficient.

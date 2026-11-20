@@ -7,11 +7,15 @@ public static class CircuitCodeGuide
 {
     public static CodeGuide Build(CircuitProject project)
     {
+        if(project.Parts.Any(p=>p.Kind==PartKind.Pico))return PicoCodeGuide.Build(project);
+        if (project.Parts.Any(p => p.Kind == PartKind.Esp32S3))
+            return new("ESP32-S3: используйте номера GPIO. Поддерживаются pinMode, digitalRead, digitalWrite и прерывания GPIO. В обновлённом комплекте analogRead читает GPIO1–20. Для потенциометра подключите крайние контакты к 3,3 В и земле, а средний к аналоговому входу. Для I²C задайте подключённые GPIO в Wire.begin(SDA, SCL, частота). DS1307 использует 100 кГц, адрес 0x68 и преобразователь уровней.", null);
         var notes = new List<string> { "setup() — начальная настройка; loop() — повторяющиеся действия. Код меняется только по вашей команде." };
         var unsupported = project.Parts.Where(p => !PartCatalog.CanSimulate(p)).ToArray();
         if (unsupported.Length > 0) notes.Add("Только для схемы: " + string.Join(", ", unsupported.Select(PartLibrary.Name).Distinct()) + ". Автонастройка и исполнение для этих моделей пока недоступны.");
-        var uno = project.Parts.SingleOrDefault(p => p.Kind == PartKind.Uno);
-        if (uno is null) return new(string.Join("\n", notes.Append("Для готового шаблона нужна Arduino Uno. Для Pico, Mega и ESP32 требуется отдельная поддержка платформы.")), null);
+        var uno = project.Parts.SingleOrDefault(p => AvrBoards.For(p) is not null);
+        if (uno is null) return new(string.Join("\n", notes.Append("Для готового шаблона добавьте Arduino Uno или Mega 2560. Для Pico и ESP32 поддержка платформы ещё нужна.")), null);
+        var profile=AvrBoards.For(uno)!;
         var edges = project.Parts.SelectMany(p => PartLibrary.Pins(p).Select(pin => new Terminal(p.Id,pin))).ToDictionary(t => t, _ => new List<Terminal>());
         var parts = project.Parts.ToDictionary(p => p.Id);
         void Link(Terminal a, Terminal b) { edges[a].Add(b); edges[b].Add(a); }
@@ -40,10 +44,11 @@ public static class CircuitCodeGuide
         }
         bool Ground(Terminal terminal) => Reach(terminal).Any(t=>t.Pin=="GND" && (t.Part==uno.Id || parts[t.Part].Kind==PartKind.Ground));
         var declarations=new List<string>(); var setup=new List<string>(); var loop=new List<string>(); var used=new Dictionary<string,string>();
-        var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var count=0;
+        var ready=unsupported.Length==0; var servo=false; var serial=false; var blink=false; var i2c=false;var oled=false;var dht=false;var count=0;
+        var i2cDevices=CircuitI2c.Devices(project);
         bool Claim(string? pin,CircuitPart part)
         {
-            if(pin is null) { notes.Add(PartLibrary.Name(part)+": подключите сигнальный вывод к одному подходящему выводу Uno — номер нельзя определить однозначно."); ready=false; return false; }
+            if(pin is null) { notes.Add(PartLibrary.Name(part)+": подключите сигнальный вывод к одному подходящему выводу платы — номер нельзя определить однозначно."); ready=false; return false; }
             if(used.TryGetValue(pin,out var other)) { notes.Add($"Вывод {pin} уже используется: {other}. Совместное использование нужно настроить вручную."); ready=false; return false; }
             used[pin]=PartLibrary.Name(part); return true;
         }
@@ -52,22 +57,66 @@ public static class CircuitCodeGuide
             var n=++count;
             switch(part.Kind)
             {
+                case PartKind.Hcsr04:
+                {
+                    notes.Add(Hcsr04CodeGuide.Note);var d=CircuitHcsr04.Devices(project).Single(d=>d.Id==part.Id);
+                    if(!d.Powered||!d.Connected||!d.Echoes.Any(e=>e.High&&!e.Low)){notes.Add("HC-SR04: исправьте питание, Trig и уровни Echo.");ready=false;break;}
+                    string Number(int i)=>i<profile.DigitalCount?i.ToString():"A"+(i-profile.DigitalCount);
+                    var trig=Number(d.Trig);var echo=Number(d.Echoes.First(e=>e.High&&!e.Low).Pin);var claimed=Claim(trig,part);
+                    foreach(var e in d.Echoes)claimed=Claim(Number(e.Pin),part)&&claimed;
+                    if(claimed){serial=true;setup.Add(Hcsr04CodeGuide.Setup(trig,echo));loop.Add(Hcsr04CodeGuide.Loop(trig,echo));}break;
+                }
+                case PartKind.Dht11:
+                {
+                    var device=CircuitDht11.Devices(project).Single(d=>d.Id==part.Id);var pin=Pin(new(part.Id,"DATA"));
+                    notes.Add("DHT11: VDD 3–5,5 В, общая GND, отдельный DATA; NC не подключать. Рекомендуется подтяжка 5,1 кОм. DHT.h 1.4.7 установлена локально; прогрев 1 с, чтение раз в 2 с, возвращается предыдущее измерение.");
+                    if(!device.Powered||!device.Connected){notes.Add("DHT11: исправьте питание и DATA.");ready=false;break;}
+                    if(!Claim(pin,part))break;dht=true;serial=true;declarations.Add($"DHT dht{n}({pin},DHT11);");setup.Add($"dht{n}.begin();");
+                    loop.Add($"{{ float h=dht{n}.readHumidity(), t=dht{n}.readTemperature(); if(isnan(h)||isnan(t)) Serial.println(\"DHT11: read error\"); else {{ Serial.print(\"DHT11 RH=\"); Serial.print(h); Serial.print(\" T=\"); Serial.println(t); }} }}");break;
+                }
+                case PartKind.OledI2c:
+                {
+                    var device=i2cDevices.Single(d=>d.Id==part.Id);var data=uno.Kind==PartKind.Mega?"20":"A4";var clock=uno.Kind==PartKind.Mega?"21":"A5";
+                    notes.Add($"OLED SSD1306: VDD → 3.3–5V, GND → GND, SDA → {data}, SCL → {clock}; адрес 0x{device.Address:X2}. Библиотеки Adafruit SSD1306/GFX установлены в автономном комплекте v4. display() передаёт буфер на экран; SRAM платы ограничивает размер/число буферов.");
+                    if(!device.Powered||!device.Connected){notes.Add("Для шаблона исправьте питание и соединения OLED.");ready=false;break;}
+                    foreach(var pin in new[]{data,clock}){if(used.TryGetValue(pin,out var usage)&&usage!="Шина I2C"){notes.Add($"Вывод {pin} занят: {usage}.");ready=false;}used[pin]="Шина I2C";}
+                    oled=true;serial=true;declarations.Add($"Adafruit_SSD1306 oled{n}(128, 64, &Wire, -1);");
+                    setup.Add($"if (!oled{n}.begin(SSD1306_SWITCHCAPVCC, 0x{device.Address:X2})) {{ Serial.println(\"OLED: buffer allocation failed\"); return; }}");
+                    setup.Add($"oled{n}.clearDisplay(); oled{n}.setTextSize(1); oled{n}.setTextColor(SSD1306_WHITE); oled{n}.setCursor(8, 8); oled{n}.println(\"OLED ready\");");
+                    setup.Add($"oled{n}.drawRect(0, 0, 128, 64, SSD1306_WHITE); oled{n}.drawCircle(96, 40, 12, SSD1306_WHITE); oled{n}.display();");break;
+                }
+                case PartKind.LcdI2c:
+                {
+                    var device=i2cDevices.Single(d=>d.Id==part.Id);var data=uno.Kind==PartKind.Mega?"20":"A4";var clock=uno.Kind==PartKind.Mega?"21":"A5";
+                    notes.Add($"LCD: Wire.h уже установлена; SDA → {data}, SCL → {clock}, VCC → 5V, GND → GND; адрес 0x{device.Address:X2}. Символы передаются байтами ROM LCD; UTF-8 не является кириллицей дисплея.");
+                    if(!device.Powered||!device.Connected){notes.Add("Для шаблона исправьте питание и соединения LCD.");ready=false;break;}
+                    foreach(var pin in new[]{data,clock}){if(used.TryGetValue(pin,out var usage)&&usage!="Шина I2C"){notes.Add($"Вывод {pin} занят: {usage}.");ready=false;}used[pin]="Шина I2C";}
+                    i2c=true;setup.Add($"lcdBegin(0x{device.Address:X2});");setup.Add($"lcdText(0x{device.Address:X2}, \"LCD ready\");");break;
+                }
+                case PartKind.Mpu6050:
+                    notes.Add("MPU-6050: подключите питание 3,3 В и преобразователь уровней. В Wire снимите SLEEP в регистре 0x6B, затем считывайте 14 байт с 0x3B.");
+                    ready=false;
+                    break;
+                case PartKind.Ds1307:
+                    notes.Add("DS1307: VCC 5 В, Wire 100 кГц, адрес 0x68. Снимите CH в регистре 0 и считывайте семь байтов календаря в BCD. Настройте скетч вручную.");
+                    ready=false;
+                    break;
                 case PartKind.Led:
                 {
                     notes.Add(PartLibrary.Name(part)+": pinMode(..., OUTPUT), digitalWrite(..., HIGH/LOW). Резистор остаётся частью схемы.");
                     var pin=Pin(new(part.Id,"A"),resistor:true); if(!Claim(pin,part)) break;
-                    declarations.Add($"const int ledPin{n} = {pin};"); setup.Add($"pinMode(ledPin{n}, OUTPUT);"); loop.Add($"digitalWrite(ledPin{n}, ledOn ? HIGH : LOW);"); blink=true; notes.Add($"Светодиод: вывод Uno {pin}."); break;
+                    declarations.Add($"const int ledPin{n} = {pin};"); setup.Add($"pinMode(ledPin{n}, OUTPUT);"); loop.Add($"digitalWrite(ledPin{n}, ledOn ? HIGH : LOW);"); blink=true; notes.Add($"Светодиод: вывод {profile.Name} {pin}."); break;
                 }
                 case PartKind.Servo:
                 {
                     notes.Add("Сервопривод: библиотека Servo.h, attach(вывод), write(угол 0…180). Библиотека уже установлена локально.");
                     var pin=Pin(new(part.Id,"SIG")); if(!Claim(pin,part)) break;
-                    servo=true; declarations.Add($"Servo servo{n};"); setup.Add($"servo{n}.attach({pin});"); loop.Add($"servo{n}.write(90);"); notes.Add($"Servo SIG: вывод Uno {pin}."); break;
+                    servo=true; declarations.Add($"Servo servo{n};"); setup.Add($"servo{n}.attach({pin});"); loop.Add($"servo{n}.write(90);"); notes.Add($"Servo SIG: вывод {profile.Name} {pin}."); break;
                 }
                 case PartKind.Pot3:
                 case PartKind.AnalogSensor:
                 {
-                    notes.Add(PartLibrary.Name(part)+": analogRead(A0…A5), результат 0…1023.");
+                    notes.Add(PartLibrary.Name(part)+$": analogRead(A0…A{profile.AnalogCount-1}), результат 0…1023.");
                     var pin=Pin(new(part.Id,part.Kind==PartKind.Pot3?"W":"+"),analog:true); if(!Claim(pin,part)) break;
                     serial=true; loop.Add($"Serial.println(analogRead({pin}));"); notes.Add($"Аналоговый сигнал: {pin}."); break;
                 }
@@ -84,12 +133,26 @@ public static class CircuitCodeGuide
             }
         }
         if(!ready) return new(string.Join("\n",notes),null);
-        var code=new StringBuilder("// Начальный шаблон по текущим соединениям Arduino Uno.\n");
+        var ds18=Ds18b20CodeGuide.Build(project,uno);notes.AddRange(ds18.Notes);
+        if(!ds18.Ready||ds18.Pins.Any(pin=>used.ContainsKey(pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount))))return new(string.Join("\n",notes.Append("DS18B20: вывод шины занят другой деталью.")),null);
+        foreach(var pin in ds18.Pins)used[pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount)]="1-Wire";
+        declarations.AddRange(ds18.Declarations);setup.AddRange(ds18.Setup);loop.AddRange(ds18.Loop);serial|=ds18.Pins.Length>0;
+        var tft=TftCodeGuide.Build(project,uno);notes.AddRange(tft.Notes);
+        if(!tft.Ready||tft.Pins.Any(pin=>used.ContainsKey(pin<profile.DigitalCount?pin.ToString():"A"+(pin-profile.DigitalCount))))return new(string.Join("\n",notes.Append("Совместные выводы TFT и других деталей настройте вручную; шаблон не изменяет проводку.")),null);
+        declarations.AddRange(tft.Declarations);setup.AddRange(tft.Setup);
+        var code=new StringBuilder($"// Начальный шаблон по текущим соединениям {profile.Name}.\n");
+        if(tft.Declarations.Length>0)code.Append(TftCodeGuide.Includes);
+        if(ds18.Pins.Length>0)code.Append(Ds18b20CodeGuide.Includes);
+        if(dht)code.Append("#include <DHT.h>\n");
         if(servo) code.Append("#include <Servo.h>\n");
+        if(oled)code.Append("#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n");
+        if(i2c)code.AppendLine(I2cSketch.Helpers);
         foreach(var line in declarations) code.AppendLine(line);
-        code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);
+        code.Append("\nvoid setup() {\n"); if(serial) code.Append("  Serial.begin(9600);\n");if(i2c)code.Append("  Wire.begin();\n"); foreach(var line in setup) code.Append("  ").AppendLine(line);
+        if(ds18.Pins.Length>0)code.Append(Ds18b20CodeGuide.Includes);
+        if(dht)code.Append("  delay(1100);\n");
         code.Append("}\n\nvoid loop() {\n"); if(blink) code.Append("  static bool ledOn = false;\n  ledOn = !ledOn;\n"); foreach(var line in loop) code.Append("  ").AppendLine(line);
-        code.Append("  delay(500);\n}\n");
+        code.Append(dht?"  delay(2000);\n}\n":"  delay(500);\n}\n");
         return new(string.Join("\n",notes),code.ToString());
     }
 }

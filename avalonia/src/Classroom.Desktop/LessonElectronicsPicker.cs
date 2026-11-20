@@ -16,36 +16,53 @@ public sealed class LessonElectronicsPicker : UserControl
     ElectronicsLessonTask[] issued = [];
     string? lessonId;
     bool saving, dirty;
+    int requestVersion;
+    internal string? LessonId => lessonId;
+    internal IReadOnlyList<ElectronicsLessonTask> Issued => issued;
+    internal event Action? IssuedChanged;
     public LessonElectronicsPicker(MainWindow owner, ClassroomApi api)
     {
         this.owner = owner; this.api = api;
-        save = Ui.Button("Сохранить выдачу схем", () => owner.Safe(async () => { if (lessonId is not null) await Save(lessonId); }));
-        Content = Ui.Card(Ui.Stack(Ui.Text("Электронные задания на занятие", 20),
+        save = GraphiteUi.Action("Сохранить выдачу схем",
+            () => owner.Safe(async () => { if (lessonId is not null) await Save(lessonId); }),
+            () => lessonId is not null && !saving);
+        save.IsEnabled = false;
+        Content = GraphiteUi.Panel(Ui.Stack(Ui.Text("Электронные задания на занятие", 20),
             Ui.Text("Создайте условия и начальные схемы в разделе «Задания → Электроника»."),
-            new ScrollViewer { Content = rows, MaxHeight = 220 }, Ui.Row(count, save)));
+            new ScrollViewer { Content = rows, MaxHeight = 220 }, GraphiteUi.WrapActions(count, save)));
     }
     public async Task Refresh(string? id)
     {
         if (saving) return;
+        var request = ++requestVersion;
         var data = await api.Get<ElectronicsTaskSummary[]>("teacher/electronics/tasks");
-        var changed = lessonId != id || !data.SequenceEqual(catalog);
+        if (request != requestVersion) return;
+        var lessonChanged = lessonId != id;
+        var changed = lessonChanged || !data.SequenceEqual(catalog);
+        ElectronicsLessonTask[] currentTasks = lessonChanged && id is not null
+            ? (await api.Get<ElectronicsSelection>($"teacher/lessons/{id}/electronics-tasks")).Tasks : [];
+        if (request != requestVersion) return;
         catalog = data;
-        if (lessonId != id)
+        if (lessonChanged)
         {
-            lessonId = id; issued = id is null ? [] : (await api.Get<ElectronicsSelection>($"teacher/lessons/{id}/electronics-tasks")).Tasks;
+            lessonId = id; issued = currentTasks;
             selected.Clear(); foreach (var task in issued) selected.Add(task.Id); dirty = false;
+            IssuedChanged?.Invoke();
         }
         if (changed || rows.Children.Count == 0) Render();
     }
     public async Task Save(string id)
     {
         if (saving) return;
+        requestVersion++;
         saving = true; save.IsEnabled = false;
         try
         {
             var result = await api.Put<ElectronicsSelection>($"teacher/lessons/{id}/electronics-tasks", new ElectronicsSelectionRequest(selected.ToArray()));
             lessonId = id; issued = result.Tasks; selected.Clear(); foreach (var task in issued) selected.Add(task.Id);
-            dirty = false; owner.Message("Электронные задания выданы.");
+            dirty = false;
+            IssuedChanged?.Invoke();
+            owner.Message("Электронные задания выданы.");
         }
         finally { saving = false; Render(); }
     }

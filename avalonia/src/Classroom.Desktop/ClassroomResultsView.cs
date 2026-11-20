@@ -19,6 +19,7 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
     readonly StackPanel page = Ui.Stack(); readonly ScrollViewer scroll;
     readonly Dictionary<string, Vector> positions = new();
     ResultsOverview? data; LessonDashboard? lessons; readonly List<LessonView> older = new();
+    LessonView? linkedLesson;
     string mode = "lesson"; string? lessonId, group, studentId, subject; bool allStudents, initialized, loading, refreshPending, disposed;
     ResultsWork? selectedWork; ResultsSqlDetail? sqlDetail;
     ElectronicsReviewQueue? submissions;
@@ -45,7 +46,13 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         loading=true;var stamp=++generation;positions[Location]=scroll.Offset;
         try
         {
-            if(!initialized){mode=(await api.Get<ResultsPreference>("teacher/results/preferences")).Mode;initialized=true;}
+            if(!initialized)
+            {
+                var preference = await api.Get<ResultsPreference>("teacher/results/preferences");
+                if(disposed||stamp!=generation)return;
+                mode = preference.Mode;
+                initialized = true;
+            }
             lessons=await api.Get<LessonDashboard>("teacher/lessons"); if(older.Count==0)older.AddRange(lessons.History);
             var result=await api.Get<ResultsOverview>("teacher/results"+Query());
             if(disposed||stamp!=generation)return;data=result;
@@ -54,6 +61,21 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
             Render();if(selectedWork is not null)await LoadWork();
         }
         finally{loading=false;if(refreshPending&&!disposed){refreshPending=false;await Refresh(true);}}
+    }
+    internal Task OpenLesson(LessonView lesson)
+    {
+        initialized = true;
+        linkedLesson = lesson;
+        return ChangeFilter(() =>
+        {
+            mode = "lesson";
+            lessonId = lesson.Id;
+            group = subject = null;
+            allStudents = false;
+            data = null;
+            page.Children.Clear();
+            page.Children.Add(Ui.Muted("Загружаем результаты занятия…"));
+        });
     }
     void Navigate(Action change) { positions[Location]=scroll.Offset;generation++;change();Render(); }
     async Task ChangeFilter(Action change) { positions[Location]=scroll.Offset;generation++;change();studentId=null;selectedWork=null;scroll.Offset=positions.GetValueOrDefault(Location);await Refresh(); }
@@ -74,7 +96,13 @@ public sealed class ClassroomResultsView : UserControl, IDisposable
         if(mode=="lesson")
         {
             var choices=new List<Choice>{new(null,"Текущее занятие")};choices.AddRange(older.Select(l=>new Choice(l.Id,$"{Date(l.StartedAt??l.CreatedAt)} · {l.GroupName}")));
-            if(lessonId is not null&&choices.All(c=>c.Id!=lessonId)&&lessons?.Current is { } current&&current.Id==lessonId)choices.Add(new(current.Id,current.GroupName));
+            if(lessonId is not null&&choices.All(c=>c.Id!=lessonId))
+            {
+                var exactLesson = lessons?.Current?.Id == lessonId ? lessons.Current
+                    : linkedLesson?.Id == lessonId ? linkedLesson : null;
+                if(exactLesson is not null)
+                    choices.Add(new(exactLesson.Id,$"{Date(exactLesson.StartedAt??exactLesson.CreatedAt)} · {exactLesson.GroupName}"));
+            }
             var select=new ComboBox{ItemsSource=choices,SelectedItem=choices.FirstOrDefault(c=>c.Id==lessonId)??choices[0],HorizontalAlignment=HorizontalAlignment.Stretch};
             select.SelectionChanged+=async(_,_)=>await owner.Safe(()=>ChangeFilter(()=>{lessonId=(select.SelectedItem as Choice)?.Id;group=null;allStudents=false;}));page.Children.Add(select);
             if(lessons?.HasMore==true)page.Children.Add(Ui.Button("Ещё занятия",()=>owner.Safe(async()=>{var more=await api.Get<LessonDashboard>("teacher/lessons?offset="+older.Count);older.AddRange(more.History.Where(l=>older.All(o=>o.Id!=l.Id)));lessons=more;Render();})));

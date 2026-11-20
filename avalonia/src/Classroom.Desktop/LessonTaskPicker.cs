@@ -20,40 +20,56 @@ public sealed class LessonTaskPicker : UserControl
     string? lessonId;
     bool saving;
     bool dirty;
+    int requestVersion;
+    internal string? LessonId => lessonId;
+    internal IReadOnlyList<LessonSqlTaskInfo> Issued => issued;
+    internal event Action? IssuedChanged;
 
     public LessonTaskPicker(MainWindow owner, ClassroomApi api)
     {
         this.owner = owner; this.api = api;
         search.Watermark = "Поиск SQL-задания";
         search.TextChanged += (_, _) => Render();
-        save = Ui.Button("Сохранить выдачу", () => owner.Safe(async () =>
+        save = GraphiteUi.Action("Сохранить выдачу", () => owner.Safe(async () =>
         {
             if (lessonId is not null) await Save(lessonId);
-        }));
-        Content = Ui.Card(Ui.Stack(Ui.Text("SQL-задания на занятие", 20),
+        }), () => lessonId is not null && !saving);
+        save.IsEnabled = false;
+        Content = GraphiteUi.Panel(Ui.Stack(Ui.Text("SQL-задания на занятие", 20),
             Ui.Text("Проекты выдаются целой цепочкой. Начатые работы сохраняют прежнюю редакцию."),
             search, new ScrollViewer { Content = rows, MaxHeight = 250, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled },
-            Ui.Row(count, save)));
+            GraphiteUi.WrapActions(count, save)));
     }
     public async Task Refresh(string? currentLessonId, CatalogueItem[]? tasks)
     {
         if (saving) return;
+        var request = ++requestVersion;
         var changed = lessonId != currentLessonId;
         var catalogueChanged = tasks is not null && !catalog.SequenceEqual(tasks);
+        LessonSqlTaskInfo[] currentTasks = changed && currentLessonId is not null
+            ? (await api.Get<LessonSqlSelection>($"teacher/lessons/{currentLessonId}/sql-tasks")).Tasks : [];
+        if (request != requestVersion) return;
         if (tasks is not null) catalog = tasks;
         if (changed)
         {
             lessonId = currentLessonId;
-            issued = lessonId is null ? [] : (await api.Get<LessonSqlSelection>($"teacher/lessons/{lessonId}/sql-tasks")).Tasks;
+            issued = currentTasks;
             selected.Clear(); foreach (var task in issued) selected.Add(task.Id);
             requireNew.Clear(); foreach (var task in issued.Where(t => t.RequireNewSolution)) requireNew.Add(task.Id);
             dirty = false;
+            IssuedChanged?.Invoke();
+            if (lessonId is null && !string.IsNullOrEmpty(search.Text))
+            {
+                search.Text = "";
+                return;
+            }
         }
         if (changed || catalogueChanged) Render();
     }
     public async Task Save(string id)
     {
         if (saving) return;
+        requestVersion++;
         saving = true; save.IsEnabled = false;
         try
         {
@@ -62,6 +78,7 @@ public sealed class LessonTaskPicker : UserControl
             selected.Clear(); foreach (var task in issued) selected.Add(task.Id);
             requireNew.Clear(); foreach (var task in issued.Where(t => t.RequireNewSolution)) requireNew.Add(task.Id);
             dirty = false;
+            IssuedChanged?.Invoke();
             owner.Message("Выдача заданий сохранена.");
         }
         finally { saving = false; Render(); }

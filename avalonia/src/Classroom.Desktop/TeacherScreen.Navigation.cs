@@ -118,13 +118,19 @@ public sealed partial class TeacherScreen
         standButton.Classes.Set("active", Presentation.Content is Electronics.ElectronicsScreen);
     }
 
-    async Task SelectResultPage(int index)
+    Task OpenLessonResults(Classroom.Contracts.LessonView lesson)
+    {
+        ShowSection(Section.Results);
+        return SelectResultPage(0, () => learning.OpenLesson(lesson));
+    }
+
+    async Task SelectResultPage(int index, Func<Task>? open = null)
     {
         changingResultPage = true;
         try { resultPages.SelectedIndex = index; }
         finally { changingResultPage = false; }
         UpdateNavigationSelection();
-        await RefreshResultPage(index);
+        await (open?.Invoke() ?? RefreshResultPage(index));
     }
 
     Task RefreshResultPage(int index) => index switch

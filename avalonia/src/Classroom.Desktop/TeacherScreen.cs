@@ -70,7 +70,7 @@ public sealed partial class TeacherScreen : UserControl, IDisposable
         this.api = api;
         this.host = host;
         learning = new(owner, api);
-        lessonControl = new(owner, api, ShowConnectionCode);
+        lessonControl = new(owner, api, ShowConnectionCode, OpenLessonResults);
         electronicsResults = new(owner, api);
         electronicsAuthoring = new(owner, api);
         reviewQueue = new(owner, api);

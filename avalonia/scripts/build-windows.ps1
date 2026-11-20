@@ -1,4 +1,4 @@
-param([switch]$SkipTests,[switch]$SkipInstaller,[switch]$SkipPackageCheck,[string]$PublishPath,[string]$ElectronicsRuntimePath,[string]$PicoRuntimePath,[string]$InnoCompilerPath,[string]$InstallerOutputPath,[string]$Esp32S3RuntimePath)
+param([switch]$SkipTests,[switch]$SkipInstaller,[switch]$SkipPackageCheck,[string]$PublishPath,[string]$ElectronicsRuntimePath,[string]$PicoRuntimePath,[string]$InnoCompilerPath,[string]$InstallerOutputPath,[string]$Esp32S3RuntimePath,[string]$Esp32S3GpioRuntimePath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = Split-Path $PSScriptRoot -Parent
@@ -6,6 +6,7 @@ if($PublishPath){$PublishPath=[IO.Path]::GetFullPath($PublishPath)}
 if($ElectronicsRuntimePath){$ElectronicsRuntimePath=[IO.Path]::GetFullPath($ElectronicsRuntimePath)}
 if($PicoRuntimePath){$PicoRuntimePath=[IO.Path]::GetFullPath($PicoRuntimePath)}
 if($Esp32S3RuntimePath){$Esp32S3RuntimePath=[IO.Path]::GetFullPath($Esp32S3RuntimePath)}
+if($Esp32S3GpioRuntimePath){$Esp32S3GpioRuntimePath=[IO.Path]::GetFullPath($Esp32S3GpioRuntimePath)}
 if($InnoCompilerPath){$InnoCompilerPath=[IO.Path]::GetFullPath($InnoCompilerPath)}
 if($InstallerOutputPath){$InstallerOutputPath=[IO.Path]::GetFullPath($InstallerOutputPath)}
 Set-Location $root
@@ -20,7 +21,10 @@ if(-not $PicoRuntimePath){$PicoRuntimePath=Join-Path $root 'artifacts/pico-runti
 if(-not $Esp32S3RuntimePath){$Esp32S3RuntimePath=Join-Path $root 'artifacts/esp32s3-arduino-runtime'}
 $ElectronicsRuntimePath=[IO.Path]::GetFullPath($ElectronicsRuntimePath)
 $PicoRuntimePath=[IO.Path]::GetFullPath($PicoRuntimePath)
-foreach($sdk in @($ElectronicsRuntimePath,$PicoRuntimePath,$Esp32S3RuntimePath)){if($publish -eq $sdk -or $publish.StartsWith($sdk.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or $sdk.StartsWith($publish+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Publish output and source SDK folders must be separate.'}}
+foreach($sdk in @($ElectronicsRuntimePath,$PicoRuntimePath,$Esp32S3RuntimePath,$Esp32S3GpioRuntimePath)){
+    if($sdk -and ($publish -eq $sdk -or $publish.StartsWith($sdk.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or $sdk.StartsWith($publish+'\',[StringComparison]::OrdinalIgnoreCase))){throw 'Publish output and source SDK folders must be separate.'}
+}
+if($Esp32S3GpioRuntimePath -and -not(Test-Path -LiteralPath $Esp32S3GpioRuntimePath -PathType Container)){throw 'The ESP32-S3 GPIO runtime folder is missing.'}
 if(-not $SkipInstaller){
     & "$PSScriptRoot/build-installers.ps1" -PublishPath $publish -InnoCompilerPath $InnoCompilerPath -OutputPath $InstallerOutputPath -CheckPrerequisitesOnly
 }
@@ -32,11 +36,14 @@ Run-DotNet @('restore', 'Classroom.sln', '--locked-mode')
 Run-DotNet @('build', 'Classroom.sln', '-c', 'Release', '--no-restore', '-m:1', '-p:UseSharedCompilation=false')
 & "$PSScriptRoot/prepare-electronics.ps1" -RuntimePath $ElectronicsRuntimePath
 & "$PSScriptRoot/prepare-pico.ps1" -RuntimePath $PicoRuntimePath -BaseRuntimePath $ElectronicsRuntimePath
-if (-not $SkipTests) {
+if (-not $SkipTests -or $Esp32S3GpioRuntimePath) {
     & "$PSScriptRoot/prepare-esp32s3.ps1" -RuntimePath $Esp32S3RuntimePath -BaseRuntimePath $ElectronicsRuntimePath -IncludeArduino
+}
+if (-not $SkipTests) {
     $env:CLASSROOM_ELECTRONICS_RUNTIME=$ElectronicsRuntimePath
     $env:CLASSROOM_PICO_RUNTIME = $PicoRuntimePath
     $env:CLASSROOM_ESP32S3_RUNTIME = $Esp32S3RuntimePath
+    if($Esp32S3GpioRuntimePath){$env:CLASSROOM_ESP32S3_GPIO_RUNTIME = $Esp32S3GpioRuntimePath}
     $env:CLASSROOM_UI_OUTPUT = Join-Path $root 'artifacts/ui'
     Run-DotNet @('test', 'Classroom.sln', '-c', 'Release', '--no-build', '--no-restore', '--logger', 'trx', '--results-directory', 'artifacts/tests')
 }
@@ -50,6 +57,10 @@ foreach ($app in @('Server', 'Worker')) {
 foreach ($app in @('Teacher', 'Student')) {
     & "$PSScriptRoot/copy-electronics-runtime.ps1" -Source $ElectronicsRuntimePath -Destination (Join-Path $publish "$app/electronics/runtime") -Profile avr
     & "$PSScriptRoot/copy-electronics-runtime.ps1" -Source $PicoRuntimePath -Destination (Join-Path $publish "$app/electronics/pico-runtime") -Profile pico
+    if($Esp32S3GpioRuntimePath){
+        & "$PSScriptRoot/copy-electronics-runtime.ps1" -Source $Esp32S3RuntimePath -Destination (Join-Path $publish "$app/electronics/esp32s3-runtime") -Profile esp32s3
+        & "$PSScriptRoot/copy-electronics-runtime.ps1" -Source $Esp32S3GpioRuntimePath -Destination (Join-Path $publish "$app/electronics/esp32s3-gpio-runtime") -Profile esp32s3-gpio
+    }
 }
 $forbidden = [IO.Directory]::EnumerateFiles(('\\?\'+(Join-Path $publish 'Student')),'*',[IO.SearchOption]::AllDirectories) | Where-Object {
     [IO.Path]::GetFileName($_) -match '^Classroom\.(Domain|Storage|Server|Worker)(\.|$)|catalog\.json|\.sqlite($|-)|\.pfx$|e_sqlite3|BouncyCastle|EntityFrameworkCore'

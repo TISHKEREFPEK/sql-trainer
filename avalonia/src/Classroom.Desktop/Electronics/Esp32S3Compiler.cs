@@ -2,18 +2,17 @@ using System.Text.Json;
 
 namespace Classroom.Desktop.Electronics;
 
-// Foundation API only. No runnable catalog part until Arduino and peripheral
-// compatibility are verified; QEMU's current GPIO/IOMUX is a stub.
 public static partial class Esp32S3Compiler
 {
     public const string ClangVersion="19.1.2_20250312",QemuVersion="9.2.2_20260417";
     static readonly SemaphoreSlim slots=new(1,1);
+    internal static string BundledRuntime => Path.Combine(AppContext.BaseDirectory, "electronics", "esp32s3-runtime");
     public static string Runtime
     {
         get
         {
             if(Environment.GetEnvironmentVariable("CLASSROOM_ESP32S3_RUNTIME") is {}path)return Path.GetFullPath(path);
-            var deployed=Path.Combine(AppContext.BaseDirectory,"electronics","esp32s3-runtime");if(Directory.Exists(deployed))return deployed;
+            var deployed=BundledRuntime;if(Directory.Exists(deployed))return deployed;
             var root=new DirectoryInfo(AppContext.BaseDirectory);while(root is not null&&!File.Exists(Path.Combine(root.FullName,"Classroom.sln")))root=root.Parent;
             return root is null?deployed:Path.Combine(root.FullName,"artifacts","esp32s3-runtime");
         }

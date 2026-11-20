@@ -28,13 +28,18 @@ public static class Esp32S3Board
 
     public static string? Gpio(int number) => (uint)number < GpioCount ? gpio[number] : null;
 
+    internal static string BundledRuntime => Path.Combine(AppContext.BaseDirectory, "electronics", "esp32s3-gpio-runtime");
+
     internal static string? ConfiguredRuntime
     {
         get
         {
-            if (Environment.GetEnvironmentVariable("CLASSROOM_ESP32S3_GPIO_RUNTIME") is not { Length: > 0 } path)
-                return null;
-            return File.Exists(Esp32S3Compiler.Emulator(path)) ? path : null;
+            if (Environment.GetEnvironmentVariable("CLASSROOM_ESP32S3_GPIO_RUNTIME") is { Length: > 0 } path)
+                return File.Exists(Esp32S3Compiler.Emulator(path)) ? path : null;
+            var bundled = BundledRuntime;
+            return File.Exists(Esp32S3Compiler.Emulator(bundled)) &&
+                File.Exists(Path.Combine(bundled, "sandbox-xtensa", "qemu", "share", "qemu", "esp32s3_rev0_rom.bin")) &&
+                Esp32S3Compiler.ArduinoAvailable ? bundled : null;
         }
     }
 
